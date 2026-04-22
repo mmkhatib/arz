@@ -1,0 +1,37 @@
+# Arz default configuration
+# Override in ~/.arz/config.toml or via environment variables (ARZ_* prefix).
+
+[provider]
+name = "claude-code"       # "claude-code" | "kiro-cli" | "anthropic"
+model = "claude-opus-4-7"
+# work_dir = "~/.arz/workspace"  # uncomment to override
+
+[dashboard]
+port = 7777
+host = "127.0.0.1"
+bot_name = "Arzeh"
+token_auth = false
+
+[slack]
+enabled = false
+# bot_token = ""       # set via ARZ_SLACK_BOT_TOKEN env var
+# app_token = ""       # set via ARZ_SLACK_APP_TOKEN env var
+# owner_id  = ""       # your Slack user ID (U...)
+
+[telegram]
+enabled = false
+# bot_token = ""       # set via ARZ_TELEGRAM_BOT_TOKEN env var
+# owner_id  = ""       # your Telegram user ID
+
+[whatsapp]
+enabled = false
+# access_token     = ""   # Meta Cloud API access token
+# phone_number_id  = ""   # WhatsApp business phone number ID
+# verify_token     = ""   # webhook verification token
+# owner_number     = ""   # your WhatsApp number (+E.164 format)
+
+[memory]
+db_path     = "~/.arz/memory.db"
+markdown_dir = "~/.arz/memory"
+
+log_level = "INFO"
