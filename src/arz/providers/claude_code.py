@@ -1,4 +1,4 @@
-"""ClaudeCodeProvider — LLMProvider backed by the Claude Code CLI (stream-json)."""
+"""ClaudeCodeProvider — LLMProvider backed by the Claude Code CLI (persistent stream-json)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import structlog
 
-from arz.acp.claude_pipe import ClaudePipeClient
+from arz.acp.claude_interactive import ClaudeInteractiveClient
 from arz.providers.base import LLMEvent, LLMProvider
 
 log = structlog.get_logger(__name__)
@@ -28,10 +28,9 @@ def _resolve_binary() -> str:
 class ClaudeCodeProvider(LLMProvider):
     """LLMProvider backed by the Claude Code CLI.
 
-    Uses `claude --print --output-format stream-json` for non-interactive
-    streaming. Each instance is pinned to a unique work_dir so the claude
-    CLI stores and resumes its session there. Pass use_continue=True when
-    the session already has prior history so --continue is added.
+    Maintains ONE persistent `claude --input-format stream-json` process per
+    session. The process stays alive between turns, so conversation history
+    is native and startup overhead is paid once.
     """
 
     name = "claude-code"
@@ -40,39 +39,32 @@ class ClaudeCodeProvider(LLMProvider):
         self,
         model: str | None = None,
         work_dir: str | Path | None = None,
-        use_continue: bool = False,
         system_prompt: str | None = None,
         env_extra: dict[str, str] | None = None,
-        extra_args: list[str] | None = None,
     ) -> None:
-        self._use_continue = use_continue
-        self._system_prompt = system_prompt
-        self._client = ClaudePipeClient(
+        self._client = ClaudeInteractiveClient(
             binary=_resolve_binary(),
             model=model,
             work_dir=work_dir,
+            system_prompt=system_prompt,
             env_extra=env_extra,
-            extra_args=extra_args,
         )
 
     async def start(self) -> None:
         await self._client.start()
-        log.info("Claude Code provider started")
+        log.info("Claude Code provider started (persistent process)")
 
     async def shutdown(self) -> None:
         await self._client.shutdown()
+
+    def is_alive(self) -> bool:
+        return self._client.is_alive()
 
     def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         return self._forward(message)
 
     async def _forward(self, message: str) -> AsyncIterator[LLMEvent]:
-        async for acp_event in self._client.stream_events(
-            message,
-            use_continue=self._use_continue,
-            system_prompt=self._system_prompt if not self._use_continue else None,
-        ):
-            # All messages after the first are continuations
-            self._use_continue = True
+        async for acp_event in self._client.stream_events(message):
             yield LLMEvent(
                 kind=acp_event.kind,
                 text=acp_event.text or None,
@@ -84,10 +76,10 @@ class ClaudeCodeProvider(LLMProvider):
             )
 
     async def approve_tool(self, request_id: str | int) -> None:
-        log.warning("approve_tool not yet supported in ClaudeCodeProvider (Phase 2)")
+        log.warning("approve_tool not yet supported in ClaudeCodeProvider")
 
     async def reject_tool(self, request_id: str | int) -> None:
-        log.warning("reject_tool not yet supported in ClaudeCodeProvider (Phase 2)")
+        log.warning("reject_tool not yet supported in ClaudeCodeProvider")
 
     def context_usage_pct(self) -> float:
         return 0.0

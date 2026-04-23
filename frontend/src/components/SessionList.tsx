@@ -9,6 +9,7 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onTogglePin: (id: string) => void;
+  onSettings: () => void;
 }
 
 export default function SessionList({
@@ -19,6 +20,7 @@ export default function SessionList({
   onCreate,
   onDelete,
   onTogglePin,
+  onSettings,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -104,8 +106,15 @@ export default function SessionList({
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t border-[var(--border)] text-[11px] text-[var(--muted)]">
-        arz v0.1.0
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)] text-[11px] text-[var(--muted)]">
+        <span>arz v0.1.0</span>
+        <button
+          onClick={onSettings}
+          title="Settings"
+          className="w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+        >
+          ⚙
+        </button>
       </div>
     </aside>
   );

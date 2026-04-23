@@ -15,6 +15,7 @@ from arz.config.schema import ArzConfig
 from arz.dashboard.routes.chat import router as chat_router
 from arz.dashboard.routes.health import router as health_router
 from arz.dashboard.routes.sessions import router as sessions_router
+from arz.dashboard.routes.settings import router as settings_router
 from arz.dashboard.token_auth import load_token
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
@@ -59,6 +60,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(health_router)
     app.include_router(sessions_router)
     app.include_router(chat_router)
+    app.include_router(settings_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

@@ -9,11 +9,11 @@ Resolution order (highest to lowest priority):
 from __future__ import annotations
 
 import os
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import tomllib
+import tomli_w
 
 from arz.config.schema import ArzConfig
 
@@ -77,3 +77,13 @@ def load_config(path: Path | None = None) -> ArzConfig:
     data = _apply_env(data)
 
     return ArzConfig.model_validate(data)
+
+
+def save_config(config: ArzConfig, path: Path | None = None) -> None:
+    """Persist config to TOML (only the user-writable sections, not defaults)."""
+    user_path = path or _USER_CONFIG
+    user_path.parent.mkdir(parents=True, exist_ok=True)
+
+    data = config.model_dump()
+    with open(user_path, "wb") as f:
+        tomli_w.dump(data, f)

@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
+import SettingsModal from "@/components/SettingsModal";
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -16,6 +17,7 @@ export default function ChatPage() {
     }
   });
   const [loading, setLoading] = useState(true);
+  const [showSettings, setShowSettings] = useState(false);
 
   const loadSessions = async () => {
     try {
@@ -82,6 +84,7 @@ export default function ChatPage() {
 
   return (
     <div className="flex w-full h-full overflow-hidden">
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       <SessionList
         sessions={sessions}
         activeId={activeId}
@@ -90,6 +93,7 @@ export default function ChatPage() {
         onCreate={handleCreate}
         onDelete={handleDelete}
         onTogglePin={handleTogglePin}
+        onSettings={() => setShowSettings(true)}
       />
 
       <main className="flex-1 min-w-0 flex flex-col bg-[var(--bg)]">

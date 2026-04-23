@@ -22,7 +22,7 @@ router = APIRouter(dependencies=[Depends(require_token)])
 _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
 
-def _make_provider(config: object, session_id: str, has_history: bool) -> LLMProvider:
+def _make_provider(config: object, session_id: str, _has_history: bool) -> LLMProvider:
     """Factory: build the right provider for this session."""
     from arz.config.schema import ArzConfig
     assert isinstance(config, ArzConfig)
@@ -36,7 +36,6 @@ def _make_provider(config: object, session_id: str, has_history: bool) -> LLMPro
         return ClaudeCodeProvider(
             model=model,
             work_dir=work_dir,
-            use_continue=has_history,
             system_prompt=config.dashboard.system_prompt or None,
         )
 
@@ -101,10 +100,9 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     if not message:
         raise HTTPException(status_code=422, detail="message is required")
 
-    has_history = any(m.role == "assistant" for m in session.messages)
     provider = await pool.activate(
         session_id,
-        lambda: _make_provider(request.app.state.config, session_id, has_history),
+        lambda: _make_provider(request.app.state.config, session_id, False),
     )
 
     return StreamingResponse(

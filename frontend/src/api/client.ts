@@ -20,6 +20,11 @@ export interface SessionDetail extends SessionSummary {
   messages: MessageRecord[];
 }
 
+export interface Settings {
+  provider: "claude-code" | "kiro-cli" | "anthropic";
+  model: string;
+}
+
 export interface SSEChunk {
   type: "text_chunk" | "complete" | "error" | "tool_call";
   text?: string;
@@ -62,6 +67,14 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
+    }),
+
+  getSettings: () => request<Settings>("/settings"),
+
+  saveSettings: (patch: Partial<Settings>) =>
+    request<Settings>("/settings", {
+      method: "PATCH",
+      body: JSON.stringify(patch),
     }),
 
   /** Parse an SSE response body into chunks via async iteration. */
