@@ -30,9 +30,11 @@ async def _stream_response(
     if session:
         session.add_message("user", message)
 
+    full_reply = ""
     try:
         async for event in provider.stream(message):
             if event.kind == EVENT_TEXT_CHUNK and event.text:
+                full_reply += event.text
                 yield sse_chunk(event.text)
 
             elif event.kind == EVENT_TOOL_CALL:
@@ -43,11 +45,17 @@ async def _stream_response(
                 )
 
             elif event.kind == EVENT_COMPLETE:
+                if session and full_reply:
+                    session.add_message("assistant", full_reply)
+                    mgr.save(session)
                 yield sse_complete(event.stop_reason or "end_turn")
                 return
 
     except Exception as e:
         log.exception("Error streaming session %s", session_id)
+        if session and full_reply:
+            session.add_message("assistant", full_reply)
+            mgr.save(session)
         yield sse_error(str(e))
 
 
