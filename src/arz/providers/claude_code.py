@@ -41,10 +41,12 @@ class ClaudeCodeProvider(LLMProvider):
         model: str | None = None,
         work_dir: str | Path | None = None,
         use_continue: bool = False,
+        system_prompt: str | None = None,
         env_extra: dict[str, str] | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
         self._use_continue = use_continue
+        self._system_prompt = system_prompt
         self._client = ClaudePipeClient(
             binary=_resolve_binary(),
             model=model,
@@ -64,7 +66,11 @@ class ClaudeCodeProvider(LLMProvider):
         return self._forward(message)
 
     async def _forward(self, message: str) -> AsyncIterator[LLMEvent]:
-        async for acp_event in self._client.stream_events(message, use_continue=self._use_continue):
+        async for acp_event in self._client.stream_events(
+            message,
+            use_continue=self._use_continue,
+            system_prompt=self._system_prompt if not self._use_continue else None,
+        ):
             # All messages after the first are continuations
             self._use_continue = True
             yield LLMEvent(

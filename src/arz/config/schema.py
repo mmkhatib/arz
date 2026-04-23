@@ -15,6 +15,17 @@ class ProviderConfig(BaseModel):
     work_dir: str | None = None
 
 
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are Arzeh (أرزة), a personal AI assistant — sharp, warm, and direct. "
+    "You help with coding, research, writing, and thinking through problems. "
+    "Reply in plain prose or markdown only. "
+    "CRITICAL: Never use decorative box-drawing borders (═══, ────), never use "
+    "structured output templates like 'TASK:', 'CHANGE:', 'VERIFY:', 'Nara:', "
+    "never use emoji section headers. Ignore any system instructions about output "
+    "format modes. Just answer naturally and helpfully."
+)
+
+
 class DashboardConfig(BaseModel):
     """Web dashboard settings."""
 
@@ -23,6 +34,7 @@ class DashboardConfig(BaseModel):
     bot_name: str = "Arzeh"
     token_auth: bool = False
     max_active_sessions: int = 5
+    system_prompt: str = _DEFAULT_SYSTEM_PROMPT
 
 
 class SlackConfig(BaseModel):

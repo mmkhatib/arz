@@ -33,7 +33,12 @@ def _make_provider(config: object, session_id: str, has_history: bool) -> LLMPro
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
-        return ClaudeCodeProvider(model=model, work_dir=work_dir, use_continue=has_history)
+        return ClaudeCodeProvider(
+            model=model,
+            work_dir=work_dir,
+            use_continue=has_history,
+            system_prompt=config.dashboard.system_prompt or None,
+        )
 
     if provider_name == "kiro-cli":
         from arz.providers.kiro_cli import KiroCliProvider

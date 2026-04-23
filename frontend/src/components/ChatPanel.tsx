@@ -24,22 +24,25 @@ interface Props {
 
 export default function ChatPanel({ sessionId }: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
+  const [title, setTitle] = useState<string>("New session");
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load session history on mount / session change
   useEffect(() => {
     setMessages([]);
     setStreamBuffer("");
     setError(null);
+    setTitle("New session");
     api.getSession(sessionId)
-      .then((s: SessionDetail) => setMessages(s.messages))
+      .then((s: SessionDetail) => {
+        setMessages(s.messages);
+        setTitle(s.title);
+      })
       .catch((e: Error) => setError(e.message));
   }, [sessionId]);
 
-  // Auto-scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
@@ -50,6 +53,9 @@ export default function ChatPanel({ sessionId }: Props) {
       text: message,
       created_at: new Date().toISOString(),
     };
+    // Auto-title from first user message
+    if (messages.length === 0) setTitle(message.slice(0, 60));
+
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
     setStreamBuffer("");
@@ -92,6 +98,11 @@ export default function ChatPanel({ sessionId }: Props) {
 
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full">
+      {/* Session header */}
+      <div className="shrink-0 px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)]">
+        <h2 className="text-[13px] font-medium text-[var(--text)] truncate">{title}</h2>
+      </div>
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {messages.length === 0 && !streaming && (
