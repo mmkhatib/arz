@@ -7,7 +7,14 @@ import ChatPanel from "@/components/ChatPanel";
 export default function ChatPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("arz:pinned");
+      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>();
+    } catch {
+      return new Set<string>();
+    }
+  });
   const [loading, setLoading] = useState(true);
 
   const loadSessions = async () => {
@@ -58,6 +65,7 @@ export default function ChatPage() {
     setPinnedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
+      localStorage.setItem("arz:pinned", JSON.stringify([...next]));
       return next;
     });
   };
