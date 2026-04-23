@@ -105,10 +105,29 @@ def chat(
 @app.command()
 def gateway(
     config: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
+    host: Annotated[str | None, typer.Option("--host", help="Bind host")] = None,
+    port: Annotated[int | None, typer.Option("--port", "-p", help="Bind port")] = None,
 ) -> None:
-    """Run the Arz gateway (dashboard + messaging surfaces)."""
-    typer.echo("Gateway not yet implemented — ships in Phase 3.", err=True)
-    raise typer.Exit(code=1)
+    """Run the Arz dashboard gateway (FastAPI + uvicorn)."""
+    import uvicorn
+    from arz.dashboard.server import create_app
+
+    cfg = load_config(config)
+    if host is not None:
+        cfg.dashboard.host = host
+    if port is not None:
+        cfg.dashboard.port = port
+
+    provider = _build_provider(config)
+    web_app = create_app(cfg, provider)
+
+    typer.echo(f"Arz gateway starting at http://{cfg.dashboard.host}:{cfg.dashboard.port}")
+    uvicorn.run(
+        web_app,
+        host=cfg.dashboard.host,
+        port=cfg.dashboard.port,
+        log_level="info",
+    )
 
 
 @app.command()

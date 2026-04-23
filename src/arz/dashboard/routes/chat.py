@@ -1,0 +1,75 @@
+"""Chat route — POST message → SSE stream."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import AsyncIterator
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+
+from arz.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL
+from arz.dashboard.sse import sse_chunk, sse_complete, sse_error, sse_tool_call
+from arz.dashboard.token_auth import require_token
+from arz.providers.base import LLMProvider
+from arz.session.manager import SessionManager
+
+log = logging.getLogger(__name__)
+router = APIRouter(dependencies=[Depends(require_token)])
+
+
+async def _stream_response(
+    provider: LLMProvider,
+    session_id: str,
+    message: str,
+    mgr: SessionManager,
+) -> AsyncIterator[str]:
+    """Drive the provider, record history, yield SSE strings."""
+    session = mgr.get(session_id)
+    if session:
+        session.add_message("user", message)
+
+    try:
+        async for event in provider.stream(message):
+            if event.kind == EVENT_TEXT_CHUNK and event.text:
+                yield sse_chunk(event.text)
+
+            elif event.kind == EVENT_TOOL_CALL:
+                yield sse_tool_call(
+                    tool_name=event.text or "",
+                    tool_input=str(event.tool_input or ""),
+                    request_id=event.request_id or "",
+                )
+
+            elif event.kind == EVENT_COMPLETE:
+                yield sse_complete(event.stop_reason or "end_turn")
+                return
+
+    except Exception as e:
+        log.exception("Error streaming session %s", session_id)
+        yield sse_error(str(e))
+
+
+@router.post("/api/chat/{session_id}")
+async def chat(session_id: str, request: Request) -> StreamingResponse:
+    mgr: SessionManager = request.app.state.session_manager
+    provider: LLMProvider = request.app.state.provider
+
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    body = await request.json()
+    message: str = body.get("message", "").strip()
+    if not message:
+        raise HTTPException(status_code=422, detail="message is required")
+
+    return StreamingResponse(
+        _stream_response(provider, session_id, message, mgr),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

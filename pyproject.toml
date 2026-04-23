@@ -36,6 +36,9 @@ dependencies = [
 
     # LLM providers
     "anthropic>=0.40",         # Direct Anthropic SDK provider
+
+    # SSE streaming
+    "sse-starlette>=2.1",
 ]
 
 [project.optional-dependencies]
