@@ -7,6 +7,7 @@ import ChatPanel from "@/components/ChatPanel";
 export default function ChatPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [pinnedIds, setPinnedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
 
   const loadSessions = async () => {
@@ -23,7 +24,6 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadSessions();
-    // Refresh session list every 30 seconds (title updates after first message)
     const interval = setInterval(loadSessions, 30_000);
     return () => clearInterval(interval);
   }, []);
@@ -36,6 +36,30 @@ export default function ChatPage() {
     } catch (e) {
       console.error("Failed to create session:", e);
     }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await api.deleteSession(id);
+      setSessions((prev) => {
+        const remaining = prev.filter((s) => s.id !== id);
+        if (activeId === id) {
+          setActiveId(remaining.length > 0 ? remaining[0].id : null);
+        }
+        return remaining;
+      });
+      setPinnedIds((prev) => { const next = new Set(prev); next.delete(id); return next; });
+    } catch (e) {
+      console.error("Failed to delete session:", e);
+    }
+  };
+
+  const handleTogglePin = (id: string) => {
+    setPinnedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
   const handleSelect = (id: string) => setActiveId(id);
@@ -53,8 +77,11 @@ export default function ChatPage() {
       <SessionList
         sessions={sessions}
         activeId={activeId}
+        pinnedIds={pinnedIds}
         onSelect={handleSelect}
         onCreate={handleCreate}
+        onDelete={handleDelete}
+        onTogglePin={handleTogglePin}
       />
 
       <main className="flex-1 min-w-0 flex flex-col bg-[var(--bg)]">
