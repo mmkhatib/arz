@@ -118,8 +118,9 @@ def gateway(
     if port is not None:
         cfg.dashboard.port = port
 
-    provider = _build_provider(config)
-    web_app = create_app(cfg, provider)
+    from arz.providers.pool import ProviderPool
+    pool = ProviderPool(max_size=cfg.dashboard.max_active_sessions)
+    web_app = create_app(cfg, pool)
 
     typer.echo(f"Arz gateway starting at http://{cfg.dashboard.host}:{cfg.dashboard.port}")
     uvicorn.run(

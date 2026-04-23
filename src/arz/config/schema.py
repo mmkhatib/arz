@@ -22,6 +22,7 @@ class DashboardConfig(BaseModel):
     host: str = "127.0.0.1"
     bot_name: str = "Arzeh"
     token_auth: bool = False
+    max_active_sessions: int = 5
 
 
 class SlackConfig(BaseModel):

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from arz.config.loader import load_config
 from arz.dashboard.server import create_app
 from arz.providers.base import LLMEvent, LLMProvider
+from arz.providers.pool import ProviderPool
 
 
 class _FakeProvider(LLMProvider):
@@ -37,7 +38,8 @@ class _FakeProvider(LLMProvider):
 def client() -> TestClient:
     config = load_config()
     config.dashboard.token_auth = False
-    app = create_app(config, _FakeProvider())
+    pool = ProviderPool(max_size=5)
+    app = create_app(config, pool)
     return TestClient(app, raise_server_exceptions=True)
 
 

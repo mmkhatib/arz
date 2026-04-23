@@ -63,7 +63,7 @@ class ClaudePipeClient:
             except Exception:
                 pass
 
-    async def stream_events(self, message: str) -> AsyncIterator[AcpEvent]:
+    async def stream_events(self, message: str, use_continue: bool = False) -> AsyncIterator[AcpEvent]:
         """Spawn claude CLI and stream events for one message exchange."""
         resolved = shutil.which(self._binary) or self._binary
         argv: list[str] = [
@@ -73,6 +73,8 @@ class ClaudePipeClient:
             "--verbose",
             "--include-partial-messages",
         ]
+        if use_continue:
+            argv += ["--continue"]
         if self._model:
             argv += ["--model", self._model]
         argv += self._extra_args

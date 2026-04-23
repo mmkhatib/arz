@@ -29,8 +29,9 @@ class ClaudeCodeProvider(LLMProvider):
     """LLMProvider backed by the Claude Code CLI.
 
     Uses `claude --print --output-format stream-json` for non-interactive
-    streaming. Phase 1 spawns a fresh process per message; persistent sessions
-    land in Phase 2 when the session manager is built.
+    streaming. Each instance is pinned to a unique work_dir so the claude
+    CLI stores and resumes its session there. Pass use_continue=True when
+    the session already has prior history so --continue is added.
     """
 
     name = "claude-code"
@@ -39,9 +40,11 @@ class ClaudeCodeProvider(LLMProvider):
         self,
         model: str | None = None,
         work_dir: str | Path | None = None,
+        use_continue: bool = False,
         env_extra: dict[str, str] | None = None,
         extra_args: list[str] | None = None,
     ) -> None:
+        self._use_continue = use_continue
         self._client = ClaudePipeClient(
             binary=_resolve_binary(),
             model=model,
@@ -61,7 +64,9 @@ class ClaudeCodeProvider(LLMProvider):
         return self._forward(message)
 
     async def _forward(self, message: str) -> AsyncIterator[LLMEvent]:
-        async for acp_event in self._client.stream_events(message):
+        async for acp_event in self._client.stream_events(message, use_continue=self._use_continue):
+            # All messages after the first are continuations
+            self._use_continue = True
             yield LLMEvent(
                 kind=acp_event.kind,
                 text=acp_event.text or None,
