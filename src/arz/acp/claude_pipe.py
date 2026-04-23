@@ -70,12 +70,13 @@ class ClaudePipeClient:
             resolved,
             "--print",
             "--output-format", "stream-json",
-            "--no-auto-updates",
+            "--verbose",
+            "--include-partial-messages",
         ]
         if self._model:
             argv += ["--model", self._model]
         argv += self._extra_args
-        argv += ["--message", message]
+        argv += [message]
 
         env = {**os.environ, **self._env_extra}
         self._work_dir.mkdir(parents=True, exist_ok=True)
