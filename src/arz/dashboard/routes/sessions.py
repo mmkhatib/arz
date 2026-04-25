@@ -60,6 +60,24 @@ async def get_session(session_id: str, request: Request) -> dict:
     }
 
 
+@router.get("/api/sessions/search")
+async def search_sessions(q: str, request: Request) -> list[dict]:
+    mgr: SessionManager = _get_manager(request)
+    query = q.strip().lower()
+    if not query:
+        return [_session_to_dict(s) for s in mgr.list_active()]
+    results = []
+    for session in mgr.list_active():
+        from arz.session.session import Session
+        assert isinstance(session, Session)
+        if query in session.title.lower():
+            results.append(_session_to_dict(session))
+            continue
+        if any(query in m.text.lower() for m in session.messages):
+            results.append(_session_to_dict(session))
+    return results
+
+
 @router.delete("/api/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def close_session(session_id: str, request: Request) -> None:
     mgr: SessionManager = _get_manager(request)

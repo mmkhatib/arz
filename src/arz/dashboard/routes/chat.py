@@ -75,7 +75,10 @@ async def _stream_response(
                 if session and full_reply:
                     session.add_message("assistant", full_reply)
                     mgr.save(session)
-                yield sse_complete(event.stop_reason or "end_turn")
+                yield sse_complete(
+                    event.stop_reason or "end_turn",
+                    context_pct=event.context_usage_pct or 0.0,
+                )
                 return
 
     except Exception as e:

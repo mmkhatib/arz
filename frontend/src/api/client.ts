@@ -29,6 +29,7 @@ export interface SSEChunk {
   type: "text_chunk" | "complete" | "error" | "tool_call";
   text?: string;
   stop_reason?: string;
+  context_pct?: number;
   message?: string;
   tool_name?: string;
   tool_input?: string;
@@ -68,6 +69,8 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     }),
+
+  searchSessions: (q: string) => request<SessionSummary[]>(`/sessions/search?q=${encodeURIComponent(q)}`),
 
   getSettings: () => request<Settings>("/settings"),
 

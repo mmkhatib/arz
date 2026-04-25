@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
+import ContextRing from "./ContextRing";
 
 interface Props {
   onSend: (message: string) => void;
   disabled: boolean;
+  contextPct?: number;
 }
 
-export default function InputBar({ onSend, disabled }: Props) {
+export default function InputBar({ onSend, disabled, contextPct = 0 }: Props) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -58,6 +60,7 @@ export default function InputBar({ onSend, disabled }: Props) {
             "disabled:opacity-50 transition-colors max-h-[200px]",
           ].join(" ")}
         />
+        <ContextRing pct={contextPct} />
         <button
           onClick={submit}
           disabled={disabled || !value.trim()}

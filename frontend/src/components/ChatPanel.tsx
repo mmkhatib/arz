@@ -28,6 +28,7 @@ export default function ChatPanel({ sessionId }: Props) {
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [contextPct, setContextPct] = useState(0);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -73,6 +74,7 @@ export default function ChatPanel({ sessionId }: Props) {
           fullText += chunk.text;
           setStreamBuffer(fullText);
         } else if (chunk.type === "complete") {
+          if (chunk.context_pct) setContextPct(chunk.context_pct);
           break;
         } else if (chunk.type === "error") {
           setError(chunk.message ?? "Unknown error");
@@ -140,7 +142,7 @@ export default function ChatPanel({ sessionId }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      <InputBar onSend={handleSend} disabled={streaming} />
+      <InputBar onSend={handleSend} disabled={streaming} contextPct={contextPct} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { api } from "@/api/client";
 import type { SessionSummary } from "@/api/client";
 
 interface Props {
@@ -23,8 +24,40 @@ export default function SessionList({
   onSettings,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<SessionSummary[] | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const sorted = [...sessions].sort((a, b) => {
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (!query.trim()) {
+      setResults(null);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await api.searchSessions(query.trim());
+        setResults(data);
+      } catch {
+        setResults([]);
+      }
+    }, 300);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [query]);
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      setQuery("");
+      setResults(null);
+    }
+  };
+
+  const displayed = results ?? [...sessions].sort((a, b) => {
     const ap = pinnedIds.has(a.id) ? 1 : 0;
     const bp = pinnedIds.has(b.id) ? 1 : 0;
     if (ap !== bp) return bp - ap;
@@ -47,12 +80,26 @@ export default function SessionList({
         </button>
       </div>
 
+      {/* Search */}
+      <div className="px-3 py-2 border-b border-[var(--border)]">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={handleSearchKeyDown}
+          placeholder="Search…"
+          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--cedar)]"
+        />
+      </div>
+
       {/* Session list */}
       <div className="flex-1 overflow-y-auto py-2">
-        {sorted.length === 0 && (
-          <p className="px-4 py-3 text-[var(--muted)] text-[13px]">No sessions yet.</p>
+        {displayed.length === 0 && (
+          <p className="px-4 py-3 text-[var(--muted)] text-[13px]">
+            {query ? "No results." : "No sessions yet."}
+          </p>
         )}
-        {sorted.map((s) => {
+        {displayed.map((s) => {
           const isActive = s.id === activeId;
           const isPinned = pinnedIds.has(s.id);
           const isHovered = hoveredId === s.id;
