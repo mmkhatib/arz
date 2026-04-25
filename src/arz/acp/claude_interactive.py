@@ -67,15 +67,7 @@ class ClaudeInteractiveClient:
         if self._model:
             argv += ["--model", self._model]
 
-        # Use an isolated config dir so ~/.claude/CLAUDE.md (PAI) is not loaded.
-        # Auth remains in the macOS keychain so no credentials file needed.
-        arz_config_dir = Path.home() / ".arz" / "claude-config"
-        arz_config_dir.mkdir(parents=True, exist_ok=True)
-        settings_file = arz_config_dir / "settings.json"
-        if not settings_file.exists():
-            settings_file.write_text('{"hooks":{}}')
-
-        env = {**os.environ, "CLAUDE_CONFIG_DIR": str(arz_config_dir), **self._env_extra}
+        env = {**os.environ, **self._env_extra}
         self._process = await asyncio.create_subprocess_exec(
             *argv,
             stdin=asyncio.subprocess.PIPE,
