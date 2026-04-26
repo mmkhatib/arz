@@ -3,6 +3,8 @@ import { api } from "@/api/client";
 import type { MessageRecord, SessionDetail } from "@/api/client";
 import MessageBubble from "./MessageBubble";
 import InputBar from "./InputBar";
+import ToolCallLine from "./ToolCallLine";
+import ApprovalCard from "./ApprovalCard";
 
 function ThinkingDots() {
   return (
@@ -20,15 +22,24 @@ function ThinkingDots() {
 
 interface Props {
   sessionId: string;
+  onToolCall?: (tc: { callId: string; name: string; input: string; time: string }) => void;
+  onToolResult?: (callId: string, content: string) => void;
+  activityOpen?: boolean;
+  onToggleActivity?: () => void;
+  onTitleChange?: (title: string) => void;
 }
 
-export default function ChatPanel({ sessionId }: Props) {
+export default function ChatPanel({ sessionId, onToolCall, onToolResult, activityOpen, onToggleActivity, onTitleChange }: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
+  const [toolCalls, setToolCalls] = useState<{ name: string; input: string }[]>([]);
+  const [pendingApprovals, setPendingApprovals] = useState<{requestId: string; title: string; toolInput: string}[]>([]);
+  const [yolo, setYolo] = useState(false);
+  const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -57,10 +68,13 @@ export default function ChatPanel({ sessionId }: Props) {
     // Auto-title from first user message
     if (messages.length === 0) setTitle(message.slice(0, 60));
 
+    if (messages.length === 0) firstUserMsgRef.current = message;
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
     setStreamBuffer("");
     setError(null);
+    setToolCalls([]);
+    setPendingApprovals([]);
 
     try {
       const response = await api.sendMessage(sessionId, message);
@@ -73,8 +87,27 @@ export default function ChatPanel({ sessionId }: Props) {
         if (chunk.type === "text_chunk" && chunk.text) {
           fullText += chunk.text;
           setStreamBuffer(fullText);
+        } else if (chunk.type === "tool_call" && chunk.tool_name) {
+          const callId = chunk.request_id || chunk.tool_name! + Date.now();
+          const tc = { callId, name: chunk.tool_name!, input: chunk.tool_input || "", time: new Date().toLocaleTimeString() };
+          setToolCalls((prev) => [...prev, { name: tc.name, input: tc.input }]);
+          onToolCall?.(tc);
+        } else if (chunk.type === "tool_result" && chunk.tool_call_id) {
+          onToolResult?.(chunk.tool_call_id, chunk.content || "");
+        } else if (chunk.type === "permission_request" && chunk.request_id) {
+          setPendingApprovals((prev) => [...prev, {
+            requestId: chunk.request_id!,
+            title: chunk.title || chunk.tool_name || "Permission",
+            toolInput: chunk.tool_input || "",
+          }]);
         } else if (chunk.type === "complete") {
           if (chunk.context_pct) setContextPct(chunk.context_pct);
+          // Auto-title on first turn
+          if (messages.length === 0 && fullText && firstUserMsgRef.current) {
+            api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
+              if (t) { setTitle(t); onTitleChange?.(t); }
+            }).catch(() => {});
+          }
           break;
         } else if (chunk.type === "error") {
           setError(chunk.message ?? "Unknown error");
@@ -101,8 +134,38 @@ export default function ChatPanel({ sessionId }: Props) {
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full">
       {/* Session header */}
-      <div className="shrink-0 px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)]">
+      <div className="shrink-0 px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)] flex items-center">
         <h2 className="text-[13px] font-medium text-[var(--text)] truncate">{title}</h2>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            onClick={() => {
+              api.toggleYolo(sessionId).then((r) => setYolo(r.yolo)).catch(() => {});
+            }}
+            title={yolo ? "YOLO mode on — click to disable" : "Enable YOLO mode (auto-approve all tools)"}
+            className={[
+              "text-[12px] px-2 py-1 rounded-lg transition-colors",
+              yolo
+                ? "bg-amber-500/20 text-amber-400"
+                : "text-[var(--muted)] hover:text-[var(--text)]",
+            ].join(" ")}
+          >
+            {yolo ? "⚡ YOLO" : "YOLO"}
+          </button>
+          {onToggleActivity && (
+            <button
+              onClick={onToggleActivity}
+              title="Toggle activity pane"
+              className={[
+                "text-[12px] px-2 py-1 rounded-lg transition-colors",
+                activityOpen
+                  ? "bg-[var(--cedar)]/20 text-[var(--cedar)]"
+                  : "text-[var(--muted)] hover:text-[var(--text)]",
+              ].join(" ")}
+            >
+              ⚡ Activity
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Messages */}
@@ -128,6 +191,26 @@ export default function ChatPanel({ sessionId }: Props) {
               🌲
             </div>
             <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-bl-sm bg-[var(--asst-bg)] border border-[var(--border)] text-[14px] whitespace-pre-wrap">
+              {pendingApprovals.length > 0 && (
+                <div className="mb-2">
+                  {pendingApprovals.map((pa) => (
+                    <ApprovalCard
+                      key={pa.requestId}
+                      requestId={pa.requestId}
+                      title={pa.title}
+                      toolInput={pa.toolInput}
+                      onResolved={(id) => setPendingApprovals((prev) => prev.filter((p) => p.requestId !== id))}
+                    />
+                  ))}
+                </div>
+              )}
+              {toolCalls.length > 0 && (
+                <div className="mb-2 pb-2 border-b border-[var(--border)] flex flex-col gap-0.5">
+                  {toolCalls.map((tc, i) => (
+                    <ToolCallLine key={i} name={tc.name} input={tc.input} active={i === toolCalls.length - 1} />
+                  ))}
+                </div>
+              )}
               {streamBuffer || <ThinkingDots />}
             </div>
           </div>

@@ -23,7 +23,7 @@ import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from arz.acp.types import AcpEvent, EVENT_COMPLETE, EVENT_TEXT_CHUNK
+from arz.acp.types import AcpEvent, EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,8 @@ _STDOUT_LIMIT = 10 * 1024 * 1024
 _READ_TIMEOUT = 20.0
 _STARTUP_DRAIN = 8.0    # seconds to drain startup hook events
 _TURN_TIMEOUT = 7200.0  # 2 hours per turn
+_HISTORY_MAX_MSGS = 50
+_HISTORY_MAX_CHARS = 500
 
 
 class ClaudeInteractiveClient:
@@ -42,12 +44,14 @@ class ClaudeInteractiveClient:
         model: str | None = None,
         work_dir: str | Path | None = None,
         system_prompt: str | None = None,
+        history_messages: list[dict] | None = None,
         env_extra: dict[str, str] | None = None,
     ) -> None:
         self._binary = shutil.which(binary) or binary
         self._model = model
         self._work_dir = Path(work_dir) if work_dir else Path.home() / ".arz" / "workspace"
         self._system_prompt = system_prompt
+        self._history_messages = history_messages or []
         self._env_extra = env_extra or {}
         self._process: asyncio.subprocess.Process | None = None
 
@@ -80,15 +84,8 @@ class ClaudeInteractiveClient:
         )
         logger.info("Claude interactive process started (PID %d)", self._process.pid)
 
-        # Drain startup hook events before we're ready to use the process
         await self._drain_startup()
-
-        # Inject system prompt as the first event
-        if self._system_prompt:
-            await self._write_json({
-                "type": "system",
-                "content": [{"type": "text", "text": self._system_prompt}],
-            })
+        await self._inject_system_context()
 
     async def shutdown(self) -> None:
         if not self._process:
@@ -110,7 +107,7 @@ class ClaudeInteractiveClient:
     def is_alive(self) -> bool:
         return self._process is not None and self._process.returncode is None
 
-    # ── Streaming ────────────────────────────────────────────────────────────
+    # ── Streaming ─────────────��──────────────────────────────���───────────────
 
     async def stream_events(self, message: str) -> AsyncIterator[AcpEvent]:
         if not self.is_alive():
@@ -149,8 +146,31 @@ class ClaudeInteractiveClient:
 
             if event_type == "assistant":
                 for block in obj.get("message", {}).get("content", []):
-                    if block.get("type") == "text" and block.get("text"):
+                    btype = block.get("type")
+                    if btype == "text" and block.get("text"):
                         yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=block["text"])
+                    elif btype == "tool_use":
+                        yield AcpEvent(
+                            kind=EVENT_TOOL_CALL,
+                            text=block.get("name", ""),
+                            tool_call_id=block.get("id", ""),
+                            tool_input=json.dumps(block.get("input", {})),
+                        )
+
+            elif event_type == "user":
+                for block in obj.get("message", {}).get("content", []):
+                    if block.get("type") == "tool_result":
+                        raw_content = block.get("content", "")
+                        if isinstance(raw_content, list):
+                            parts = [b.get("text", "") for b in raw_content if b.get("type") == "text"]
+                            content = "\n".join(parts)
+                        else:
+                            content = str(raw_content)
+                        yield AcpEvent(
+                            kind=EVENT_TOOL_RESULT,
+                            tool_call_id=block.get("tool_use_id", ""),
+                            tool_output=content,
+                        )
 
             elif event_type == "result":
                 stop = "error" if obj.get("is_error") else "end_turn"
@@ -159,9 +179,41 @@ class ClaudeInteractiveClient:
                 yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=stop, context_usage_pct=context_pct)
                 return
 
+            elif event_type in ("system", "permission_request"):
+                subtype = obj.get("subtype", "")
+                if subtype in ("permission_request", "permission") or event_type == "permission_request":
+                    yield AcpEvent(
+                        kind=EVENT_PERMISSION_REQUEST,
+                        title=obj.get("tool", obj.get("title", "")),
+                        tool_input=json.dumps(obj.get("input", obj.get("params", {}))),
+                        request_id=str(obj.get("id", obj.get("request_id", ""))),
+                    )
+
         yield AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")
 
-    # ── Private ──────────────────────────────────────────────────────────────
+    async def approve_tool(self, request_id: str) -> None:
+        """Send approval for a permission request back to the claude process."""
+        if self.is_alive():
+            await self._write_json({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "[Tool approved]"}],
+                },
+            })
+
+    async def reject_tool(self, request_id: str) -> None:
+        """Send rejection for a permission request back to the claude process."""
+        if self.is_alive():
+            await self._write_json({
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "[Tool rejected by user]"}],
+                },
+            })
+
+    # ── Private ───���──────────────────────────────────────────────────────────
 
     async def _write_json(self, obj: dict) -> None:
         assert self._process and self._process.stdin
@@ -182,3 +234,28 @@ class ClaudeInteractiveClient:
                     break
             except asyncio.TimeoutError:
                 break  # quiet — startup complete
+
+    async def _inject_system_context(self) -> None:
+        """Send combined system prompt + history as one system message."""
+        parts: list[str] = []
+
+        if self._system_prompt:
+            parts.append(self._system_prompt)
+
+        if self._history_messages:
+            recent = self._history_messages[-_HISTORY_MAX_MSGS:]
+            lines = []
+            for m in recent:
+                role = m.get("role", "user").upper()
+                text = m.get("text", "")
+                if len(text) > _HISTORY_MAX_CHARS:
+                    text = text[:_HISTORY_MAX_CHARS] + "…"
+                lines.append(f"{role}: {text}")
+            history_block = "Previous conversation (for context):\n\n" + "\n\n".join(lines)
+            parts.append(history_block)
+
+        if parts:
+            await self._write_json({
+                "type": "system",
+                "content": [{"type": "text", "text": "\n\n---\n\n".join(parts)}],
+            })

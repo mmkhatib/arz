@@ -40,6 +40,7 @@ class ClaudeCodeProvider(LLMProvider):
         model: str | None = None,
         work_dir: str | Path | None = None,
         system_prompt: str | None = None,
+        history_messages: list[dict] | None = None,
         env_extra: dict[str, str] | None = None,
     ) -> None:
         self._client = ClaudeInteractiveClient(
@@ -47,6 +48,7 @@ class ClaudeCodeProvider(LLMProvider):
             model=model,
             work_dir=work_dir,
             system_prompt=system_prompt,
+            history_messages=history_messages,
             env_extra=env_extra,
         )
 
@@ -77,10 +79,10 @@ class ClaudeCodeProvider(LLMProvider):
             )
 
     async def approve_tool(self, request_id: str | int) -> None:
-        log.warning("approve_tool not yet supported in ClaudeCodeProvider")
+        await self._client.approve_tool(str(request_id))
 
     async def reject_tool(self, request_id: str | int) -> None:
-        log.warning("reject_tool not yet supported in ClaudeCodeProvider")
+        await self._client.reject_tool(str(request_id))
 
     def context_usage_pct(self) -> float:
         return 0.0

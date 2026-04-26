@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import type { SessionSummary } from "@/api/client";
 
+const SESSION_COLORS = ["#2d6a4f", "#5b6a2d", "#6a2d5b", "#2d5b6a", "#6a4f2d", "#4f2d6a"];
+
 interface Props {
   sessions: SessionSummary[];
   activeId: string | null;
@@ -26,7 +28,18 @@ export default function SessionList({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SessionSummary[] | null>(null);
+  const [colorMap, setColorMap] = useState<Record<string, number | null>>({});
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSetColor = (id: string, color: number | null) => {
+    setColorMap((prev) => ({ ...prev, [id]: color }));
+    api.setSessionColor(id, color).catch(() => {});
+  };
+
+  const getColor = (session: SessionSummary): number | null => {
+    if (session.id in colorMap) return colorMap[session.id];
+    return session.color ?? null;
+  };
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -103,47 +116,80 @@ export default function SessionList({
           const isActive = s.id === activeId;
           const isPinned = pinnedIds.has(s.id);
           const isHovered = hoveredId === s.id;
+          const colorIdx = getColor(s);
           return (
             <div
               key={s.id}
               className={[
-                "group relative flex items-center pr-1 transition-colors",
-                isActive
-                  ? "bg-[var(--user-bg)]"
-                  : "hover:bg-[var(--border)]",
+                "group relative flex flex-col pr-1 transition-colors",
+                isActive ? "bg-[var(--user-bg)]" : "hover:bg-[var(--border)]",
               ].join(" ")}
+              style={colorIdx != null && !isActive ? { backgroundColor: SESSION_COLORS[colorIdx] + "22" } : undefined}
               onMouseEnter={() => setHoveredId(s.id)}
               onMouseLeave={() => setHoveredId(null)}
             >
-              <button
-                onClick={() => onSelect(s.id)}
-                className={[
-                  "flex-1 text-left px-4 py-2.5 text-[13px] truncate",
-                  isActive ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]",
-                ].join(" ")}
-              >
-                {isPinned && (
-                  <span className="mr-1 text-[10px] text-[var(--accent)]">●</span>
-                )}
-                {s.title}
-              </button>
+              <div className="flex items-center">
+                <button
+                  onClick={() => onSelect(s.id)}
+                  className={[
+                    "flex-1 text-left px-4 py-2.5 text-[13px] truncate flex items-center gap-1.5",
+                    isActive ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]",
+                  ].join(" ")}
+                >
+                  {isPinned && (
+                    <span className="text-[10px] text-[var(--accent)]">●</span>
+                  )}
+                  <span className="truncate">{s.title}</span>
+                </button>
 
-              {/* Action buttons — visible on hover */}
+                {/* Action buttons — visible on hover */}
+                {isHovered && (
+                  <div className="flex items-center gap-0.5 shrink-0 pr-1">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onTogglePin(s.id); }}
+                      title={isPinned ? "Unpin" : "Pin to top"}
+                      className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--border)] transition-colors"
+                    >
+                      {isPinned ? "★" : "☆"}
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}
+                      title="Close session"
+                      className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-red-400 hover:bg-[var(--border)] transition-colors"
+                    >
+                      ×
+                    </button>
+                  </div>
+                )}
+              </div>
+
               {isHovered && (
-                <div className="flex items-center gap-0.5 shrink-0 pr-1">
+                <div className="flex items-center gap-1 px-4 pb-1.5">
+                  {[0, 1, 2, 3, 4, 5].map((idx) => (
+                    <button
+                      key={idx}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const newColor = colorIdx === idx ? null : idx;
+                        handleSetColor(s.id, newColor);
+                      }}
+                      title={`Color ${idx + 1}`}
+                      className={[
+                        "w-3 h-3 rounded-full transition-opacity",
+                        colorIdx === idx ? "opacity-100 ring-1 ring-[var(--text)]" : "opacity-60 hover:opacity-100",
+                      ].join(" ")}
+                      style={{ backgroundColor: SESSION_COLORS[idx] }}
+                    />
+                  ))}
                   <button
-                    onClick={(e) => { e.stopPropagation(); onTogglePin(s.id); }}
-                    title={isPinned ? "Unpin" : "Pin to top"}
-                    className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--border)] transition-colors"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSetColor(s.id, null);
+                    }}
+                    title="Clear color"
+                    className="w-3 h-3 flex items-center justify-center text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
                   >
-                    {isPinned ? "★" : "☆"}
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}
-                    title="Close session"
-                    className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-red-400 hover:bg-[var(--border)] transition-colors"
-                  >
-                    ×
+                    ✕
                   </button>
                 </div>
               )}

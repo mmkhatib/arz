@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from arz.config.schema import ArzConfig
+from arz.dashboard.routes.approvals import router as approvals_router
 from arz.dashboard.routes.chat import router as chat_router
 from arz.dashboard.routes.health import router as health_router
 from arz.dashboard.routes.sessions import router as sessions_router
@@ -43,6 +44,8 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.state.session_manager = SessionManager()
     app.state.token_auth_enabled = config.dashboard.token_auth
     app.state.token = load_token() if config.dashboard.token_auth else None
+    app.state.pending_approvals = {}
+    app.state.yolo_sessions: set[str] = set()
 
     origins = [
         "http://localhost:3000",
@@ -61,6 +64,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(sessions_router)
     app.include_router(chat_router)
     app.include_router(settings_router)
+    app.include_router(approvals_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

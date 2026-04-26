@@ -8,6 +8,7 @@ export interface SessionSummary {
   created_at: string;
   updated_at: string;
   active: boolean;
+  color?: number | null;
 }
 
 export interface MessageRecord {
@@ -26,14 +27,17 @@ export interface Settings {
 }
 
 export interface SSEChunk {
-  type: "text_chunk" | "complete" | "error" | "tool_call";
+  type: "text_chunk" | "complete" | "error" | "tool_call" | "tool_result" | "permission_request";
   text?: string;
   stop_reason?: string;
   context_pct?: number;
   message?: string;
   tool_name?: string;
   tool_input?: string;
+  tool_call_id?: string;
+  content?: string;
   request_id?: string;
+  title?: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -79,6 +83,40 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(patch),
     }),
+
+  async setSessionColor(id: string, color: number | null): Promise<void> {
+    await fetch(`${BASE}/sessions/${id}/color`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ color }),
+    });
+  },
+  async approveRequest(requestId: string): Promise<void> {
+    await fetch(`${BASE}/approvals/${requestId}/approve`, {
+      method: "POST",
+    });
+  },
+  async rejectRequest(requestId: string): Promise<void> {
+    await fetch(`${BASE}/approvals/${requestId}/reject`, {
+      method: "POST",
+    });
+  },
+
+  async toggleYolo(sessionId: string): Promise<{ yolo: boolean }> {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/yolo`, { method: "POST" });
+    return res.json() as Promise<{ yolo: boolean }>;
+  },
+
+  async generateTitle(sessionId: string, userMsg: string, assistantMsg: string): Promise<string> {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/generate-title`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_msg: userMsg, assistant_msg: assistantMsg }),
+    });
+    if (!res.ok) return "";
+    const data = await res.json() as { title: string };
+    return data.title || "";
+  },
 
   /** Parse an SSE response body into chunks via async iteration. */
   async *streamChat(response: Response): AsyncGenerator<SSEChunk> {

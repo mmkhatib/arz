@@ -45,6 +45,7 @@ class Session:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
     active: bool = True
+    color: int | None = None
 
     def add_message(self, role: Literal["user", "assistant", "system"], text: str) -> Message:
         msg = Message(role=role, text=text)
@@ -65,6 +66,7 @@ class Session:
             "created_at": self.created_at.isoformat(),
             "updated_at": self.updated_at.isoformat(),
             "active": self.active,
+            "color": self.color,
         }
 
     @classmethod
@@ -79,4 +81,5 @@ class Session:
             created_at=datetime.fromisoformat(d["created_at"]),
             updated_at=datetime.fromisoformat(d["updated_at"]),
             active=d.get("active", True),
+            color=d.get("color"),
         )

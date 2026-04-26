@@ -4,6 +4,7 @@ import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
 import SettingsModal from "@/components/SettingsModal";
+import ActivityPane from "@/components/ActivityPane";
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -18,6 +19,8 @@ export default function ChatPage() {
   });
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [toolEntries, setToolEntries] = useState<{callId: string; name: string; input: string; result?: string; done: boolean; time: string}[]>([]);
 
   const loadSessions = async () => {
     try {
@@ -36,6 +39,10 @@ export default function ChatPage() {
     const interval = setInterval(loadSessions, 30_000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    setToolEntries([]);
+  }, [activeId]);
 
   const handleCreate = async () => {
     try {
@@ -96,23 +103,43 @@ export default function ChatPage() {
         onSettings={() => setShowSettings(true)}
       />
 
-      <main className="flex-1 min-w-0 flex flex-col bg-[var(--bg)]">
-        {activeId ? (
-          <ChatPanel key={activeId} sessionId={activeId} />
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <span className="text-6xl mb-4">🌲</span>
-            <h1 className="text-[var(--text)] text-2xl font-semibold mb-3">Welcome to Arz</h1>
-            <p className="text-[var(--muted)] text-[15px] max-w-sm mb-6">
-              Your cedar in the cloud — rooted, persistent, always here.
-            </p>
-            <button
-              onClick={handleCreate}
-              className="px-5 py-2.5 rounded-xl bg-[var(--cedar)] text-white text-[14px] font-medium hover:bg-[var(--cedar-lt)] transition-colors"
-            >
-              Start a session
-            </button>
-          </div>
+      <main className="flex-1 min-w-0 flex bg-[var(--bg)] overflow-hidden">
+        <div className="flex-1 min-w-0 flex flex-col">
+          {activeId ? (
+            <ChatPanel
+              key={activeId}
+              sessionId={activeId}
+              onToolCall={(tc) => setToolEntries((prev) => [...prev, { ...tc, done: false }])}
+              onToolResult={(callId, content) => setToolEntries((prev) =>
+                prev.map((e) => e.callId === callId ? { ...e, result: content, done: true } : e)
+              )}
+              onTitleChange={(title) => setSessions((prev) =>
+                prev.map((s) => s.id === activeId ? { ...s, title } : s)
+              )}
+              activityOpen={activityOpen}
+              onToggleActivity={() => setActivityOpen((v) => !v)}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-center">
+              <span className="text-6xl mb-4">🌲</span>
+              <h1 className="text-[var(--text)] text-2xl font-semibold mb-3">Welcome to Arz</h1>
+              <p className="text-[var(--muted)] text-[15px] max-w-sm mb-6">
+                Your cedar in the cloud — rooted, persistent, always here.
+              </p>
+              <button
+                onClick={handleCreate}
+                className="px-5 py-2.5 rounded-xl bg-[var(--cedar)] text-white text-[14px] font-medium hover:bg-[var(--cedar-lt)] transition-colors"
+              >
+                Start a session
+              </button>
+            </div>
+          )}
+        </div>
+        {activityOpen && activeId && (
+          <ActivityPane
+            toolEntries={toolEntries}
+            onClose={() => setActivityOpen(false)}
+          />
         )}
       </main>
     </div>
