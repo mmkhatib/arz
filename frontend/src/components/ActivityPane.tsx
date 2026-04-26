@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image, Terminal, File, CheckCircle, Loader, X, Copy } from "lucide-react";
+import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File, CheckCircle, Loader } from "lucide-react";
 import { api } from "@/api/client";
 import SegmentedControl from "./SegmentedControl";
 import { useTouchedFiles } from "@/hooks/useTouchedFiles";
+import { FileViewer } from "./FileViewer";
 
 /* ── File icon map ── */
 const FILE_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -11,7 +12,7 @@ const FILE_ICONS: Record<string, React.ComponentType<{ size?: number; className?
   c: FileCode, cpp: FileCode, h: FileCode,
   json: FileJson, yaml: Settings, yml: Settings, toml: Settings, ini: Settings,
   md: FileText, mdx: FileText, txt: FileText, csv: FileText, log: FileText,
-  png: Image, jpg: Image, jpeg: Image, gif: Image, svg: Image, webp: Image,
+  png: ImageIcon, jpg: ImageIcon, jpeg: ImageIcon, gif: ImageIcon, svg: ImageIcon, webp: ImageIcon,
   sh: Terminal, bash: Terminal, zsh: Terminal,
 };
 function fileIcon(path: string) {
@@ -160,19 +161,6 @@ function SubagentCard({ entry, startedAt }: { entry: ToolEntry; startedAt: numbe
   );
 }
 
-const BINARY_EXTS = new Set([
-  "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp",
-  "pdf", "wasm", "zip", "tar", "gz", "7z", "rar",
-  "mp3", "mp4", "mov", "avi", "wav", "ogg",
-  "ttf", "otf", "woff", "woff2",
-  "exe", "bin", "dylib", "so", "a",
-  "pyc", "pyo", "class",
-]);
-
-function isBinary(path: string) {
-  const ext = path.split(".").pop()?.toLowerCase() || "";
-  return BINARY_EXTS.has(ext);
-}
 
 /* ── WorkspaceFile type ── */
 interface WorkspaceFile {
@@ -229,70 +217,6 @@ interface Props {
   onClose: () => void;
   width: number;
   onWidthChange: (w: number) => void;
-}
-
-/* ── File preview pane ── */
-function FilePreview({ path, onClose }: { path: string; onClose: () => void }) {
-  const [content, setContent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const binary = isBinary(path);
-
-  useEffect(() => {
-    if (binary) { setContent(null); setError(null); return; }
-    setContent(null); setError(null);
-    api.readFile(path)
-      .then((r) => setContent(r.content))
-      .catch((e: Error) => setError(e.message));
-  }, [path, binary]);
-
-  const copy = async () => {
-    if (!content) return;
-    try { await navigator.clipboard.writeText(content); }
-    catch { const el = document.createElement("textarea"); el.value = content; document.body.appendChild(el); el.select(); document.execCommand("copy"); document.body.removeChild(el); }
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const name = path.split("/").pop() || path;
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-
-  return (
-    <div className="border-t border-[var(--border)] flex flex-col min-h-0 max-h-[60%] shrink-0">
-      <div className="flex items-center gap-2 px-3 py-1.5 border-b border-[var(--border)] shrink-0">
-        <span className="text-[12px] font-medium text-[var(--text)] truncate flex-1" title={path}>{name}</span>
-        <span className="text-[10px] text-[var(--muted)] font-mono truncate max-w-[120px] shrink-0" title={path}>{path}</span>
-        {content && (
-          <button onClick={copy} className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] shrink-0">
-            {copied ? "Copied!" : <Copy size={11} />}
-          </button>
-        )}
-        <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] shrink-0"><X size={13} /></button>
-      </div>
-      <div className="flex-1 overflow-y-auto">
-        {binary && (
-          <div className="flex flex-col items-center justify-center h-16 text-[var(--muted)]/40 gap-1">
-            <Image size={20} />
-            <span className="text-[11px]">Binary file — cannot preview</span>
-          </div>
-        )}
-        {!binary && !content && !error && (
-          <div className="flex items-center justify-center h-16 text-[var(--muted)]/40">
-            <Loader size={14} className="animate-spin" />
-          </div>
-        )}
-        {!binary && error && (
-          <div className="px-3 py-2 text-[11px] text-red-400">{error}</div>
-        )}
-        {!binary && content && (
-          <pre className="px-3 py-2 text-[11px] font-mono whitespace-pre overflow-x-auto text-[var(--muted)]/80 leading-relaxed">
-            <code>{content}</code>
-          </pre>
-        )}
-      </div>
-      {ext && <div className="px-3 py-1 border-t border-[var(--border)] text-[10px] text-[var(--muted)]/40 shrink-0">{ext}</div>}
-    </div>
-  );
 }
 
 /* ── Main component ── */
@@ -430,93 +354,95 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
       />
 
       <div className="flex-1 flex flex-col border-l border-[var(--border)] bg-[var(--surface)] min-w-0">
-        {/* Header */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
-          <span className="text-[12px] font-medium text-[var(--text)]">Activity</span>
-          {activeIdx !== -1 && (
-            <span className="flex items-center gap-1 text-[10px] text-[var(--cedar)] truncate max-w-[100px]">
-              <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" />
-              {toolEntries[activeIdx].name}
-            </span>
-          )}
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-[18px] leading-none ml-2 shrink-0">×</button>
-        </div>
+        {/* FileViewer takes over the full pane when a file is selected */}
+        {selectedFile ? (
+          <FileViewer path={selectedFile} onClose={() => setSelectedFile(null)} />
+        ) : (
+          <>
+            {/* Header */}
+            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
+              <span className="text-[12px] font-medium text-[var(--text)]">Activity</span>
+              {activeIdx !== -1 && (
+                <span className="flex items-center gap-1 text-[10px] text-[var(--cedar)] truncate max-w-[100px]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" />
+                  {toolEntries[activeIdx].name}
+                </span>
+              )}
+              <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-[18px] leading-none ml-2 shrink-0">×</button>
+            </div>
 
-        {/* Tab bar */}
-        <div className="px-2 py-2 shrink-0 border-b border-[var(--border)] overflow-x-auto">
-          <SegmentedControl segments={TABS} value={tab} onChange={setTab} />
-        </div>
+            {/* Tab bar */}
+            <div className="px-2 py-2 shrink-0 border-b border-[var(--border)] overflow-x-auto">
+              <SegmentedControl segments={TABS} value={tab} onChange={setTab} />
+            </div>
 
-        {/* Content */}
-        <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-2">
-          {/* Tools tab */}
-          {tab === "tools" && (
-            toolEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                <Wrench size={24} /><span className="text-[13px]">Waiting for activity…</span>
-              </div>
-            ) : (
-              [...toolEntries].reverse().map((entry, ri) => {
-                const origIdx = toolEntries.length - 1 - ri;
-                return <ToolEntryCard key={entry.callId + ri} entry={entry} isLast={origIdx === lastToolIdx} isActive={origIdx === activeIdx} />;
-              })
-            )
-          )}
-
-          {/* Files tab */}
-          {tab === "files" && (
-            allFiles.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                <FileText size={24} /><span className="text-[13px]">No files yet</span>
-              </div>
-            ) : (
-              allFiles.map((f) => (
-                <div
-                  key={f.path}
-                  onClick={() => setSelectedFile((prev) => prev === f.path ? null : f.path)}
-                >
-                  <FileRow file={f} active={selectedFile === f.path} />
-                </div>
-              ))
-            )
-          )}
-
-          {/* Subagents tab */}
-          {tab === "subagents" && (
-            subagentEntries.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                <Bot size={24} /><span className="text-[13px]">No subagents yet</span>
-              </div>
-            ) : (
-              subagentEntries.map((e) => (
-                <SubagentCard key={e.callId} entry={e} startedAt={startTimesRef.current.get(e.callId) ?? Date.now()} />
-              ))
-            )
-          )}
-
-          {/* Logs tab */}
-          {tab === "logs" && (
-            sseLog.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                <ScrollText size={24} /><span className="text-[13px]">No events yet</span>
-              </div>
-            ) : (
-              <div className="px-2 flex flex-col gap-0.5">
-                {sseLog.map((entry, i) => (
-                  <div key={i} className="flex items-center gap-2 px-2 py-1 rounded text-[10px] font-mono hover:bg-[var(--bg)]">
-                    <span className="text-[var(--cedar)] shrink-0">{entry.type}</span>
-                    {entry.summary && <span className="text-[var(--muted)] truncate flex-1">{entry.summary}</span>}
-                    <span className="text-[var(--muted)]/40 shrink-0">{entry.time}</span>
+            {/* Content */}
+            <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-2">
+              {/* Tools tab */}
+              {tab === "tools" && (
+                toolEntries.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+                    <Wrench size={24} /><span className="text-[13px]">Waiting for activity…</span>
                   </div>
-                ))}
-              </div>
-            )
-          )}
-        </div>
+                ) : (
+                  [...toolEntries].reverse().map((entry, ri) => {
+                    const origIdx = toolEntries.length - 1 - ri;
+                    return <ToolEntryCard key={entry.callId + ri} entry={entry} isLast={origIdx === lastToolIdx} isActive={origIdx === activeIdx} />;
+                  })
+                )
+              )}
 
-        {/* Inline file preview when a file is selected in the Files tab */}
-        {selectedFile && (
-          <FilePreview path={selectedFile} onClose={() => setSelectedFile(null)} />
+              {/* Files tab */}
+              {tab === "files" && (
+                allFiles.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+                    <FileText size={24} /><span className="text-[13px]">No files yet</span>
+                  </div>
+                ) : (
+                  allFiles.map((f) => (
+                    <div
+                      key={f.path}
+                      onClick={() => setSelectedFile(f.path)}
+                    >
+                      <FileRow file={f} active={false} />
+                    </div>
+                  ))
+                )
+              )}
+
+              {/* Subagents tab */}
+              {tab === "subagents" && (
+                subagentEntries.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+                    <Bot size={24} /><span className="text-[13px]">No subagents yet</span>
+                  </div>
+                ) : (
+                  subagentEntries.map((e) => (
+                    <SubagentCard key={e.callId} entry={e} startedAt={startTimesRef.current.get(e.callId) ?? Date.now()} />
+                  ))
+                )
+              )}
+
+              {/* Logs tab */}
+              {tab === "logs" && (
+                sseLog.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+                    <ScrollText size={24} /><span className="text-[13px]">No events yet</span>
+                  </div>
+                ) : (
+                  <div className="px-2 flex flex-col gap-0.5">
+                    {sseLog.map((entry, i) => (
+                      <div key={i} className="flex items-center gap-2 px-2 py-1 rounded text-[10px] font-mono hover:bg-[var(--bg)]">
+                        <span className="text-[var(--cedar)] shrink-0">{entry.type}</span>
+                        {entry.summary && <span className="text-[var(--muted)] truncate flex-1">{entry.summary}</span>}
+                        <span className="text-[var(--muted)]/40 shrink-0">{entry.time}</span>
+                      </div>
+                    ))}
+                  </div>
+                )
+              )}
+            </div>
+          </>
         )}
       </div>
     </aside>
