@@ -14,12 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from arz.config.schema import ArzConfig
 from arz.dashboard.routes.approvals import router as approvals_router
 from arz.dashboard.routes.chat import router as chat_router
+from arz.dashboard.routes.files import router as files_router
 from arz.dashboard.routes.health import router as health_router
 from arz.dashboard.routes.sessions import router as sessions_router
 from arz.dashboard.routes.settings import router as settings_router
 from arz.dashboard.token_auth import load_token
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
+from arz.session.session_map import SessionMap
 
 log = structlog.get_logger(__name__)
 
@@ -42,6 +44,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
     app.state.session_manager = SessionManager()
+    app.state.session_map = SessionMap()
     app.state.token_auth_enabled = config.dashboard.token_auth
     app.state.token = load_token() if config.dashboard.token_auth else None
     app.state.pending_approvals = {}
@@ -66,6 +69,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(chat_router)
     app.include_router(settings_router)
     app.include_router(approvals_router)
+    app.include_router(files_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

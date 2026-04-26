@@ -28,6 +28,13 @@ export default function ChatPage() {
   const [activityOpen, setActivityOpen] = useState(false);
   const [toolEntries, setToolEntries] = useState<ToolEntry[]>([]);
   const [sseLog, setSseLog] = useState<SseLogEntry[]>([]);
+  const [activityWidth, setActivityWidth] = useState<number>(() => {
+    const saved = localStorage.getItem("arz:activity-width");
+    const n = saved ? parseInt(saved, 10) : NaN;
+    return !isNaN(n) && n >= 220 && n <= 600 ? n : 300;
+  });
+  const [seedPaths, setSeedPaths] = useState<string[]>([]);
+  const [requestedFile, setRequestedFile] = useState<string | null>(null);
 
   const loadSessions = async () => {
     try {
@@ -47,10 +54,32 @@ export default function ChatPage() {
     return () => clearInterval(interval);
   }, []);
 
+  // On session switch: load persisted activity from localStorage instead of clearing
   useEffect(() => {
-    setToolEntries([]);
     setSseLog([]);
+    setSeedPaths([]);
+    setRequestedFile(null);
+    if (!activeId) { setToolEntries([]); return; }
+    try {
+      const raw = localStorage.getItem(`arz:activity:${activeId}`);
+      setToolEntries(raw ? (JSON.parse(raw) as ToolEntry[]) : []);
+    } catch {
+      setToolEntries([]);
+    }
   }, [activeId]);
+
+  // Persist toolEntries to localStorage whenever they change
+  useEffect(() => {
+    if (!activeId || toolEntries.length === 0) return;
+    try {
+      // Truncate result to 1000 chars each to bound storage size
+      const slim = toolEntries.map((e) => ({
+        ...e,
+        result: e.result ? e.result.slice(0, 1000) : e.result,
+      }));
+      localStorage.setItem(`arz:activity:${activeId}`, JSON.stringify(slim));
+    } catch {}
+  }, [activeId, toolEntries]);
 
   const handleCreate = async () => {
     try {
@@ -88,6 +117,17 @@ export default function ChatPage() {
   };
 
   const handleSelect = (id: string) => setActiveId(id);
+
+  const handleSeedFiles = (paths: string[]) => setSeedPaths((prev) => {
+    const existing = new Set(prev);
+    const next = paths.filter((p) => !existing.has(p));
+    return next.length > 0 ? [...prev, ...next] : prev;
+  });
+
+  const handleFileOpen = (path: string) => {
+    setActivityOpen(true);
+    setRequestedFile(path);
+  };
 
   if (loading) {
     return (
@@ -128,6 +168,8 @@ export default function ChatPage() {
                 ...prev,
                 { type, summary, time: new Date().toLocaleTimeString() },
               ])}
+              onSeedFiles={handleSeedFiles}
+              onFileOpen={handleFileOpen}
               activityOpen={activityOpen}
               onToggleActivity={() => setActivityOpen((v) => !v)}
             />
@@ -152,7 +194,12 @@ export default function ChatPage() {
             sessionId={activeId}
             toolEntries={toolEntries}
             sseLog={sseLog}
+            seedPaths={seedPaths}
+            requestedFile={requestedFile}
+            onFileOpenHandled={() => setRequestedFile(null)}
             onClose={() => setActivityOpen(false)}
+            width={activityWidth}
+            onWidthChange={setActivityWidth}
           />
         )}
       </main>

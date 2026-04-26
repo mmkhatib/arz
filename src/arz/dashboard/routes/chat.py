@@ -16,6 +16,7 @@ from arz.dashboard.token_auth import require_token
 from arz.providers.base import LLMProvider
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
+from arz.session.session_map import SessionMap
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -23,14 +24,14 @@ router = APIRouter(dependencies=[Depends(require_token)])
 _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
 
-def _make_provider(config: object, session_id: str, history: list[dict] | None) -> LLMProvider:
+def _make_provider(config: object, session_id: str, history: list[dict] | None, session_work_dir: str | None = None) -> LLMProvider:
     """Factory: build the right provider for this session."""
     from arz.config.schema import ArzConfig
     assert isinstance(config, ArzConfig)
 
     provider_name = config.provider.name
     model = config.provider.model
-    work_dir = _WORKSPACE_ROOT / session_id
+    work_dir = Path(session_work_dir) if session_work_dir else (_WORKSPACE_ROOT / session_id)
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
@@ -152,10 +153,41 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     if session and session.messages:
         history = [{"role": m.role, "text": m.text} for m in session.messages]
 
-    provider = await pool.activate(
-        session_id,
-        lambda: _make_provider(request.app.state.config, session_id, history),
-    )
+    cfg = request.app.state.config
+    session_map: SessionMap = request.app.state.session_map
+    session_work_dir = getattr(session, "work_dir", None)
+
+    # Look up any prior provider session ID for native resume
+    provider_sid = session_map.get(session_id)
+
+    def _factory() -> LLMProvider:
+        p = _make_provider(cfg, session_id, history, session_work_dir)
+        if provider_sid:
+            p.set_resume_session_id(provider_sid)
+        return p
+
+    provider = await pool.activate(session_id, _factory)
+
+    # Auto-evict if provider was started with a different model than current config.
+    desired_model = cfg.provider.model
+    if provider.current_model is not None and provider.current_model != desired_model:
+        log.info(
+            "Model mismatch — evicting and recreating provider",
+            session_id=session_id,
+            had=provider.current_model,
+            want=desired_model,
+        )
+        # Clear session map so the new provider starts fresh with the correct model
+        session_map.remove(session_id)
+        await pool.deactivate(session_id)
+        provider = await pool.activate(
+            session_id,
+            lambda: _make_provider(cfg, session_id, history, session_work_dir),
+        )
+
+    # Persist provider session ID for future resume
+    if provider.session_id:
+        session_map.set(session_id, provider.session_id)
 
     return StreamingResponse(
         _stream_response(provider, session_id, message, mgr, request.app.state.pending_approvals, request.app.state.yolo_sessions, request.app.state.session_modes),

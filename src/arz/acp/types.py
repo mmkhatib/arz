@@ -19,6 +19,7 @@ EVENT_COMPLETE = "complete"
 
 METHOD_INITIALIZE = "initialize"
 METHOD_SESSION_NEW = "session/new"
+METHOD_SESSION_LOAD = "session/load"
 METHOD_SET_MODEL = "session/set_model"
 METHOD_SET_MODE = "session/set_mode"
 METHOD_PROMPT = "session/prompt"

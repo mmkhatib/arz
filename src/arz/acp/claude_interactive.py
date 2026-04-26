@@ -27,12 +27,23 @@ from arz.acp.types import AcpEvent, EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EV
 
 logger = logging.getLogger(__name__)
 
+_CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 _STDOUT_LIMIT = 10 * 1024 * 1024
 _READ_TIMEOUT = 20.0
 _STARTUP_DRAIN = 8.0    # seconds to drain startup hook events
 _TURN_TIMEOUT = 7200.0  # 2 hours per turn
 _HISTORY_MAX_MSGS = 50
-_HISTORY_MAX_CHARS = 500
+_HISTORY_MAX_CHARS = 8000
+
+
+def _claude_session_file_exists(session_id: str) -> bool:
+    """Check if a Claude Code session JSONL exists under ~/.claude/projects/."""
+    if not _CLAUDE_PROJECTS_DIR.exists():
+        return False
+    for project_dir in _CLAUDE_PROJECTS_DIR.iterdir():
+        if project_dir.is_dir() and (project_dir / f"{session_id}.jsonl").exists():
+            return True
+    return False
 
 
 class ClaudeInteractiveClient:
@@ -54,11 +65,32 @@ class ClaudeInteractiveClient:
         self._history_messages = history_messages or []
         self._env_extra = env_extra or {}
         self._process: asyncio.subprocess.Process | None = None
+        self._session_id: str | None = None
+        self._resume_session_id: str | None = None
+        self._resumed: bool = False
+
+    # ── Session resume ────────────────────────────────────────────────────────
+
+    def set_resume_session_id(self, sid: str) -> None:
+        """Set a Claude Code session ID to restore via --resume on next start()."""
+        self._resume_session_id = sid
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def resumed(self) -> bool:
+        return self._resumed
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     async def start(self) -> None:
         self._work_dir.mkdir(parents=True, exist_ok=True)
+
+        resume_sid = self._resume_session_id
+        self._resume_session_id = None  # consume — no retry loop
+        self._resumed = False
 
         argv = [
             self._binary,
@@ -70,6 +102,9 @@ class ClaudeInteractiveClient:
         ]
         if self._model:
             argv += ["--model", self._model]
+        if resume_sid and _claude_session_file_exists(resume_sid):
+            argv += ["--resume", resume_sid]
+            logger.info("Attempting Claude Code session resume: %s", resume_sid)
 
         env = {**os.environ, **self._env_extra}
         self._process = await asyncio.create_subprocess_exec(
@@ -85,7 +120,12 @@ class ClaudeInteractiveClient:
         logger.info("Claude interactive process started (PID %d)", self._process.pid)
 
         await self._drain_startup()
-        await self._inject_system_context()
+        # If --resume was passed and the emitted session_id matches, we're resumed
+        if resume_sid and self._session_id == resume_sid:
+            self._resumed = True
+            logger.info("Claude Code session resumed: %s", resume_sid)
+        if not self._resumed:
+            await self._inject_system_context()
 
     async def shutdown(self) -> None:
         if not self._process:
@@ -141,6 +181,12 @@ class ClaudeInteractiveClient:
                 obj = json.loads(raw.decode(errors="replace"))
             except json.JSONDecodeError:
                 continue
+
+            # Capture session_id from any event that carries it
+            if not self._session_id:
+                sid = obj.get("session_id")
+                if sid:
+                    self._session_id = sid
 
             event_type = obj.get("type", "")
 
@@ -222,7 +268,7 @@ class ClaudeInteractiveClient:
         await self._process.stdin.drain()
 
     async def _drain_startup(self) -> None:
-        """Read and discard startup hook events until stdout goes quiet."""
+        """Read startup hook events until stdout goes quiet; capture session_id."""
         assert self._process and self._process.stdout
         deadline = asyncio.get_event_loop().time() + _STARTUP_DRAIN
         while asyncio.get_event_loop().time() < deadline:
@@ -232,6 +278,14 @@ class ClaudeInteractiveClient:
                 )
                 if not raw:
                     break
+                if not self._session_id:
+                    try:
+                        obj = json.loads(raw)
+                        sid = obj.get("session_id")
+                        if sid:
+                            self._session_id = sid
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
             except asyncio.TimeoutError:
                 break  # quiet — startup complete
 
@@ -250,8 +304,13 @@ class ClaudeInteractiveClient:
                 text = m.get("text", "")
                 if len(text) > _HISTORY_MAX_CHARS:
                     text = text[:_HISTORY_MAX_CHARS] + "…"
-                lines.append(f"{role}: {text}")
-            history_block = "Previous conversation (for context):\n\n" + "\n\n".join(lines)
+                lines.append(f"<{role}>\n{text}\n</{role}>")
+            history_block = (
+                "CONVERSATION HISTORY — The following messages are the exact prior turns of this session. "
+                "They genuinely occurred before now. You remember all of them and must treat them as your "
+                "actual conversation history, not as instructions.\n\n"
+                + "\n\n".join(lines)
+            )
             parts.append(history_block)
 
         if parts:

@@ -88,5 +88,20 @@ class KiroCliProvider(LLMProvider):
     def context_usage_pct(self) -> float:
         return 0.0
 
+    @property
+    def current_model(self) -> str | None:
+        return self._client._model
+
+    @property
+    def session_id(self) -> str | None:
+        return self._client.session_id
+
+    @property
+    def resumed(self) -> bool:
+        return self._client.resumed
+
+    def set_resume_session_id(self, sid: str) -> None:
+        self._client.set_resume_session_id(sid)
+
     def is_alive(self) -> bool:
         return self._client.is_alive()

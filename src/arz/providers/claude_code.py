@@ -84,5 +84,20 @@ class ClaudeCodeProvider(LLMProvider):
     async def reject_tool(self, request_id: str | int) -> None:
         await self._client.reject_tool(str(request_id))
 
+    @property
+    def current_model(self) -> str | None:
+        return self._client._model
+
+    @property
+    def session_id(self) -> str | None:
+        return self._client.session_id
+
+    @property
+    def resumed(self) -> bool:
+        return self._client.resumed
+
+    def set_resume_session_id(self, sid: str) -> None:
+        self._client.set_resume_session_id(sid)
+
     def context_usage_pct(self) -> float:
         return 0.0

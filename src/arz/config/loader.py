@@ -84,6 +84,6 @@ def save_config(config: ArzConfig, path: Path | None = None) -> None:
     user_path = path or _USER_CONFIG
     user_path.parent.mkdir(parents=True, exist_ok=True)
 
-    data = config.model_dump()
+    data = config.model_dump(exclude_none=True)
     with open(user_path, "wb") as f:
         tomli_w.dump(data, f)

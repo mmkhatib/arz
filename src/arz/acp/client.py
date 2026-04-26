@@ -39,6 +39,7 @@ from arz.acp.types import (
     METHOD_INITIALIZE,
     METHOD_PROMPT,
     METHOD_REQUEST_PERMISSION,
+    METHOD_SESSION_LOAD,
     METHOD_SESSION_NEW,
     METHOD_SESSION_UPDATE,
     METHOD_SET_MODEL,
@@ -48,6 +49,8 @@ from arz.acp.types import (
     UPDATE_AGENT_MESSAGE_CHUNK,
     UPDATE_TOOL_CALL,
 )
+
+_KIRO_SESSIONS_DIR = Path.home() / ".kiro" / "sessions" / "cli"
 
 logger = logging.getLogger(__name__)
 
@@ -103,12 +106,27 @@ class AcpClient:
 
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
+        self._resume_session_id: str | None = None
+        self._resumed: bool = False
+        self._can_load_session: bool = False
         self._next_id = 1
         self._pending_permissions: dict[Any, asyncio.Event] = {}
         self._permission_outcomes: dict[Any, str] = {}
         self._stderr_task: asyncio.Task[None] | None = None
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    def set_resume_session_id(self, sid: str) -> None:
+        """Set a kiro-cli session ID to restore via session/load on next start()."""
+        self._resume_session_id = sid
+
+    @property
+    def session_id(self) -> str | None:
+        return self._session_id
+
+    @property
+    def resumed(self) -> bool:
+        return self._resumed
 
     async def start(self) -> None:
         """Spawn the subprocess and complete the ACP handshake."""
@@ -206,7 +224,7 @@ class AcpClient:
     # ── ACP handshake ─────────────────────────────────────────────────────────
 
     async def _initialize(self) -> None:
-        """Complete the ACP handshake: initialize → session/new → set_model."""
+        """ACP handshake: initialize → session/load or session/new → set_model."""
         init_id = self._next_req_id()
         await self._send(JsonRpcRequest(
             method=METHOD_INITIALIZE,
@@ -222,17 +240,54 @@ class AcpClient:
         if init_response.error:
             raise AcpError(f"ACP initialize failed: {init_response.error}")
 
-        import uuid
-        self._session_id = str(uuid.uuid4())
+        capabilities = (init_response.result or {}).get("agentCapabilities", {})
+        self._can_load_session = bool(capabilities.get("loadSession", False))
 
-        new_id = self._next_req_id()
-        await self._send(JsonRpcRequest(
-            method=METHOD_SESSION_NEW,
-            params={"sessionId": self._session_id},
-            id=new_id,
-        ))
-        # session/new response is optional on some implementations — drain briefly
-        await self._drain_briefly(0.5)
+        # Consume resume id — no retry loop
+        resume_sid = self._resume_session_id
+        self._resume_session_id = None
+        self._resumed = False
+
+        # Try session/load if supported and session file exists
+        if resume_sid and self._can_load_session:
+            session_file = _KIRO_SESSIONS_DIR / f"{resume_sid}.json"
+            if session_file.exists():
+                try:
+                    load_id = self._next_req_id()
+                    await self._send(JsonRpcRequest(
+                        method=METHOD_SESSION_LOAD,
+                        params={
+                            "sessionId": resume_sid,
+                            "cwd": str(self._work_dir),
+                            "mcpServers": [],
+                            "_meta": {"_kiro.dev/session_file": str(session_file)},
+                        },
+                        id=load_id,
+                    ))
+                    load_resp = await asyncio.wait_for(
+                        self._read_response(load_id), timeout=_INIT_TIMEOUT
+                    )
+                    if "modes" in (load_resp.result or {}):
+                        self._session_id = resume_sid
+                        self._resumed = True
+                        logger.info("kiro-cli session resumed: %s", resume_sid)
+                except (AcpError, AcpProcessDied, asyncio.TimeoutError):
+                    logger.info("session/load failed for %s — falling back to session/new", resume_sid)
+            else:
+                logger.info("kiro session file missing for %s — starting fresh", resume_sid)
+
+        # Fall back to new session
+        if not self._session_id:
+            import uuid
+            self._session_id = str(uuid.uuid4())
+            new_id = self._next_req_id()
+            await self._send(JsonRpcRequest(
+                method=METHOD_SESSION_NEW,
+                params={"sessionId": self._session_id},
+                id=new_id,
+            ))
+            await self._drain_briefly(0.5)
+            logger.info("kiro-cli session created: %s", self._session_id)
 
         model_id = self._next_req_id()
         await self._send(JsonRpcRequest(
@@ -241,7 +296,7 @@ class AcpClient:
             id=model_id,
         ))
         await self._drain_briefly(0.2)
-        logger.info("ACP session ready (id=%s model=%s)", self._session_id, self._model)
+        logger.info("ACP session ready (id=%s model=%s resumed=%s)", self._session_id, self._model, self._resumed)
 
     # ── I/O helpers ───────────────────────────────────────────────────────────
 

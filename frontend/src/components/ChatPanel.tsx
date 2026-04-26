@@ -4,6 +4,7 @@ import type { MessageRecord, SessionDetail } from "@/api/client";
 import MessageBubble from "./MessageBubble";
 import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
+import WelcomeView from "./WelcomeView";
 
 function ThinkingDots() {
   return (
@@ -27,6 +28,8 @@ interface Props {
   onToggleActivity?: () => void;
   onTitleChange?: (title: string) => void;
   onSseEvent?: (type: string, summary?: string) => void;
+  onSeedFiles?: (paths: string[]) => void;
+  onFileOpen?: (path: string) => void;
 }
 
 export default function ChatPanel({
@@ -37,6 +40,8 @@ export default function ChatPanel({
   onToggleActivity,
   onTitleChange,
   onSseEvent,
+  onSeedFiles,
+  onFileOpen,
 }: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
@@ -48,6 +53,7 @@ export default function ChatPanel({
   const [pendingApproval, setPendingApproval] = useState<{ requestId: string; title: string; toolInput: string } | null>(null);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
   const [settings, setSettings] = useState<{ model: string } | null>(null);
+  const [workDir, setWorkDir] = useState("");
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
@@ -57,10 +63,29 @@ export default function ChatPanel({
     setStreamBuffer("");
     setError(null);
     setTitle("New session");
+    setWorkDir("");
     api.getSession(sessionId)
       .then((s: SessionDetail) => {
         setMessages(s.messages);
         setTitle(s.title);
+        setWorkDir(s.work_dir ?? "");
+        // Seed file paths from message history so the Files tab is pre-populated
+        if (onSeedFiles) {
+          const FILE_TOOL_NAMES = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"]);
+          const paths: string[] = [];
+          const seen = new Set<string>();
+          for (const msg of s.messages) {
+            for (const tc of msg.tool_calls ?? []) {
+              if (!FILE_TOOL_NAMES.has(tc.name)) continue;
+              try {
+                const obj = JSON.parse(tc.input) as Record<string, unknown>;
+                const p = (obj.file_path || obj.path || obj.pattern) as string | undefined;
+                if (p && !seen.has(p)) { seen.add(p); paths.push(p); }
+              } catch {}
+            }
+          }
+          if (paths.length > 0) onSeedFiles(paths);
+        }
       })
       .catch((e: Error) => setError(e.message));
   }, [sessionId]);
@@ -83,6 +108,11 @@ export default function ChatPanel({
     api.saveSettings({ model })
       .then(() => api.evictSession(sessionId))
       .catch(() => {});
+  };
+
+  const handleWorkDirChange = (path: string) => {
+    setWorkDir(path);
+    api.setWorkDir(sessionId, path).catch(() => {});
   };
 
   const handleStop = () => {
@@ -204,17 +234,16 @@ export default function ChatPanel({
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {messages.length === 0 && !streaming && (
-          <div className="flex flex-col items-center justify-center h-full text-center">
-            <span className="text-6xl mb-4">🌲</span>
-            <h2 className="text-[var(--text)] text-xl font-medium mb-2">Hello! I'm Arzeh.</h2>
-            <p className="text-[var(--muted)] text-[14px] max-w-xs">
-              Your cedar — rooted, persistent, always here.
-            </p>
-          </div>
+          <WelcomeView
+            model={settings?.model}
+            onModelChange={handleModelChange}
+            workDir={workDir}
+            onWorkDirChange={handleWorkDirChange}
+          />
         )}
 
         {messages.map((msg, i) => (
-          <MessageBubble key={i} message={msg} />
+          <MessageBubble key={i} message={msg} onFileOpen={onFileOpen} />
         ))}
 
         {/* Live streaming bubble */}

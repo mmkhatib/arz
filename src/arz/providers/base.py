@@ -74,3 +74,21 @@ class LLMProvider(ABC):
     def is_alive(self) -> bool:
         """Return True if the backing process/connection is healthy."""
         return True
+
+    @property
+    def current_model(self) -> str | None:
+        """Return the model this provider was started with, or None if unknown."""
+        return None
+
+    @property
+    def session_id(self) -> str | None:
+        """Return the provider's native session ID (for resume on restart)."""
+        return None
+
+    @property
+    def resumed(self) -> bool:
+        """True if this provider was resumed from a prior session."""
+        return False
+
+    def set_resume_session_id(self, sid: str) -> None:
+        """Set the native session ID to resume. Must be called before start()."""

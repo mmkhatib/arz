@@ -9,6 +9,7 @@ export interface SessionSummary {
   updated_at: string;
   active: boolean;
   color?: number | null;
+  work_dir?: string | null;
 }
 
 export interface MessageRecord {
@@ -123,6 +124,20 @@ export const api = {
     });
     if (!res.ok) return { mode };
     return res.json() as Promise<{ mode: string }>;
+  },
+
+  async setWorkDir(sessionId: string, path: string): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/workdir`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+  },
+
+  async readFile(path: string): Promise<{ content: string; path: string; name: string; size: number }> {
+    return request<{ content: string; path: string; name: string; size: number }>(
+      `/files/read?path=${encodeURIComponent(path)}`
+    );
   },
 
   async generateTitle(sessionId: string, userMsg: string, assistantMsg: string): Promise<string> {

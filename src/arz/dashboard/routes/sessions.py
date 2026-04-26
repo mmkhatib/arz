@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -31,6 +32,7 @@ def _session_to_dict(session: object) -> dict:
         "updated_at": session.updated_at.isoformat(),
         "active": session.active,
         "color": session.color,
+        "work_dir": session.work_dir,
     }
 
 
@@ -103,6 +105,22 @@ async def set_session_color(session_id: str, request: Request) -> None:
     from arz.session.session import Session
     assert isinstance(session, Session)
     session.color = color
+    mgr.save(session)
+
+
+@router.patch("/api/sessions/{session_id}/workdir", status_code=status.HTTP_204_NO_CONTENT)
+async def set_work_dir(session_id: str, request: Request) -> None:
+    mgr = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    path = (body.get("path") or "").strip()
+    if path and not os.path.isabs(path):
+        raise HTTPException(status_code=422, detail="path must be absolute")
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    session.work_dir = path or None
     mgr.save(session)
 
 

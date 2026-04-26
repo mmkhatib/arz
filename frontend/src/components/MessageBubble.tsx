@@ -5,6 +5,7 @@ import MermaidBlock from "./MermaidBlock";
 
 interface Props {
   message: MessageRecord;
+  onFileOpen?: (path: string) => void;
 }
 
 function formatTime(iso: string): string {
@@ -81,7 +82,7 @@ function CodeBlock({ children, className }: { children?: React.ReactNode; classN
   );
 }
 
-export default function MessageBubble({ message }: Props) {
+export default function MessageBubble({ message, onFileOpen }: Props) {
   const isUser = message.role === "user";
 
   return (
@@ -112,8 +113,17 @@ export default function MessageBubble({ message }: Props) {
                   if (isBlock) {
                     return <CodeBlock className={className}>{children}</CodeBlock>;
                   }
+                  const text = String(children ?? "");
+                  const isPath = onFileOpen && text.startsWith("/") && text.length > 3 && !text.includes("\n");
                   return (
-                    <code className="bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[12px] font-mono">
+                    <code
+                      className={[
+                        "bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[12px] font-mono",
+                        isPath ? "cursor-pointer text-[var(--cedar)] hover:underline hover:border-[var(--cedar)]/50" : "",
+                      ].join(" ")}
+                      onClick={isPath ? () => onFileOpen!(text) : undefined}
+                      title={isPath ? `Open ${text}` : undefined}
+                    >
                       {children}
                     </code>
                   );
