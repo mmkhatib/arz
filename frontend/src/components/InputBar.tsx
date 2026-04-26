@@ -1,17 +1,23 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check } from "lucide-react";
 import ContextRing from "./ContextRing";
+import Popover from "./Popover";
 
 export type ApprovalMode = "normal" | "trust_reads" | "trust" | "yolo";
 
-const APPROVAL_DISPLAY: Record<ApprovalMode, { label: string; icon: React.ReactNode; color: string }> = {
-  normal:      { label: "Normal", icon: <ShieldCheck size={13} />, color: "" },
-  trust_reads: { label: "Reads",  icon: <BookOpen size={13} />,    color: "text-blue-400" },
-  trust:       { label: "Trust",  icon: <Handshake size={13} />,   color: "text-green-400" },
-  yolo:        { label: "YOLO",   icon: <Rocket size={13} />,      color: "text-red-400" },
-};
+const APPROVAL_OPTIONS: { mode: ApprovalMode; label: string; icon: React.ReactNode; hint: string; color: string }[] = [
+  { mode: "normal",      label: "Normal", icon: <ShieldCheck size={13} />, hint: "Ask before every tool",          color: "text-[var(--muted)]" },
+  { mode: "trust_reads", label: "Reads",  icon: <BookOpen size={13} />,    hint: "Auto-approve read-only tools",   color: "text-blue-400" },
+  { mode: "trust",       label: "Trust",  icon: <Handshake size={13} />,   hint: "Auto-approve all tools",         color: "text-green-400" },
+  { mode: "yolo",        label: "YOLO",   icon: <Rocket size={13} />,      hint: "No approval prompts at all",     color: "text-red-400" },
+];
 
-const MODE_CYCLE: ApprovalMode[] = ["normal", "trust_reads", "trust", "yolo"];
+const KNOWN_MODELS = [
+  { id: "claude-opus-4-7",           label: "Claude Opus 4.7" },
+  { id: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6" },
+  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
+  { id: "claude-opus-4-5",           label: "Claude Opus 4.5" },
+];
 
 const INPUT_MIN_H = 44;
 const INPUT_MAX_H = 140;
@@ -27,6 +33,7 @@ interface Props {
   model?: string;
   approvalMode?: ApprovalMode;
   onApprovalModeChange?: (mode: ApprovalMode) => void;
+  onModelChange?: (model: string) => void;
 }
 
 export default function InputBar({
@@ -38,6 +45,7 @@ export default function InputBar({
   model,
   approvalMode = "normal",
   onApprovalModeChange,
+  onModelChange,
 }: Props) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -50,12 +58,13 @@ export default function InputBar({
     const n = saved ? parseInt(saved, 10) : NaN;
     return !isNaN(n) && n >= INPUT_DRAG_MIN_H ? n : null;
   });
+  const [approvalOpen, setApprovalOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
 
   useEffect(() => {
     if (!disabled && !isRunning) textareaRef.current?.focus();
   }, [disabled, isRunning]);
 
-  // Sync manual height to DOM
   useEffect(() => {
     if (!wrapperRef.current) return;
     if (manualHeight !== null) {
@@ -65,10 +74,8 @@ export default function InputBar({
     }
   }, [manualHeight]);
 
-  // Auto-resize textarea
   const applyHeight = useCallback(() => {
-    if (!textareaRef.current || dragging.current) return;
-    if (manualHeight !== null) return;
+    if (!textareaRef.current || dragging.current || manualHeight !== null) return;
     const el = textareaRef.current;
     el.style.height = "auto";
     el.style.height = Math.max(INPUT_MIN_H, Math.min(el.scrollHeight, INPUT_MAX_H)) + "px";
@@ -76,7 +83,6 @@ export default function InputBar({
 
   useEffect(() => { applyHeight(); }, [value, applyHeight]);
 
-  // Reset height when cleared
   const prevValue = useRef(value);
   useEffect(() => {
     if (prevValue.current && !value) {
@@ -87,7 +93,6 @@ export default function InputBar({
     prevValue.current = value;
   }, [value]);
 
-  // Drag resize global handlers
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!dragging.current || !wrapperRef.current) return;
@@ -107,10 +112,7 @@ export default function InputBar({
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+    return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, []);
 
   const handleDragStart = (e: React.MouseEvent) => {
@@ -145,13 +147,8 @@ export default function InputBar({
     onSend(msg);
   };
 
-  const cycleMode = () => {
-    const idx = MODE_CYCLE.indexOf(approvalMode);
-    const next = MODE_CYCLE[(idx + 1) % MODE_CYCLE.length];
-    onApprovalModeChange?.(next);
-  };
-
-  const modeDisplay = APPROVAL_DISPLAY[approvalMode];
+  const activeApproval = APPROVAL_OPTIONS.find((o) => o.mode === approvalMode) ?? APPROVAL_OPTIONS[0];
+  const activeModel = KNOWN_MODELS.find((m) => m.id === model);
   const hasInput = value.trim().length > 0;
 
   return (
@@ -170,7 +167,7 @@ export default function InputBar({
       <div
         ref={wrapperRef}
         className={[
-          "rounded-2xl border border-[var(--border)] bg-[var(--bg)] overflow-hidden",
+          "rounded-2xl border border-[var(--border)] bg-[var(--bg)] overflow-visible",
           "focus-within:border-[var(--cedar)]/50 transition-colors",
           manualHeight !== null ? "flex flex-col min-h-0" : "",
         ].join(" ")}
@@ -188,34 +185,90 @@ export default function InputBar({
           className={[
             "w-full bg-transparent border-none px-4 pt-3 pb-1 text-[var(--text)] text-[14px]",
             "outline-none resize-none leading-normal placeholder:text-[var(--muted)]",
-            manualHeight !== null ? "flex-1 h-full" : `min-h-[${INPUT_MIN_H}px] max-h-[${INPUT_MAX_H}px]`,
+            manualHeight !== null ? "flex-1" : "",
             disabled && !isRunning ? "opacity-40 pointer-events-none" : "",
           ].join(" ")}
+          style={manualHeight !== null ? { height: "100%" } : undefined}
         />
 
         {/* Bottom icon row */}
         <div className="flex items-center justify-between px-2.5 pb-2 pt-0.5 gap-2">
           {/* Left: model + approval mode + context ring */}
-          <div className="flex items-center gap-0.5 min-w-0 overflow-hidden flex-1">
-            {model && (
-              <div className="flex items-center gap-1.5 h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] shrink-0 whitespace-nowrap">
-                <ContextRing pct={contextPct} />
-                <span className="truncate max-w-[120px]">{model}</span>
-              </div>
-            )}
-            {!model && <ContextRing pct={contextPct} />}
-            {onApprovalModeChange && (
+          <div className="flex items-center gap-0.5 min-w-0 overflow-visible flex-1">
+            {/* Model picker */}
+            <div className="relative shrink-0">
               <button
-                onClick={cycleMode}
-                title={`Approval mode: ${modeDisplay.label}`}
-                className={[
-                  "h-7 px-2 rounded-lg text-[12px] font-mono flex items-center gap-1 cursor-pointer transition-all hover:bg-[var(--surface)] shrink-0 whitespace-nowrap",
-                  modeDisplay.color || "text-[var(--muted)] hover:text-[var(--text)]",
-                ].join(" ")}
+                onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); }}
+                className="h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center gap-1.5 transition-all whitespace-nowrap"
+                title="Switch model"
               >
-                <span className="shrink-0">{modeDisplay.icon}</span>
-                {modeDisplay.label}
+                <ContextRing pct={contextPct} />
+                <span className="truncate max-w-[110px]">
+                  {activeModel?.label ?? model ?? "Model"}
+                </span>
               </button>
+              <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
+                <div className="px-1 py-0.5">
+                  <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Model</div>
+                  {KNOWN_MODELS.map((m) => (
+                    <button
+                      key={m.id}
+                      onClick={() => {
+                        onModelChange?.(m.id);
+                        setModelOpen(false);
+                      }}
+                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                    >
+                      <span className="w-3 shrink-0">
+                        {m.id === model && <Check size={12} className="text-[var(--cedar)]" />}
+                      </span>
+                      <span className={m.id === model ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
+                        {m.label}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </Popover>
+            </div>
+
+            {/* Approval mode picker */}
+            {onApprovalModeChange && (
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => { setApprovalOpen((v) => !v); setModelOpen(false); }}
+                  className={[
+                    "h-7 px-2 rounded-lg text-[12px] font-mono flex items-center gap-1 transition-all hover:bg-[var(--surface)] whitespace-nowrap",
+                    activeApproval.color,
+                  ].join(" ")}
+                  title={`Approval mode: ${activeApproval.label}`}
+                >
+                  <span className="shrink-0">{activeApproval.icon}</span>
+                  {activeApproval.label}
+                </button>
+                <Popover open={approvalOpen} onClose={() => setApprovalOpen(false)}>
+                  <div className="px-1 py-0.5">
+                    <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Approval Mode</div>
+                    {APPROVAL_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.mode}
+                        onClick={() => { onApprovalModeChange(opt.mode); setApprovalOpen(false); }}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                      >
+                        <span className="w-3 shrink-0">
+                          {opt.mode === approvalMode && <Check size={12} className="text-[var(--cedar)]" />}
+                        </span>
+                        <span className={`shrink-0 ${opt.color}`}>{opt.icon}</span>
+                        <div className="min-w-0">
+                          <div className={opt.mode === approvalMode ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
+                            {opt.label}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted)]/60">{opt.hint}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </Popover>
+              </div>
             )}
           </div>
 

@@ -15,6 +15,10 @@ export interface MessageRecord {
   role: "user" | "assistant" | "system";
   text: string;
   created_at: string;
+  /** Tool calls made during this message (assistant only) */
+  tool_calls?: { name: string; input: string }[];
+  /** Wall time in milliseconds from send to complete (assistant only) */
+  elapsed_ms?: number;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -105,6 +109,10 @@ export const api = {
   async toggleYolo(sessionId: string): Promise<{ yolo: boolean }> {
     const res = await fetch(`${BASE}/sessions/${sessionId}/yolo`, { method: "POST" });
     return res.json() as Promise<{ yolo: boolean }>;
+  },
+
+  async evictSession(sessionId: string): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/evict`, { method: "POST" });
   },
 
   async setApprovalMode(sessionId: string, mode: string): Promise<{ mode: string }> {

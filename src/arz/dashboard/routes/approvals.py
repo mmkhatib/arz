@@ -48,6 +48,14 @@ class ModeBody(BaseModel):
 VALID_MODES = {"normal", "trust_reads", "trust", "yolo"}
 
 
+@router.post("/api/sessions/{session_id}/evict", status_code=status.HTTP_204_NO_CONTENT)
+async def evict_session(session_id: str, request: Request) -> None:
+    """Shut down and remove the active provider for this session (model switch helper)."""
+    from arz.providers.pool import ProviderPool
+    pool: ProviderPool = request.app.state.provider_pool
+    await pool.deactivate(session_id)
+
+
 @router.post("/api/sessions/{session_id}/mode")
 async def set_session_mode(session_id: str, body: ModeBody, request: Request) -> dict:
     if body.mode not in VALID_MODES:

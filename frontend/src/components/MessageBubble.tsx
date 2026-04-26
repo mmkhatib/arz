@@ -7,15 +7,21 @@ interface Props {
   message: MessageRecord;
 }
 
-function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const s = Math.floor(diff / 1000);
-  if (s < 60) return "just now";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) {
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
+    d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = (ms / 1000).toFixed(1);
+  return `${s}s`;
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -153,10 +159,19 @@ export default function MessageBubble({ message }: Props) {
           )}
         </div>
 
-        {/* Timestamp — visible on hover */}
-        <span className="text-[10px] text-[var(--muted)] opacity-0 group-hover:opacity-100 transition-opacity px-1 self-end">
-          {relativeTime(message.created_at)}
-        </span>
+        {/* Footer: timestamp + elapsed + tool calls — visible on hover */}
+        <div className={`flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-1 text-[10px] text-[var(--muted)] ${isUser ? "justify-end" : "justify-start"}`}>
+          <span className="font-mono">{formatTime(message.created_at)}</span>
+          {!isUser && message.elapsed_ms !== undefined && (
+            <span className="font-mono">{fmtElapsed(message.elapsed_ms)}</span>
+          )}
+          {!isUser && message.tool_calls && message.tool_calls.length > 0 && (
+            <span className="flex items-center gap-0.5">
+              <span>🔧</span>
+              <span>{message.tool_calls.length} tool{message.tool_calls.length !== 1 ? "s" : ""}</span>
+            </span>
+          )}
+        </div>
       </div>
 
       {isUser && (

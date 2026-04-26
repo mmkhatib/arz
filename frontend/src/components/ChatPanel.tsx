@@ -78,6 +78,13 @@ export default function ChatPanel({
     api.setApprovalMode(sessionId, mode).catch(() => {});
   };
 
+  const handleModelChange = (model: string) => {
+    setSettings((prev) => prev ? { ...prev, model } : { model });
+    api.saveSettings({ model })
+      .then(() => api.evictSession(sessionId))
+      .catch(() => {});
+  };
+
   const handleStop = () => {
     abortRef.current?.();
   };
@@ -100,6 +107,7 @@ export default function ChatPanel({
     setPendingApproval(null);
 
     let aborted = false;
+    const sendStart = Date.now();
     abortRef.current = () => { aborted = true; setStreaming(false); setStreamBuffer(""); };
 
     try {
@@ -109,6 +117,7 @@ export default function ChatPanel({
       }
 
       let fullText = "";
+      const turnToolCalls: { name: string; input: string }[] = [];
       for await (const chunk of api.streamChat(response)) {
         if (aborted) break;
 
@@ -119,6 +128,7 @@ export default function ChatPanel({
         } else if (chunk.type === "tool_call" && chunk.tool_name) {
           const callId = chunk.request_id || chunk.tool_name! + Date.now();
           const tc = { callId, name: chunk.tool_name!, input: chunk.tool_input || "", time: new Date().toLocaleTimeString() };
+          turnToolCalls.push({ name: tc.name, input: tc.input });
           setToolCalls((prev) => [...prev, { callId: tc.callId, name: tc.name, input: tc.input }]);
           onToolCall?.(tc);
           onSseEvent?.("tool_call", chunk.tool_name);
@@ -153,6 +163,8 @@ export default function ChatPanel({
           role: "assistant",
           text: fullText,
           created_at: new Date().toISOString(),
+          tool_calls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
+          elapsed_ms: Date.now() - sendStart,
         };
         setMessages((prev) => [...prev, assistantMsg]);
       }
@@ -246,6 +258,7 @@ export default function ChatPanel({
         model={settings?.model}
         approvalMode={approvalMode}
         onApprovalModeChange={handleApprovalModeChange}
+        onModelChange={handleModelChange}
       />
     </div>
   );
