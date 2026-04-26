@@ -146,6 +146,11 @@ export const api = {
     );
   },
 
+  fetchSessionFiles: (id: string) =>
+    request<{ path: string; rel_path: string; name: string; ext: string; size: number }[]>(
+      `/sessions/${id}/files`
+    ),
+
   async generateTitle(sessionId: string, userMsg: string, assistantMsg: string): Promise<string> {
     const res = await fetch(`${BASE}/sessions/${sessionId}/generate-title`, {
       method: "POST",

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image, Terminal, File, CheckCircle, Loader, X, Copy } from "lucide-react";
 import { api } from "@/api/client";
 import SegmentedControl from "./SegmentedControl";
@@ -160,22 +160,58 @@ function SubagentCard({ entry, startedAt }: { entry: ToolEntry; startedAt: numbe
   );
 }
 
+const BINARY_EXTS = new Set([
+  "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp",
+  "pdf", "wasm", "zip", "tar", "gz", "7z", "rar",
+  "mp3", "mp4", "mov", "avi", "wav", "ogg",
+  "ttf", "otf", "woff", "woff2",
+  "exe", "bin", "dylib", "so", "a",
+  "pyc", "pyo", "class",
+]);
+
+function isBinary(path: string) {
+  const ext = path.split(".").pop()?.toLowerCase() || "";
+  return BINARY_EXTS.has(ext);
+}
+
+/* ── WorkspaceFile type ── */
+interface WorkspaceFile {
+  path: string;
+  rel_path: string;
+  name: string;
+  ext: string;
+  size: number;
+  live?: boolean; // touched during this session
+}
+
 /* ── FileRow ── */
-function FileRow({ path }: { path: string }) {
-  const name = path.split("/").pop() || path;
-  const parts = path.split("/").slice(0, -1);
-  const fullDir = parts.join("/");
-  const shortDir = parts.length > 3 ? "…/" + parts.slice(-3).join("/") : fullDir;
-  const Icon = fileIcon(path);
+function FileRow({ file, active }: { file: WorkspaceFile; active: boolean }) {
+  const Icon = fileIcon(file.path);
+  const dir = file.rel_path.includes("/")
+    ? file.rel_path.slice(0, file.rel_path.lastIndexOf("/"))
+    : "";
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--bg)] cursor-pointer text-[13px]">
+    <div className={[
+      "flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px] transition-colors",
+      active ? "bg-[var(--cedar)]/10" : "hover:bg-[var(--bg)]",
+    ].join(" ")}>
       <Icon size={12} className="text-[var(--muted)] shrink-0" />
       <div className="flex-1 min-w-0">
-        <div className="text-[var(--text)] truncate text-[12px]">{name}</div>
-        {shortDir && <div className="text-[10px] text-[var(--muted)] truncate">{shortDir}</div>}
+        <div className="text-[var(--text)] truncate text-[12px] flex items-center gap-1">
+          <span className="truncate">{file.name}</span>
+          {file.live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" title="Touched this session" />}
+        </div>
+        {dir && <div className="text-[10px] text-[var(--muted)] truncate">{dir}</div>}
       </div>
+      <span className="text-[9px] text-[var(--muted)]/40 font-mono shrink-0">{formatSize(file.size)}</span>
     </div>
   );
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}K`;
+  return `${(bytes / 1024 / 1024).toFixed(1)}M`;
 }
 
 /* ── Types ── */
@@ -200,13 +236,15 @@ function FilePreview({ path, onClose }: { path: string; onClose: () => void }) {
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const binary = isBinary(path);
 
   useEffect(() => {
+    if (binary) { setContent(null); setError(null); return; }
     setContent(null); setError(null);
     api.readFile(path)
       .then((r) => setContent(r.content))
       .catch((e: Error) => setError(e.message));
-  }, [path]);
+  }, [path, binary]);
 
   const copy = async () => {
     if (!content) return;
@@ -232,15 +270,21 @@ function FilePreview({ path, onClose }: { path: string; onClose: () => void }) {
         <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] shrink-0"><X size={13} /></button>
       </div>
       <div className="flex-1 overflow-y-auto">
-        {!content && !error && (
+        {binary && (
+          <div className="flex flex-col items-center justify-center h-16 text-[var(--muted)]/40 gap-1">
+            <Image size={20} />
+            <span className="text-[11px]">Binary file — cannot preview</span>
+          </div>
+        )}
+        {!binary && !content && !error && (
           <div className="flex items-center justify-center h-16 text-[var(--muted)]/40">
             <Loader size={14} className="animate-spin" />
           </div>
         )}
-        {error && (
+        {!binary && error && (
           <div className="px-3 py-2 text-[11px] text-red-400">{error}</div>
         )}
-        {content && (
+        {!binary && content && (
           <pre className="px-3 py-2 text-[11px] font-mono whitespace-pre overflow-x-auto text-[var(--muted)]/80 leading-relaxed">
             <code>{content}</code>
           </pre>
@@ -255,9 +299,49 @@ function FilePreview({ path, onClose }: { path: string; onClose: () => void }) {
 export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seedPaths, requestedFile, onFileOpenHandled, onClose, width, onWidthChange }: Props) {
   const [tab, setTab] = useState<Tab>("tools");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
-  const files = useTouchedFiles(sessionId, toolEntries, seedPaths);
+  const touchedFiles = useTouchedFiles(sessionId, toolEntries, seedPaths);
+
+  // Build merged file list: workspace scan + tool-touched
+  const allFiles = useMemo<WorkspaceFile[]>(() => {
+    const wsPathSet = new Set(workspaceFiles.map((f) => f.path));
+    const livePathSet = new Set(touchedFiles.map((f) => f.path));
+    // Workspace files get live marker if also touched
+    const merged: WorkspaceFile[] = workspaceFiles.map((f) => ({
+      ...f,
+      live: livePathSet.has(f.path),
+    }));
+    // Add tool-touched files not in workspace (e.g. files outside workspace dir)
+    for (const tf of touchedFiles) {
+      if (!wsPathSet.has(tf.path)) {
+        merged.push({
+          path: tf.path,
+          rel_path: tf.path.split("/").pop() || tf.path,
+          name: tf.path.split("/").pop() || tf.path,
+          ext: tf.path.split(".").pop()?.toLowerCase() || "",
+          size: 0,
+          live: true,
+        });
+      }
+    }
+    return merged;
+  }, [workspaceFiles, touchedFiles]);
+
+  // Fetch workspace files when Files tab is active; auto-refresh every 5s
+  useEffect(() => {
+    if (tab !== "files") return;
+    let cancelled = false;
+    const fetch = () => {
+      api.fetchSessionFiles(sessionId)
+        .then((data) => { if (!cancelled) setWorkspaceFiles(data); })
+        .catch(() => {});
+    };
+    fetch();
+    const id = setInterval(fetch, 5000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [tab, sessionId]);
 
   // Handle file open requested from outside (e.g., clicking a path in chat)
   useEffect(() => {
@@ -332,7 +416,7 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
 
   const TABS = [
     { key: "tools" as Tab,     label: "Tools",   icon: <Wrench size={12} />,     count: toolEntries.length },
-    { key: "files" as Tab,     label: "Files",   icon: <FileText size={12} />,   count: files.length },
+    { key: "files" as Tab,     label: "Files",   icon: <FileText size={12} />,   count: allFiles.length },
     { key: "subagents" as Tab, label: "Agents",  icon: <Bot size={12} />,        count: subagentEntries.length },
     { key: "logs" as Tab,      label: "Logs",    icon: <ScrollText size={12} />, count: sseLog.length },
   ];
@@ -381,18 +465,17 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
 
           {/* Files tab */}
           {tab === "files" && (
-            files.length === 0 ? (
+            allFiles.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                <FileText size={24} /><span className="text-[13px]">No files accessed yet</span>
+                <FileText size={24} /><span className="text-[13px]">No files yet</span>
               </div>
             ) : (
-              files.map((f) => (
+              allFiles.map((f) => (
                 <div
                   key={f.path}
-                  className={selectedFile === f.path ? "bg-[var(--cedar)]/10" : ""}
                   onClick={() => setSelectedFile((prev) => prev === f.path ? null : f.path)}
                 >
-                  <FileRow path={f.path} />
+                  <FileRow file={f} active={selectedFile === f.path} />
                 </div>
               ))
             )
