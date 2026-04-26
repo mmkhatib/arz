@@ -1,122 +1,220 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import type { Settings } from "@/api/client";
+import {
+  SettingsToggle,
+  SettingsSelect,
+  SettingsInput,
+  SettingsSection,
+  SettingsCard,
+} from "./settings/primitives";
 
 interface Props {
   onClose: () => void;
 }
 
-const PROVIDERS = [
-  { value: "claude-code", label: "Claude Code CLI" },
-  { value: "kiro-cli", label: "Kiro CLI (Amazon)" },
-] as const;
+const PROVIDER_OPTIONS = ["claude-code", "kiro-cli", "anthropic"];
+const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "Anthropic API (direct)"];
+const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 export default function SettingsModal({ onClose }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [provider, setProvider] = useState<Settings["provider"]>("claude-code");
-  const [model, setModel] = useState("");
-  const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+
+  // Local-only buffers for fields with onBlur save semantics
+  const [model, setModel] = useState("");
+  const [botName, setBotName] = useState("");
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
 
   useEffect(() => {
-    api.getSettings().then((s) => {
-      setSettings(s);
-      setProvider(s.provider);
-      setModel(s.model);
-    }).catch((e: Error) => setError(e.message));
+    api
+      .getSettings()
+      .then((s) => {
+        setSettings(s);
+        setModel(s.model);
+        setBotName(s.bot_name);
+        setHost(s.host);
+        setPort(String(s.port));
+        setSystemPrompt(s.system_prompt);
+      })
+      .catch((e: Error) => setError(e.message));
   }, []);
 
-  const handleSave = async () => {
-    setSaving(true);
+  // Esc to close
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const patch = async (body: Partial<Settings>) => {
     setError(null);
-    setSaved(false);
     try {
-      await api.saveSettings({ provider, model });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2000);
+      const next = await api.saveSettings(body);
+      setSettings(next);
+      setSavedAt(Date.now());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSaving(false);
     }
   };
 
+  if (!settings && !error) {
+    return (
+      <Shell onClose={onClose}>
+        <div className="text-center text-[var(--muted)] py-12 text-sm animate-pulse">Loading…</div>
+      </Shell>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <Shell onClose={onClose}>
+        <div className="text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">{error}</div>
+      </Shell>
+    );
+  }
+
+  const justSaved = Date.now() - savedAt < 1500;
+
+  return (
+    <Shell onClose={onClose} savedFlag={justSaved} error={error}>
+      <SettingsSection title="Provider">
+        <SettingsCard>
+          <SettingsSelect
+            label="LLM Provider"
+            description="Backend used for new sessions (existing sessions keep their own provider)"
+            value={settings.provider}
+            options={PROVIDER_OPTIONS}
+            optionLabels={PROVIDER_LABELS}
+            onChange={(v) => patch({ provider: v as Settings["provider"] })}
+          />
+          <SettingsInput
+            label="Model"
+            description="Provider-specific model identifier (e.g. claude-opus-4-7, claude-sonnet-4-6)"
+            value={model}
+            onChange={setModel}
+            onBlur={() => model !== settings.model && patch({ model: model.trim() })}
+            placeholder="claude-opus-4-7"
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Dashboard">
+        <SettingsCard>
+          <SettingsInput
+            label="Bot Name"
+            description="Display name shown in the chat header"
+            value={botName}
+            onChange={setBotName}
+            onBlur={() => botName !== settings.bot_name && patch({ bot_name: botName.trim() })}
+            placeholder="Arzeh"
+          />
+          <SettingsInput
+            label="Host"
+            description="127.0.0.1 (loopback only) or 0.0.0.0 (all interfaces — requires token auth). Restart required."
+            value={host}
+            onChange={setHost}
+            onBlur={() => host !== settings.host && patch({ host: host.trim() })}
+            placeholder="127.0.0.1"
+          />
+          <SettingsInput
+            label="Port"
+            description="Dashboard listen port. Restart required."
+            value={port}
+            onChange={setPort}
+            onBlur={() => {
+              const n = Number(port);
+              if (Number.isInteger(n) && n >= 1 && n <= 65535 && n !== settings.port) {
+                patch({ port: n });
+              } else if (port !== String(settings.port)) {
+                setPort(String(settings.port));
+              }
+            }}
+            type="number"
+            placeholder="7777"
+          />
+          <SettingsToggle
+            label="Token Auth"
+            description="Require X-Arz-Token header on API requests. Mandatory when binding to non-loopback hosts."
+            checked={settings.token_auth}
+            onChange={(v) => patch({ token_auth: v })}
+          />
+        </SettingsCard>
+      </SettingsSection>
+
+      <SettingsSection title="Advanced">
+        <SettingsCard>
+          <SettingsSelect
+            label="Log Level"
+            description="Server-side logging verbosity. Restart required."
+            value={settings.log_level}
+            options={LOG_LEVELS}
+            onChange={(v) => patch({ log_level: v })}
+          />
+          <SettingsInput
+            label="System Prompt"
+            description="Default system prompt prepended to new sessions"
+            value={systemPrompt}
+            onChange={setSystemPrompt}
+            onBlur={() =>
+              systemPrompt !== settings.system_prompt && patch({ system_prompt: systemPrompt })
+            }
+            multiline
+            rows={5}
+          />
+        </SettingsCard>
+      </SettingsSection>
+    </Shell>
+  );
+}
+
+function Shell({
+  onClose,
+  children,
+  savedFlag,
+  error,
+}: {
+  onClose: () => void;
+  children: React.ReactNode;
+  savedFlag?: boolean;
+  error?: string | null;
+}) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div className="bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-sm mx-4 p-6">
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-[15px] font-semibold text-[var(--text)]">Settings</h2>
+      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
+          <div className="flex items-center gap-3">
+            <h2 className="text-[15px] font-semibold text-[var(--text)]">Settings</h2>
+            {savedFlag && (
+              <span className="text-[11px] text-[var(--accent)] uppercase tracking-wider animate-pulse">
+                Saved
+              </span>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none"
+            aria-label="Close settings"
           >
             ×
           </button>
         </div>
-
-        {!settings && !error && (
-          <div className="text-center text-[var(--muted)] py-6 text-sm animate-pulse">Loading…</div>
-        )}
-
         {error && (
-          <div className="text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2 mb-4">{error}</div>
-        )}
-
-        {settings && (
-          <div className="space-y-5">
-            {/* Provider */}
-            <div>
-              <label className="block text-[12px] font-medium text-[var(--muted)] uppercase tracking-wider mb-2">
-                Provider
-              </label>
-              <div className="space-y-2">
-                {PROVIDERS.map((p) => (
-                  <label
-                    key={p.value}
-                    className="flex items-center gap-3 cursor-pointer"
-                  >
-                    <input
-                      type="radio"
-                      name="provider"
-                      value={p.value}
-                      checked={provider === p.value}
-                      onChange={() => setProvider(p.value)}
-                      className="accent-[var(--cedar)]"
-                    />
-                    <span className="text-[14px] text-[var(--text)]">{p.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {/* Model */}
-            <div>
-              <label className="block text-[12px] font-medium text-[var(--muted)] uppercase tracking-wider mb-2">
-                Model
-              </label>
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. claude-opus-4-7"
-                className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-xl px-3 py-2 text-[14px] text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-[var(--cedar)]/40"
-              />
-            </div>
-
-            {/* Save */}
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="w-full py-2.5 rounded-xl bg-[var(--cedar)] text-white text-[14px] font-medium hover:bg-[var(--cedar-lt)] transition-colors disabled:opacity-50"
-            >
-              {saving ? "Saving…" : saved ? "Saved!" : "Save settings"}
-            </button>
+          <div className="mx-5 mt-3 text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">
+            {error}
           </div>
         )}
+        <div className="overflow-y-auto px-5 py-4 flex-1">{children}</div>
       </div>
     </div>
   );

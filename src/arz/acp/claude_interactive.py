@@ -220,9 +220,16 @@ class ClaudeInteractiveClient:
 
             elif event_type == "result":
                 stop = "error" if obj.get("is_error") else "end_turn"
-                input_tokens = obj.get("usage", {}).get("input_tokens", 0) or 0
+                from arz.acp.types import Usage
+                usage = Usage.from_dict(obj.get("usage"))
+                input_tokens = usage.input_tokens if usage else 0
                 context_pct = round(min(input_tokens / 200_000 * 100, 100.0), 1)
-                yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=stop, context_usage_pct=context_pct)
+                yield AcpEvent(
+                    kind=EVENT_COMPLETE,
+                    stop_reason=stop,
+                    context_usage_pct=context_pct,
+                    usage=usage,
+                )
                 return
 
             elif event_type in ("system", "permission_request"):

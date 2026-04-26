@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Callable
 
 from arz.session.session import Session
 
@@ -25,6 +26,8 @@ class SessionManager:
         self._dir.mkdir(parents=True, exist_ok=True)
         self._sessions: dict[str, Session] = {}
         self._surface_index: dict[tuple[str, str, str | None], str] = {}
+        self.on_save: Callable[[Session], None] | None = None
+        self.on_delete: Callable[[str], None] | None = None
 
     # ── Public API ─────────────────────────────────────────────────────────────
 
@@ -87,6 +90,11 @@ class SessionManager:
         """Persist a session to disk."""
         path = self._dir / f"{session.id}.json"
         path.write_text(json.dumps(session.to_dict(), indent=2))
+        if self.on_save is not None:
+            try:
+                self.on_save(session)
+            except Exception:
+                log.exception("on_save hook failed for session %s", session.id)
 
     def close(self, session_id: str) -> None:
         """Mark a session inactive and persist it."""

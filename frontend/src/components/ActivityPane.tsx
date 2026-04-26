@@ -4,6 +4,8 @@ import { api } from "@/api/client";
 import SegmentedControl from "./SegmentedControl";
 import { useTouchedFiles } from "@/hooks/useTouchedFiles";
 import { FileViewer } from "./FileViewer";
+import TerminalView, { isShellTool } from "./TerminalView";
+import { hasAnsi } from "@/utils/ansi";
 
 /* ── File icon map ── */
 const FILE_ICONS: Record<string, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -83,7 +85,14 @@ function ToolEntryCard({ entry, isLast, isActive }: { entry: ToolEntry; isLast: 
       {expanded && (
         <>
           {entry.input && <div className="px-3 pt-1 pb-2"><div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Input</div><pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[150px] overflow-y-auto leading-relaxed text-[var(--muted)]">{inputText}</pre></div>}
-          {entry.result && <div className="px-3 pb-2"><div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Output</div><pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[200px] overflow-y-auto leading-relaxed text-[var(--muted)]">{outputText}</pre></div>}
+          {entry.result && (
+            <div className="px-3 pb-2">
+              <div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Output</div>
+              {(isShellTool(entry.name) || hasAnsi(entry.result))
+                ? <TerminalView text={outputText} maxHeightPx={200} />
+                : <pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[200px] overflow-y-auto leading-relaxed text-[var(--muted)]">{outputText}</pre>}
+            </div>
+          )}
         </>
       )}
     </div>
@@ -94,26 +103,50 @@ function ToolEntryCard({ entry, isLast, isActive }: { entry: ToolEntry; isLast: 
 
 const SUBAGENT_TOOLS = new Set(["Agent", "Task"]);
 
-function extractTask(input: string): string {
-  try {
-    const obj = JSON.parse(input) as Record<string, unknown>;
-    const task = obj.description ?? obj.prompt ?? obj.task ?? Object.values(obj).find((v) => typeof v === "string");
-    if (typeof task === "string") return task.length > 300 ? task.slice(0, 300) + "…" : task;
-  } catch {}
-  return input.slice(0, 300);
-}
-
 function fmtElapsed(ms: number): string {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function SubagentCard({ entry, startedAt }: { entry: ToolEntry; startedAt: number }) {
-  const task = extractTask(entry.input);
+function extractFullTask(input: string): string {
+  try {
+    const obj = JSON.parse(input) as Record<string, unknown>;
+    const task = obj.description ?? obj.prompt ?? obj.task;
+    if (typeof task === "string") return task;
+    const first = Object.values(obj).find((v) => typeof v === "string");
+    return typeof first === "string" ? first : input;
+  } catch {
+    return input;
+  }
+}
+
+function extractAgentType(input: string): string | null {
+  try {
+    const obj = JSON.parse(input) as Record<string, unknown>;
+    const t = obj.subagent_type ?? obj.agent ?? obj.type;
+    return typeof t === "string" ? t : null;
+  } catch {
+    return null;
+  }
+}
+
+function SubagentCard({
+  entry,
+  startedAt,
+  onSpawnSession,
+}: {
+  entry: ToolEntry;
+  startedAt: number;
+  onSpawnSession?: (prompt: string) => void;
+}) {
+  const fullTask = extractFullTask(entry.input);
+  const agentType = extractAgentType(entry.input);
   const outputText = useStreamText(entry.result || "");
   const [expanded, setExpanded] = useState(false);
+  const [showFullTask, setShowFullTask] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [copied, setCopied] = useState(false);
 
   // Live elapsed timer while running
   useEffect(() => {
@@ -124,8 +157,25 @@ function SubagentCard({ entry, startedAt }: { entry: ToolEntry; startedAt: numbe
     return () => clearInterval(id);
   }, [entry.done, startedAt]);
 
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    void navigator.clipboard.writeText(fullTask).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  const handleSpawn = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onSpawnSession?.(fullTask);
+  };
+
+  const taskPreview = fullTask.length > 240 ? fullTask.slice(0, 240) + "…" : fullTask;
+  const hasMore = fullTask.length > 240;
+  const status = !entry.done ? "running" : "complete";
+
   return (
-    <div className={["mx-2 mb-3 rounded-lg border bg-[var(--surface)] overflow-hidden shadow-sm transition-all", entry.done ? "border-[var(--border)] opacity-80" : "border-[var(--cedar)]/40"].join(" ")}>
+    <div className={["mx-2 mb-3 rounded-lg border bg-[var(--surface)] overflow-hidden shadow-sm transition-all", entry.done ? "border-[var(--border)] opacity-90" : "border-[var(--cedar)]/40"].join(" ")}>
       {/* Header */}
       <div
         className={["flex items-center gap-2 px-3 py-2.5 transition-colors", entry.done ? "cursor-pointer hover:bg-[var(--bg)]" : ""].join(" ")}
@@ -136,8 +186,17 @@ function SubagentCard({ entry, startedAt }: { entry: ToolEntry; startedAt: numbe
           : <Loader size={13} className="text-[var(--cedar)] animate-spin shrink-0" />
         }
         <span className="text-[13px] font-medium text-[var(--text)] shrink-0">
-          {entry.done ? "Subagent complete" : "Subagent running…"}
+          {entry.done ? "Subagent" : "Subagent running…"}
         </span>
+        {agentType && (
+          <span className="text-[10px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded shrink-0">
+            {agentType}
+          </span>
+        )}
+        <span className={[
+          "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0",
+          status === "running" ? "bg-amber-400/20 text-amber-300" : "bg-green-500/20 text-green-400",
+        ].join(" ")}>{status}</span>
         <span className="text-[11px] text-[var(--muted)]/50 font-mono ml-auto shrink-0">{fmtElapsed(elapsed)}</span>
         {entry.done && (
           <span className="text-[12px] text-[var(--muted)] bg-[var(--bg)] px-1 rounded shrink-0 ml-1">{expanded ? "▾" : "▸"}</span>
@@ -146,15 +205,52 @@ function SubagentCard({ entry, startedAt }: { entry: ToolEntry; startedAt: numbe
 
       {/* Task description — always visible */}
       <div className="px-3 pb-2">
-        <div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Task</div>
-        <pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[80px] overflow-y-auto leading-relaxed text-[var(--muted)]/80">{task}</pre>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider">Task</span>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopy}
+              className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+              title="Copy task to clipboard"
+            >
+              {copied ? "Copied ✓" : "Copy"}
+            </button>
+            {onSpawnSession && (
+              <button
+                onClick={handleSpawn}
+                className="text-[10px] text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
+                title="Open this task as a new session"
+              >
+                New session
+              </button>
+            )}
+          </div>
+        </div>
+        <pre
+          className={[
+            "px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-words leading-relaxed text-[var(--muted)]/80",
+            showFullTask ? "max-h-[400px] overflow-y-auto" : "max-h-[80px] overflow-y-auto",
+          ].join(" ")}
+        >
+          {showFullTask ? fullTask : taskPreview}
+        </pre>
+        {hasMore && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowFullTask((v) => !v); }}
+            className="mt-1 text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+          >
+            {showFullTask ? "Show less" : "Show full task"}
+          </button>
+        )}
       </div>
 
       {/* Result — shown when done and expanded */}
       {entry.done && entry.result && expanded && (
         <div className="px-3 pb-2">
           <div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Output</div>
-          <pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[240px] overflow-y-auto leading-relaxed text-[var(--muted)]/80">{outputText}</pre>
+          {hasAnsi(entry.result || "")
+            ? <TerminalView text={outputText} maxHeightPx={240} />
+            : <pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[240px] overflow-y-auto leading-relaxed text-[var(--muted)]/80">{outputText}</pre>}
         </div>
       )}
     </div>
@@ -217,10 +313,11 @@ interface Props {
   onClose: () => void;
   width: number;
   onWidthChange: (w: number) => void;
+  onSpawnSession?: (prompt: string) => void;
 }
 
 /* ── Main component ── */
-export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seedPaths, requestedFile, onFileOpenHandled, onClose, width, onWidthChange }: Props) {
+export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seedPaths, requestedFile, onFileOpenHandled, onClose, width, onWidthChange, onSpawnSession }: Props) {
   const [tab, setTab] = useState<Tab>("tools");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
@@ -418,7 +515,12 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
                   </div>
                 ) : (
                   subagentEntries.map((e) => (
-                    <SubagentCard key={e.callId} entry={e} startedAt={startTimesRef.current.get(e.callId) ?? Date.now()} />
+                    <SubagentCard
+                      key={e.callId}
+                      entry={e}
+                      startedAt={startTimesRef.current.get(e.callId) ?? Date.now()}
+                      onSpawnSession={onSpawnSession}
+                    />
                   ))
                 )
               )}

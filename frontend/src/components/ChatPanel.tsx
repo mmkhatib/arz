@@ -5,6 +5,7 @@ import MessageBubble from "./MessageBubble";
 import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
+import { formatTokens } from "@/utils/tokens";
 
 function ThinkingDots() {
   return (
@@ -16,6 +17,92 @@ function ThinkingDots() {
           style={{ animation: `arz-bounce 1.2s ease-in-out ${i * 0.2}s infinite` }}
         />
       ))}
+    </span>
+  );
+}
+
+function ExportMenu({ sessionId }: { sessionId: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const close = () => setOpen(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-export-menu]")) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const copyLink = () => {
+    const url = `${window.location.origin}${window.location.pathname}#session=${sessionId}`;
+    void navigator.clipboard.writeText(url).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+    close();
+  };
+
+  return (
+    <div className="relative" data-export-menu>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Export / share"
+        className={[
+          "text-[12px] px-2 py-1 rounded-lg transition-colors",
+          open
+            ? "bg-[var(--cedar)]/20 text-[var(--cedar)]"
+            : "text-[var(--muted)] hover:text-[var(--text)]",
+        ].join(" ")}
+      >
+        ⤓ Export
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-30 min-w-[180px] rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl py-1">
+          <a
+            href={api.exportSessionUrl(sessionId, "markdown")}
+            onClick={close}
+            className="block px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--bg)]"
+          >
+            Download Markdown
+          </a>
+          <a
+            href={api.exportSessionUrl(sessionId, "json")}
+            onClick={close}
+            className="block px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--bg)]"
+          >
+            Download JSON
+          </a>
+          <button
+            onClick={copyLink}
+            className="block w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--bg)]"
+          >
+            {copied ? "Link copied ✓" : "Copy session link"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionTotals({ messages }: { messages: MessageRecord[] }) {
+  let inTok = 0,
+    outTok = 0;
+  for (const m of messages) {
+    if (!m.usage) continue;
+    inTok += m.usage.input_tokens;
+    outTok += m.usage.output_tokens;
+  }
+  if (inTok === 0 && outTok === 0) return null;
+  return (
+    <span
+      className="ml-3 text-[11px] font-mono text-[var(--muted)]"
+      title={`Session totals: ${inTok} in, ${outTok} out`}
+    >
+      {formatTokens(inTok)}↑ {formatTokens(outTok)}↓
     </span>
   );
 }
@@ -94,6 +181,17 @@ export default function ChatPanel({
     api.getSettings().then((s) => setSettings({ model: s.model })).catch(() => {});
   }, []);
 
+  // Auto-send a prompt stashed by "Open subagent task as new session"
+  useEffect(() => {
+    const stashed = sessionStorage.getItem(`arz:autosend:${sessionId}`);
+    if (stashed) {
+      sessionStorage.removeItem(`arz:autosend:${sessionId}`);
+      // wait one tick so the session details have loaded
+      const t = setTimeout(() => handleSend(stashed), 100);
+      return () => clearTimeout(t);
+    }
+  }, [sessionId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
@@ -119,7 +217,21 @@ export default function ChatPanel({
     abortRef.current?.();
   };
 
-  const handleSend = async (message: string) => {
+  const handleSend = async (message: string, files?: import("@/api/client").UploadedFile[]) => {
+    if (files && files.length > 0) {
+      const refs = files
+        .map((f) => {
+          const isImage = ["png", "jpg", "jpeg", "gif", "webp", "svg"].includes(f.ext);
+          const url = `/api/files/read?path=${encodeURIComponent(f.path)}`;
+          return isImage ? `![${f.name}](${url})` : `- \`${f.path}\``;
+        })
+        .join("\n");
+      message = message ? `${message}\n\n${refs}` : refs;
+    }
+    return doSend(message);
+  };
+
+  const doSend = async (message: string) => {
     const userMsg: MessageRecord = {
       role: "user",
       text: message,
@@ -147,6 +259,7 @@ export default function ChatPanel({
       }
 
       let fullText = "";
+      let turnUsage: import("@/api/client").UsageRecord | undefined;
       const turnToolCalls: { name: string; input: string }[] = [];
       for await (const chunk of api.streamChat(response)) {
         if (aborted) break;
@@ -174,6 +287,7 @@ export default function ChatPanel({
           onSseEvent?.("permission_request", chunk.title);
         } else if (chunk.type === "complete") {
           if (chunk.context_pct) setContextPct(chunk.context_pct);
+          if (chunk.usage) turnUsage = chunk.usage;
           if (messages.length === 0 && fullText && firstUserMsgRef.current) {
             api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
               if (t) { setTitle(t); onTitleChange?.(t); }
@@ -195,6 +309,7 @@ export default function ChatPanel({
           created_at: new Date().toISOString(),
           tool_calls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
           elapsed_ms: Date.now() - sendStart,
+          usage: turnUsage,
         };
         setMessages((prev) => [...prev, assistantMsg]);
       }
@@ -213,7 +328,9 @@ export default function ChatPanel({
       {/* Session header */}
       <div className="shrink-0 px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)] flex items-center">
         <h2 className="text-[13px] font-medium text-[var(--text)] truncate">{title}</h2>
+        <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
+          <ExportMenu sessionId={sessionId} />
           {onToggleActivity && (
             <button
               onClick={onToggleActivity}
@@ -281,6 +398,7 @@ export default function ChatPanel({
       <InputBar
         onSend={handleSend}
         onStop={handleStop}
+        onUpload={(files) => api.uploadFiles(sessionId, files)}
         disabled={false}
         isRunning={streaming}
         contextPct={contextPct}

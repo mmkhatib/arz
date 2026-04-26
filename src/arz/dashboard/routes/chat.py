@@ -118,12 +118,17 @@ async def _stream_response(
                             await provider.reject_tool(request_id)
 
             elif event.kind == EVENT_COMPLETE:
+                usage_dict = event.usage.to_dict() if event.usage else None
                 if session and full_reply:
-                    session.add_message("assistant", full_reply)
+                    msg = session.add_message("assistant", full_reply)
+                    if usage_dict:
+                        msg.usage = usage_dict
+                    msg.model = provider.current_model
                     mgr.save(session)
                 yield sse_complete(
                     event.stop_reason or "end_turn",
                     context_pct=event.context_usage_pct or 0.0,
+                    usage=usage_dict,
                 )
                 return
 

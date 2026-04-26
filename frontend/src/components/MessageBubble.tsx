@@ -2,6 +2,14 @@ import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import type { MessageRecord } from "@/api/client";
 import MermaidBlock from "./MermaidBlock";
+import { formatTokens } from "@/utils/tokens";
+
+function shortModel(model: string): string {
+  // Compress "claude-opus-4-7" → "Opus 4.7", "claude-haiku-4-5-20251001" → "Haiku 4.5"
+  const m = model.match(/claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i);
+  if (m) return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}`;
+  return model.length > 24 ? model.slice(0, 24) + "…" : model;
+}
 
 interface Props {
   message: MessageRecord;
@@ -179,6 +187,21 @@ export default function MessageBubble({ message, onFileOpen }: Props) {
             <span className="flex items-center gap-0.5">
               <span>🔧</span>
               <span>{message.tool_calls.length} tool{message.tool_calls.length !== 1 ? "s" : ""}</span>
+            </span>
+          )}
+          {!isUser && message.model && (
+            <span className="font-mono text-[var(--muted)]/70" title={message.model}>
+              {shortModel(message.model)}
+            </span>
+          )}
+          {!isUser && message.usage && (
+            <span
+              className="font-mono"
+              title={`in ${message.usage.input_tokens} • out ${message.usage.output_tokens} • cache+ ${message.usage.cache_creation_input_tokens} • cache↻ ${message.usage.cache_read_input_tokens}`}
+            >
+              {formatTokens(message.usage.input_tokens)}↑
+              {" "}
+              {formatTokens(message.usage.output_tokens)}↓
             </span>
           )}
         </div>

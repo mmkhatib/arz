@@ -15,13 +15,20 @@ class Message:
     role: Literal["user", "assistant", "system"]
     text: str
     created_at: datetime = field(default_factory=datetime.utcnow)
+    usage: dict[str, int] | None = None
+    model: str | None = None
 
     def to_dict(self) -> dict:
-        return {
+        d: dict = {
             "role": self.role,
             "text": self.text,
             "created_at": self.created_at.isoformat(),
         }
+        if self.usage is not None:
+            d["usage"] = self.usage
+        if self.model is not None:
+            d["model"] = self.model
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Message":
@@ -29,6 +36,8 @@ class Message:
             role=d["role"],
             text=d["text"],
             created_at=datetime.fromisoformat(d["created_at"]),
+            usage=d.get("usage"),
+            model=d.get("model"),
         )
 
 

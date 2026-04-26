@@ -1,11 +1,15 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
 import SettingsModal from "@/components/SettingsModal";
 import NewSessionModal from "@/components/NewSessionModal";
+import MemoryModal from "@/components/MemoryModal";
+import ScheduleModal from "@/components/ScheduleModal";
+import ShortcutsOverlay from "@/components/ShortcutsOverlay";
 import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
 interface SseLogEntry {
   type: string;
@@ -38,12 +42,21 @@ export default function ChatPage() {
   });
   const [seedPaths, setSeedPaths] = useState<string[]>([]);
   const [requestedFile, setRequestedFile] = useState<string | null>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showMemory, setShowMemory] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSessions = async () => {
     try {
       const data = await api.fetchSessions();
       setSessions(data);
-      if (!activeId && data.length > 0) setActiveId(data[0].id);
+      if (!activeId && data.length > 0) {
+        const hash = window.location.hash;
+        const m = hash.match(/session=([^&]+)/);
+        const deepId = m && data.find((s) => s.id === m[1]) ? m[1] : null;
+        setActiveId(deepId ?? data[0].id);
+      }
     } catch (e) {
       console.error("Failed to load sessions:", e);
     } finally {
@@ -155,6 +168,40 @@ export default function ChatPage() {
     setRequestedFile(path);
   };
 
+  const handleSpawnFromTask = async (prompt: string) => {
+    try {
+      const session = await api.createSession(globalProvider);
+      setSessions((prev) => [session, ...prev]);
+      setActiveId(session.id);
+      // Stash the prompt so ChatPanel can auto-send it on mount
+      sessionStorage.setItem(`arz:autosend:${session.id}`, prompt);
+    } catch (e) {
+      console.error("Failed to spawn session from task:", e);
+    }
+  };
+
+  const navigateSession = (delta: 1 | -1) => {
+    if (sessions.length === 0) return;
+    const idx = activeId ? sessions.findIndex((s) => s.id === activeId) : -1;
+    const start = idx === -1 ? 0 : idx;
+    const next = (start + delta + sessions.length) % sessions.length;
+    setActiveId(sessions[next].id);
+  };
+
+  useKeyboardShortcuts({
+    "mod+k": () => setShowNewSession(true),
+    "mod+f": () => searchInputRef.current?.focus(),
+    "mod+[": () => navigateSession(-1),
+    "mod+]": () => navigateSession(1),
+    "mod+w": () => activeId && handleDelete(activeId),
+    "?": () => setShowShortcuts(true),
+    esc: () => {
+      if (showShortcuts) setShowShortcuts(false);
+      else if (showSettings) setShowSettings(false);
+      else if (showNewSession) setShowNewSession(false);
+    },
+  });
+
   if (loading) {
     return (
       <div className="flex items-center justify-center w-full h-full text-[var(--muted)]">
@@ -173,16 +220,39 @@ export default function ChatPage() {
           onCancel={() => setShowNewSession(false)}
         />
       )}
+      {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+      {showMemory && <MemoryModal onClose={() => setShowMemory(false)} />}
+      {showSchedule && (
+        <ScheduleModal
+          onClose={() => setShowSchedule(false)}
+          onJumpToSession={(id) => {
+            setShowSchedule(false);
+            // Reactivate the session if it's not already active, then select it
+            api.reactivateSession(id)
+              .then((s) => {
+                setSessions((prev) => {
+                  const exists = prev.find((p) => p.id === s.id);
+                  return exists ? prev.map((p) => p.id === s.id ? s : p) : [s, ...prev];
+                });
+                setActiveId(s.id);
+              })
+              .catch(() => setActiveId(id));
+          }}
+        />
+      )}
       <SessionList
         sessions={sessions}
         activeId={activeId}
         pinnedIds={pinnedIds}
         globalProvider={globalProvider}
+        searchInputRef={searchInputRef}
         onSelect={handleSelect}
         onCreate={handleCreate}
         onDelete={handleDelete}
         onTogglePin={handleTogglePin}
         onSettings={() => setShowSettings(true)}
+        onMemory={() => setShowMemory(true)}
+        onSchedule={() => setShowSchedule(true)}
         onResume={handleResume}
       />
 
@@ -235,6 +305,7 @@ export default function ChatPage() {
             onClose={() => setActivityOpen(false)}
             width={activityWidth}
             onWidthChange={setActivityWidth}
+            onSpawnSession={handleSpawnFromTask}
           />
         )}
       </main>

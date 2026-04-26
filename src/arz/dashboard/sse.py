@@ -21,8 +21,19 @@ def sse_chunk(text: str) -> str:
     return sse_event({"type": "text_chunk", "text": text})
 
 
-def sse_complete(stop_reason: str = "end_turn", context_pct: float = 0.0) -> str:
-    return sse_event({"type": "complete", "stop_reason": stop_reason, "context_pct": context_pct})
+def sse_complete(
+    stop_reason: str = "end_turn",
+    context_pct: float = 0.0,
+    usage: dict[str, int] | None = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "type": "complete",
+        "stop_reason": stop_reason,
+        "context_pct": context_pct,
+    }
+    if usage is not None:
+        payload["usage"] = usage
+    return sse_event(payload)
 
 
 def sse_error(message: str) -> str:

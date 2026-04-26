@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X } from "lucide-react";
+import type { UploadedFile } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
 
@@ -25,8 +26,9 @@ const INPUT_DRAG_MIN_H = 120;
 const INPUT_HEIGHT_LS_KEY = "arz-input-height";
 
 interface Props {
-  onSend: (message: string) => void;
+  onSend: (message: string, files?: UploadedFile[]) => void;
   onStop?: () => void;
+  onUpload?: (files: File[]) => Promise<UploadedFile[]>;
   disabled: boolean;
   isRunning?: boolean;
   contextPct?: number;
@@ -39,6 +41,7 @@ interface Props {
 export default function InputBar({
   onSend,
   onStop,
+  onUpload,
   disabled,
   isRunning = false,
   contextPct = 0,
@@ -47,6 +50,32 @@ export default function InputBar({
   onApprovalModeChange,
   onModelChange,
 }: Props) {
+  const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUpload = useCallback(
+    async (files: File[]) => {
+      if (!onUpload || files.length === 0) return;
+      setUploading(true);
+      setUploadError(null);
+      try {
+        const saved = await onUpload(files);
+        setPendingFiles((prev) => [...prev, ...saved]);
+      } catch (e) {
+        setUploadError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setUploading(false);
+      }
+    },
+    [onUpload],
+  );
+
+  const removePending = (path: string) => {
+    setPendingFiles((prev) => prev.filter((f) => f.path !== path));
+  };
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -141,10 +170,12 @@ export default function InputBar({
 
   const submit = () => {
     const msg = value.trim();
-    if (!msg || disabled) return;
+    const files = pendingFiles;
+    if ((!msg && files.length === 0) || disabled) return;
     setValue("");
+    setPendingFiles([]);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-    onSend(msg);
+    onSend(msg, files.length > 0 ? files : undefined);
   };
 
   const activeApproval = APPROVAL_OPTIONS.find((o) => o.mode === approvalMode) ?? APPROVAL_OPTIONS[0];
@@ -163,12 +194,56 @@ export default function InputBar({
         <div className="w-10 h-[3px] rounded-full bg-[var(--border)] group-hover/drag:bg-[var(--cedar)] transition-colors duration-200" />
       </div>
 
+      {/* Pending uploads */}
+      {(pendingFiles.length > 0 || uploading || uploadError) && (
+        <div className="flex flex-wrap gap-1.5 mb-1.5 px-1">
+          {pendingFiles.map((f) => (
+            <span
+              key={f.path}
+              className="inline-flex items-center gap-1 text-[11px] bg-[var(--surface)] border border-[var(--border)] rounded-lg px-2 py-1 text-[var(--muted)]"
+              title={f.path}
+            >
+              <Paperclip size={11} />
+              <span className="max-w-[160px] truncate">{f.name}</span>
+              <button
+                onClick={() => removePending(f.path)}
+                className="text-[var(--muted)] hover:text-red-400"
+                aria-label={`Remove ${f.name}`}
+              >
+                <X size={11} />
+              </button>
+            </span>
+          ))}
+          {uploading && <span className="text-[11px] text-[var(--muted)] animate-pulse">Uploading…</span>}
+          {uploadError && (
+            <span className="text-[11px] text-red-400 bg-red-900/20 rounded-lg px-2 py-1">
+              Upload failed: {uploadError}
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Unified input container */}
       <div
         ref={wrapperRef}
+        onDragOver={(e) => {
+          if (onUpload && e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            setDragOver(true);
+          }
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          if (!onUpload) return;
+          e.preventDefault();
+          setDragOver(false);
+          const files = Array.from(e.dataTransfer.files);
+          if (files.length > 0) handleUpload(files);
+        }}
         className={[
-          "rounded-2xl border border-[var(--border)] bg-[var(--bg)] overflow-visible",
-          "focus-within:border-[var(--cedar)]/50 transition-colors",
+          "rounded-2xl border bg-[var(--bg)] overflow-visible transition-colors",
+          dragOver ? "border-[var(--cedar)] ring-2 ring-[var(--cedar)]/40" : "border-[var(--border)]",
+          "focus-within:border-[var(--cedar)]/50",
           manualHeight !== null ? "flex flex-col min-h-0" : "",
         ].join(" ")}
       >
@@ -272,8 +347,32 @@ export default function InputBar({
             )}
           </div>
 
-          {/* Right: send / stop / queue */}
-          <div className="shrink-0">
+          {/* Right: attach + send / stop / queue */}
+          <div className="shrink-0 flex items-center gap-1">
+            {onUpload && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length > 0) handleUpload(files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-8 h-8 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center justify-center transition-all"
+                  title="Attach files (or drop into the input)"
+                  aria-label="Attach files"
+                >
+                  <Paperclip size={15} />
+                </button>
+              </>
+            )}
             {isRunning && onStop ? (
               hasInput ? (
                 <button
@@ -295,7 +394,7 @@ export default function InputBar({
             ) : (
               <button
                 onClick={submit}
-                disabled={!hasInput || disabled}
+                disabled={(!hasInput && pendingFiles.length === 0) || disabled}
                 className="w-8 h-8 rounded-full bg-[var(--cedar)] text-white flex items-center justify-center hover:bg-[var(--cedar-lt)] disabled:opacity-40 transition-all"
               >
                 <ArrowUp size={16} />

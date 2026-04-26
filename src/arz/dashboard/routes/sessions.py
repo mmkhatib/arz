@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import PlainTextResponse, Response
 
 from arz.dashboard.token_auth import require_token
 from arz.session.manager import SessionManager
@@ -85,6 +88,65 @@ async def get_session(session_id: str, request: Request) -> dict:
         **_session_to_dict(session),
         "messages": [m.to_dict() for m in session.messages],
     }
+
+
+_SLUG_RE = re.compile(r"[^a-zA-Z0-9-]+")
+
+
+def _slugify(s: str) -> str:
+    out = _SLUG_RE.sub("-", s.strip()).strip("-").lower()
+    return out[:60] or "session"
+
+
+@router.get("/api/sessions/{session_id}/export")
+async def export_session(session_id: str, request: Request, format: str = "markdown"):
+    """Download a session as Markdown or JSON."""
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    fmt = format.lower()
+    if fmt == "json":
+        payload = {
+            **_session_to_dict(session),
+            "messages": [m.to_dict() for m in session.messages],
+        }
+        body = json.dumps(payload, indent=2)
+        filename = f"{_slugify(session.title)}-{session.id[:8]}.json"
+        return Response(
+            content=body,
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    if fmt == "markdown":
+        lines: list[str] = [f"# {session.title}", ""]
+        lines.append(f"- Session ID: `{session.id}`")
+        lines.append(f"- Created: {session.created_at.isoformat()}")
+        lines.append(f"- Updated: {session.updated_at.isoformat()}")
+        if session.provider:
+            lines.append(f"- Provider: {session.provider}")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        for m in session.messages:
+            heading = {"user": "🧑 User", "assistant": "🌲 Arzeh", "system": "🛠 System"}.get(
+                m.role, m.role
+            )
+            lines.append(f"## {heading}  ·  {m.created_at.isoformat()}")
+            lines.append("")
+            lines.append(m.text)
+            lines.append("")
+        body = "\n".join(lines)
+        filename = f"{_slugify(session.title)}-{session.id[:8]}.md"
+        return PlainTextResponse(
+            content=body,
+            media_type="text/markdown",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    raise HTTPException(status_code=422, detail="format must be 'markdown' or 'json'")
 
 
 @router.get("/api/sessions/search")

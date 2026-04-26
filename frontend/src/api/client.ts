@@ -13,6 +13,13 @@ export interface SessionSummary {
   provider?: string | null;
 }
 
+export interface UsageRecord {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens: number;
+  cache_read_input_tokens: number;
+}
+
 export interface MessageRecord {
   role: "user" | "assistant" | "system";
   text: string;
@@ -21,15 +28,70 @@ export interface MessageRecord {
   tool_calls?: { name: string; input: string }[];
   /** Wall time in milliseconds from send to complete (assistant only) */
   elapsed_ms?: number;
+  /** Token usage reported by the provider on EVENT_COMPLETE (assistant only) */
+  usage?: UsageRecord;
+  /** Model that produced this assistant message (recorded at completion time) */
+  model?: string;
 }
 
 export interface SessionDetail extends SessionSummary {
   messages: MessageRecord[];
 }
 
+export interface CronEntry {
+  id: number;
+  name: string;
+  prompt: string;
+  schedule: string;
+  enabled: boolean;
+  created_at: number;
+  last_run_at: number | null;
+  last_status: string | null;
+  last_session_id: string | null;
+}
+
+export interface MemoryLesson {
+  id: number;
+  content: string;
+  tags: string[];
+  created_at: number;
+}
+
+export interface MemoryHit {
+  key: string;
+  content: string;
+  score: number;
+  source: "vector" | "markdown";
+}
+
+export interface UploadedFile {
+  path: string;
+  rel_path: string;
+  name: string;
+  ext: string;
+  size: number;
+}
+
+export interface SearchHit {
+  session_id: string;
+  session_title: string;
+  message_idx: number;
+  role: string;
+  provider: string;
+  updated_at: string;
+  snippet: string;
+  rank: number;
+}
+
 export interface Settings {
   provider: "claude-code" | "kiro-cli" | "anthropic";
   model: string;
+  bot_name: string;
+  host: string;
+  port: number;
+  token_auth: boolean;
+  system_prompt: string;
+  log_level: string;
 }
 
 export interface SSEChunk {
@@ -37,6 +99,7 @@ export interface SSEChunk {
   text?: string;
   stop_reason?: string;
   context_pct?: number;
+  usage?: UsageRecord;
   message?: string;
   tool_name?: string;
   tool_input?: string;
@@ -86,6 +149,74 @@ export const api = {
     }),
 
   searchSessions: (q: string) => request<SessionSummary[]>(`/sessions/search?q=${encodeURIComponent(q)}`),
+
+  exportSessionUrl: (sessionId: string, format: "markdown" | "json") =>
+    `${BASE}/sessions/${sessionId}/export?format=${format}`,
+
+  // ── Memory ──
+  memoryListMarkdown: () => request<string[]>("/memory/markdown"),
+  memoryReadMarkdown: (key: string) =>
+    request<{ key: string; content: string }>(`/memory/markdown/${encodeURIComponent(key)}`),
+  memoryWriteMarkdown: (key: string, content: string) =>
+    request<{ key: string; content: string }>(`/memory/markdown/${encodeURIComponent(key)}`, {
+      method: "PUT",
+      body: JSON.stringify({ content }),
+    }),
+  memoryDeleteMarkdown: async (key: string): Promise<void> => {
+    const res = await fetch(`${BASE}/memory/markdown/${encodeURIComponent(key)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  memoryListLessons: () => request<MemoryLesson[]>("/memory/lessons"),
+  memoryCreateLesson: (content: string, tags: string[] = []) =>
+    request<MemoryLesson>("/memory/lessons", {
+      method: "POST",
+      body: JSON.stringify({ content, tags }),
+    }),
+  memoryDeleteLesson: async (id: number): Promise<void> => {
+    const res = await fetch(`${BASE}/memory/lessons/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  memorySearch: (q: string, k = 5) =>
+    request<MemoryHit[]>(`/memory/search?q=${encodeURIComponent(q)}&k=${k}`),
+
+  // ── Cron ──
+  listCrons: () => request<CronEntry[]>("/cron"),
+  createCron: (name: string, prompt: string, schedule: string, enabled = true) =>
+    request<CronEntry>("/cron", {
+      method: "POST",
+      body: JSON.stringify({ name, prompt, schedule, enabled }),
+    }),
+  updateCron: (id: number, patch: Partial<{ name: string; prompt: string; schedule: string; enabled: boolean }>) =>
+    request<CronEntry>(`/cron/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  deleteCron: async (id: number): Promise<void> => {
+    const res = await fetch(`${BASE}/cron/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  runCronNow: (id: number) =>
+    request<{ queued: boolean }>(`/cron/${id}/run`, { method: "POST" }),
+
+  uploadFiles: async (sessionId: string, files: File[]): Promise<UploadedFile[]> => {
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f);
+    const res = await fetch(`${BASE}/sessions/${sessionId}/upload`, {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(`${res.status}: ${text}`);
+    }
+    return res.json() as Promise<UploadedFile[]>;
+  },
+
+  searchMessages: (q: string, opts?: { provider?: string; since?: string; until?: string; limit?: number }) => {
+    const params = new URLSearchParams({ q });
+    if (opts?.provider) params.set("provider", opts.provider);
+    if (opts?.since) params.set("since", opts.since);
+    if (opts?.until) params.set("until", opts.until);
+    if (opts?.limit) params.set("limit", String(opts.limit));
+    return request<SearchHit[]>(`/search?${params.toString()}`);
+  },
 
   getSettings: () => request<Settings>("/settings"),
 
