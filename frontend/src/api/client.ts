@@ -107,6 +107,16 @@ export const api = {
     return res.json() as Promise<{ yolo: boolean }>;
   },
 
+  async setApprovalMode(sessionId: string, mode: string): Promise<{ mode: string }> {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/mode`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+    if (!res.ok) return { mode };
+    return res.json() as Promise<{ mode: string }>;
+  },
+
   async generateTitle(sessionId: string, userMsg: string, assistantMsg: string): Promise<string> {
     const res = await fetch(`${BASE}/sessions/${sessionId}/generate-title`, {
       method: "POST",

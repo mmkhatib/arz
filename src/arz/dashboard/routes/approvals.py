@@ -2,6 +2,7 @@
 from __future__ import annotations
 import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from arz.dashboard.token_auth import require_token
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -38,3 +39,25 @@ async def toggle_yolo(session_id: str, request: Request) -> dict:
     else:
         yolo.add(session_id)
         return {"yolo": True}
+
+
+class ModeBody(BaseModel):
+    mode: str
+
+
+VALID_MODES = {"normal", "trust_reads", "trust", "yolo"}
+
+
+@router.post("/api/sessions/{session_id}/mode")
+async def set_session_mode(session_id: str, body: ModeBody, request: Request) -> dict:
+    if body.mode not in VALID_MODES:
+        raise HTTPException(status_code=400, detail=f"Invalid mode: {body.mode}")
+    modes: dict[str, str] = request.app.state.session_modes
+    modes[session_id] = body.mode
+    # Sync with yolo_sessions for backward compat
+    yolo: set[str] = request.app.state.yolo_sessions
+    if body.mode == "yolo":
+        yolo.add(session_id)
+    else:
+        yolo.discard(session_id)
+    return {"mode": body.mode}

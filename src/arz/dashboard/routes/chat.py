@@ -48,6 +48,9 @@ def _make_provider(config: object, session_id: str, history: list[dict] | None) 
     raise ValueError(f"Unknown provider: {provider_name!r}")
 
 
+READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "WebSearch", "WebFetch"}
+
+
 async def _stream_response(
     provider: LLMProvider,
     session_id: str,
@@ -55,6 +58,7 @@ async def _stream_response(
     mgr: SessionManager,
     pending_approvals: dict | None = None,
     yolo_sessions: set | None = None,
+    session_modes: dict | None = None,
 ) -> AsyncIterator[str]:
     """Drive the provider, record history, yield SSE strings."""
     session = mgr.get(session_id)
@@ -84,8 +88,13 @@ async def _stream_response(
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 request_id = str(event.request_id or "")
                 if request_id:
-                    # YOLO mode: auto-approve without surfacing to user
-                    if yolo_sessions is not None and session_id in yolo_sessions:
+                    mode = (session_modes or {}).get(session_id, "normal")
+                    tool_name = str(event.text or "")
+                    # trust/yolo: auto-approve all
+                    # trust_reads: auto-approve read-only tools
+                    if mode in ("trust", "yolo") or (yolo_sessions is not None and session_id in yolo_sessions):
+                        await provider.approve_tool(request_id)
+                    elif mode == "trust_reads" and tool_name in READ_ONLY_TOOLS:
                         await provider.approve_tool(request_id)
                     elif pending_approvals is not None:
                         loop = asyncio.get_event_loop()
@@ -149,7 +158,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     )
 
     return StreamingResponse(
-        _stream_response(provider, session_id, message, mgr, request.app.state.pending_approvals, request.app.state.yolo_sessions),
+        _stream_response(provider, session_id, message, mgr, request.app.state.pending_approvals, request.app.state.yolo_sessions, request.app.state.session_modes),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

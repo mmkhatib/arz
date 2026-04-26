@@ -46,6 +46,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.state.token = load_token() if config.dashboard.token_auth else None
     app.state.pending_approvals = {}
     app.state.yolo_sessions: set[str] = set()
+    app.state.session_modes: dict[str, str] = {}
 
     origins = [
         "http://localhost:3000",

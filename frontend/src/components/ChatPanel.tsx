@@ -2,9 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import type { MessageRecord, SessionDetail } from "@/api/client";
 import MessageBubble from "./MessageBubble";
-import InputBar from "./InputBar";
-import ToolCallLine from "./ToolCallLine";
-import ApprovalCard from "./ApprovalCard";
+import InputBar, { type ApprovalMode } from "./InputBar";
+import CollapsibleToolGroup from "./CollapsibleToolGroup";
 
 function ThinkingDots() {
   return (
@@ -27,20 +26,31 @@ interface Props {
   activityOpen?: boolean;
   onToggleActivity?: () => void;
   onTitleChange?: (title: string) => void;
+  onSseEvent?: (type: string, summary?: string) => void;
 }
 
-export default function ChatPanel({ sessionId, onToolCall, onToolResult, activityOpen, onToggleActivity, onTitleChange }: Props) {
+export default function ChatPanel({
+  sessionId,
+  onToolCall,
+  onToolResult,
+  activityOpen,
+  onToggleActivity,
+  onTitleChange,
+  onSseEvent,
+}: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
   const [streaming, setStreaming] = useState(false);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
-  const [toolCalls, setToolCalls] = useState<{ name: string; input: string }[]>([]);
-  const [pendingApprovals, setPendingApprovals] = useState<{requestId: string; title: string; toolInput: string}[]>([]);
-  const [yolo, setYolo] = useState(false);
+  const [toolCalls, setToolCalls] = useState<{ callId: string; name: string; input: string }[]>([]);
+  const [pendingApproval, setPendingApproval] = useState<{ requestId: string; title: string; toolInput: string } | null>(null);
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
+  const [settings, setSettings] = useState<{ model: string } | null>(null);
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setMessages([]);
@@ -56,8 +66,21 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
   }, [sessionId]);
 
   useEffect(() => {
+    api.getSettings().then((s) => setSettings({ model: s.model })).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
+
+  const handleApprovalModeChange = (mode: ApprovalMode) => {
+    setApprovalMode(mode);
+    api.setApprovalMode(sessionId, mode).catch(() => {});
+  };
+
+  const handleStop = () => {
+    abortRef.current?.();
+  };
 
   const handleSend = async (message: string) => {
     const userMsg: MessageRecord = {
@@ -65,16 +88,19 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
       text: message,
       created_at: new Date().toISOString(),
     };
-    // Auto-title from first user message
-    if (messages.length === 0) setTitle(message.slice(0, 60));
-
-    if (messages.length === 0) firstUserMsgRef.current = message;
+    if (messages.length === 0) {
+      setTitle(message.slice(0, 60));
+      firstUserMsgRef.current = message;
+    }
     setMessages((prev) => [...prev, userMsg]);
     setStreaming(true);
     setStreamBuffer("");
     setError(null);
     setToolCalls([]);
-    setPendingApprovals([]);
+    setPendingApproval(null);
+
+    let aborted = false;
+    abortRef.current = () => { aborted = true; setStreaming(false); setStreamBuffer(""); };
 
     try {
       const response = await api.sendMessage(sessionId, message);
@@ -84,38 +110,45 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
 
       let fullText = "";
       for await (const chunk of api.streamChat(response)) {
+        if (aborted) break;
+
         if (chunk.type === "text_chunk" && chunk.text) {
           fullText += chunk.text;
           setStreamBuffer(fullText);
+          onSseEvent?.("text_chunk");
         } else if (chunk.type === "tool_call" && chunk.tool_name) {
           const callId = chunk.request_id || chunk.tool_name! + Date.now();
           const tc = { callId, name: chunk.tool_name!, input: chunk.tool_input || "", time: new Date().toLocaleTimeString() };
-          setToolCalls((prev) => [...prev, { name: tc.name, input: tc.input }]);
+          setToolCalls((prev) => [...prev, { callId: tc.callId, name: tc.name, input: tc.input }]);
           onToolCall?.(tc);
+          onSseEvent?.("tool_call", chunk.tool_name);
         } else if (chunk.type === "tool_result" && chunk.tool_call_id) {
           onToolResult?.(chunk.tool_call_id, chunk.content || "");
+          onSseEvent?.("tool_result", chunk.tool_call_id);
         } else if (chunk.type === "permission_request" && chunk.request_id) {
-          setPendingApprovals((prev) => [...prev, {
+          setPendingApproval({
             requestId: chunk.request_id!,
             title: chunk.title || chunk.tool_name || "Permission",
             toolInput: chunk.tool_input || "",
-          }]);
+          });
+          onSseEvent?.("permission_request", chunk.title);
         } else if (chunk.type === "complete") {
           if (chunk.context_pct) setContextPct(chunk.context_pct);
-          // Auto-title on first turn
           if (messages.length === 0 && fullText && firstUserMsgRef.current) {
             api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
               if (t) { setTitle(t); onTitleChange?.(t); }
             }).catch(() => {});
           }
+          onSseEvent?.("complete");
           break;
         } else if (chunk.type === "error") {
           setError(chunk.message ?? "Unknown error");
+          onSseEvent?.("error", chunk.message);
           break;
         }
       }
 
-      if (fullText) {
+      if (fullText && !aborted) {
         const assistantMsg: MessageRecord = {
           role: "assistant",
           text: fullText,
@@ -124,10 +157,12 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
         setMessages((prev) => [...prev, assistantMsg]);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (!aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStreaming(false);
       setStreamBuffer("");
+      setPendingApproval(null);
+      abortRef.current = null;
     }
   };
 
@@ -137,20 +172,6 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
       <div className="shrink-0 px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)] flex items-center">
         <h2 className="text-[13px] font-medium text-[var(--text)] truncate">{title}</h2>
         <div className="ml-auto flex items-center gap-1">
-          <button
-            onClick={() => {
-              api.toggleYolo(sessionId).then((r) => setYolo(r.yolo)).catch(() => {});
-            }}
-            title={yolo ? "YOLO mode on — click to disable" : "Enable YOLO mode (auto-approve all tools)"}
-            className={[
-              "text-[12px] px-2 py-1 rounded-lg transition-colors",
-              yolo
-                ? "bg-amber-500/20 text-amber-400"
-                : "text-[var(--muted)] hover:text-[var(--text)]",
-            ].join(" ")}
-          >
-            {yolo ? "⚡ YOLO" : "YOLO"}
-          </button>
           {onToggleActivity && (
             <button
               onClick={onToggleActivity}
@@ -191,24 +212,15 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
               🌲
             </div>
             <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-bl-sm bg-[var(--asst-bg)] border border-[var(--border)] text-[14px] whitespace-pre-wrap">
-              {pendingApprovals.length > 0 && (
+              {(toolCalls.length > 0 || pendingApproval) && (
                 <div className="mb-2">
-                  {pendingApprovals.map((pa) => (
-                    <ApprovalCard
-                      key={pa.requestId}
-                      requestId={pa.requestId}
-                      title={pa.title}
-                      toolInput={pa.toolInput}
-                      onResolved={(id) => setPendingApprovals((prev) => prev.filter((p) => p.requestId !== id))}
-                    />
-                  ))}
-                </div>
-              )}
-              {toolCalls.length > 0 && (
-                <div className="mb-2 pb-2 border-b border-[var(--border)] flex flex-col gap-0.5">
-                  {toolCalls.map((tc, i) => (
-                    <ToolCallLine key={i} name={tc.name} input={tc.input} active={i === toolCalls.length - 1} />
-                  ))}
+                  <CollapsibleToolGroup
+                    toolCalls={toolCalls}
+                    requestId={pendingApproval?.requestId}
+                    permissionTitle={pendingApproval?.title}
+                    permissionInput={pendingApproval?.toolInput}
+                    isRunning={streaming}
+                  />
                 </div>
               )}
               {streamBuffer || <ThinkingDots />}
@@ -225,7 +237,16 @@ export default function ChatPanel({ sessionId, onToolCall, onToolResult, activit
         <div ref={bottomRef} />
       </div>
 
-      <InputBar onSend={handleSend} disabled={streaming} contextPct={contextPct} />
+      <InputBar
+        onSend={handleSend}
+        onStop={handleStop}
+        disabled={false}
+        isRunning={streaming}
+        contextPct={contextPct}
+        model={settings?.model}
+        approvalMode={approvalMode}
+        onApprovalModeChange={handleApprovalModeChange}
+      />
     </div>
   );
 }

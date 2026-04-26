@@ -4,7 +4,13 @@ import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
 import SettingsModal from "@/components/SettingsModal";
-import ActivityPane from "@/components/ActivityPane";
+import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
+
+interface SseLogEntry {
+  type: string;
+  time: string;
+  summary?: string;
+}
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -20,7 +26,8 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
-  const [toolEntries, setToolEntries] = useState<{callId: string; name: string; input: string; result?: string; done: boolean; time: string}[]>([]);
+  const [toolEntries, setToolEntries] = useState<ToolEntry[]>([]);
+  const [sseLog, setSseLog] = useState<SseLogEntry[]>([]);
 
   const loadSessions = async () => {
     try {
@@ -42,6 +49,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     setToolEntries([]);
+    setSseLog([]);
   }, [activeId]);
 
   const handleCreate = async () => {
@@ -116,6 +124,10 @@ export default function ChatPage() {
               onTitleChange={(title) => setSessions((prev) =>
                 prev.map((s) => s.id === activeId ? { ...s, title } : s)
               )}
+              onSseEvent={(type, summary) => setSseLog((prev) => [
+                ...prev,
+                { type, summary, time: new Date().toLocaleTimeString() },
+              ])}
               activityOpen={activityOpen}
               onToggleActivity={() => setActivityOpen((v) => !v)}
             />
@@ -137,7 +149,9 @@ export default function ChatPage() {
         </div>
         {activityOpen && activeId && (
           <ActivityPane
+            sessionId={activeId}
             toolEntries={toolEntries}
+            sseLog={sseLog}
             onClose={() => setActivityOpen(false)}
           />
         )}
