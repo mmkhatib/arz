@@ -24,12 +24,12 @@ router = APIRouter(dependencies=[Depends(require_token)])
 _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
 
-def _make_provider(config: object, session_id: str, history: list[dict] | None, session_work_dir: str | None = None) -> LLMProvider:
+def _make_provider(config: object, session_id: str, history: list[dict] | None, session_work_dir: str | None = None, provider_name_override: str | None = None) -> LLMProvider:
     """Factory: build the right provider for this session."""
     from arz.config.schema import ArzConfig
     assert isinstance(config, ArzConfig)
 
-    provider_name = config.provider.name
+    provider_name = provider_name_override or config.provider.name
     model = config.provider.model
     work_dir = Path(session_work_dir) if session_work_dir else (_WORKSPACE_ROOT / session_id)
 
@@ -157,11 +157,14 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     session_map: SessionMap = request.app.state.session_map
     session_work_dir = getattr(session, "work_dir", None)
 
+    # Per-session provider overrides global config
+    effective_provider_name = getattr(session, "provider", None) or cfg.provider.name
+
     # Look up any prior provider session ID for native resume
     provider_sid = session_map.get(session_id)
 
     def _factory() -> LLMProvider:
-        p = _make_provider(cfg, session_id, history, session_work_dir)
+        p = _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name)
         if provider_sid:
             p.set_resume_session_id(provider_sid)
         return p
@@ -182,7 +185,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         await pool.deactivate(session_id)
         provider = await pool.activate(
             session_id,
-            lambda: _make_provider(cfg, session_id, history, session_work_dir),
+            lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name),
         )
 
     # Persist provider session ID for future resume

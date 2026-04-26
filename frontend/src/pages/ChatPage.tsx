@@ -4,6 +4,7 @@ import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
 import SettingsModal from "@/components/SettingsModal";
+import NewSessionModal from "@/components/NewSessionModal";
 import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
 
 interface SseLogEntry {
@@ -25,6 +26,8 @@ export default function ChatPage() {
   });
   const [loading, setLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
+  const [showNewSession, setShowNewSession] = useState(false);
+  const [globalProvider, setGlobalProvider] = useState("claude-code");
   const [activityOpen, setActivityOpen] = useState(false);
   const [toolEntries, setToolEntries] = useState<ToolEntry[]>([]);
   const [sseLog, setSseLog] = useState<SseLogEntry[]>([]);
@@ -47,6 +50,11 @@ export default function ChatPage() {
       setLoading(false);
     }
   };
+
+  // Load global provider for use as default in NewSessionModal
+  useEffect(() => {
+    api.getSettings().then((s) => setGlobalProvider(s.provider)).catch(() => {});
+  }, []);
 
   useEffect(() => {
     loadSessions();
@@ -72,7 +80,6 @@ export default function ChatPage() {
   useEffect(() => {
     if (!activeId || toolEntries.length === 0) return;
     try {
-      // Truncate result to 1000 chars each to bound storage size
       const slim = toolEntries.map((e) => ({
         ...e,
         result: e.result ? e.result.slice(0, 1000) : e.result,
@@ -81,9 +88,14 @@ export default function ChatPage() {
     } catch {}
   }, [activeId, toolEntries]);
 
-  const handleCreate = async () => {
+  const handleCreate = () => {
+    setShowNewSession(true);
+  };
+
+  const handleNewSessionConfirm = async (provider: string) => {
+    setShowNewSession(false);
     try {
-      const session = await api.createSession();
+      const session = await api.createSession(provider);
       setSessions((prev) => [session, ...prev]);
       setActiveId(session.id);
     } catch (e) {
@@ -118,6 +130,20 @@ export default function ChatPage() {
 
   const handleSelect = (id: string) => setActiveId(id);
 
+  const handleResume = async (session: SessionSummary) => {
+    try {
+      const reactivated = await api.reactivateSession(session.id);
+      setSessions((prev) => {
+        const exists = prev.find((s) => s.id === reactivated.id);
+        if (exists) return prev.map((s) => s.id === reactivated.id ? reactivated : s);
+        return [reactivated, ...prev];
+      });
+      setActiveId(reactivated.id);
+    } catch (e) {
+      console.error("Failed to resume session:", e);
+    }
+  };
+
   const handleSeedFiles = (paths: string[]) => setSeedPaths((prev) => {
     const existing = new Set(prev);
     const next = paths.filter((p) => !existing.has(p));
@@ -140,15 +166,24 @@ export default function ChatPage() {
   return (
     <div className="flex w-full h-full overflow-hidden">
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showNewSession && (
+        <NewSessionModal
+          defaultProvider={globalProvider}
+          onConfirm={handleNewSessionConfirm}
+          onCancel={() => setShowNewSession(false)}
+        />
+      )}
       <SessionList
         sessions={sessions}
         activeId={activeId}
         pinnedIds={pinnedIds}
+        globalProvider={globalProvider}
         onSelect={handleSelect}
         onCreate={handleCreate}
         onDelete={handleDelete}
         onTogglePin={handleTogglePin}
         onSettings={() => setShowSettings(true)}
+        onResume={handleResume}
       />
 
       <main className="flex-1 min-w-0 flex bg-[var(--bg)] overflow-hidden">

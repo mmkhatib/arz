@@ -33,6 +33,7 @@ def _session_to_dict(session: object) -> dict:
         "active": session.active,
         "color": session.color,
         "work_dir": session.work_dir,
+        "provider": session.provider,
     }
 
 
@@ -51,6 +52,26 @@ async def create_session(request: Request) -> dict:
         chat_id=body.get("chat_id", "web"),
         thread_id=body.get("thread_id"),
     )
+    if body.get("provider"):
+        from arz.session.session import Session
+        assert isinstance(session, Session)
+        session.provider = body["provider"]
+        mgr.save(session)
+    return _session_to_dict(session)
+
+
+@router.get("/api/sessions/history")
+async def list_history(request: Request) -> list[dict]:
+    mgr: SessionManager = _get_manager(request)
+    return [_session_to_dict(s) for s in mgr.list_inactive()]
+
+
+@router.post("/api/sessions/{session_id}/reactivate")
+async def reactivate_session(session_id: str, request: Request) -> dict:
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.reactivate(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
     return _session_to_dict(session)
 
 

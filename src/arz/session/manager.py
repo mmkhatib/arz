@@ -64,6 +64,25 @@ class SessionManager:
             reverse=True,
         )
 
+    def list_inactive(self) -> list[Session]:
+        """Return closed sessions sorted by updated_at descending."""
+        return sorted(
+            (s for s in self._sessions.values() if not s.active),
+            key=lambda s: s.updated_at,
+            reverse=True,
+        )
+
+    def reactivate(self, session_id: str) -> Session | None:
+        """Mark a closed session active again and persist it."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return None
+        session.active = True
+        self.save(session)
+        key = (session.surface, session.chat_id, session.thread_id)
+        self._surface_index[key] = session.id
+        return session
+
     def save(self, session: Session) -> None:
         """Persist a session to disk."""
         path = self._dir / f"{session.id}.json"

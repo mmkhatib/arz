@@ -47,6 +47,7 @@ class Session:
     active: bool = True
     color: int | None = None
     work_dir: str | None = None
+    provider: str | None = None
 
     def add_message(self, role: Literal["user", "assistant", "system"], text: str) -> Message:
         msg = Message(role=role, text=text)
@@ -69,6 +70,7 @@ class Session:
             "active": self.active,
             "color": self.color,
             "work_dir": self.work_dir,
+            "provider": self.provider,
         }
 
     @classmethod
@@ -85,4 +87,5 @@ class Session:
             active=d.get("active", True),
             color=d.get("color"),
             work_dir=d.get("work_dir"),
+            provider=d.get("provider"),
         )

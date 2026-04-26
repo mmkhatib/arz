@@ -4,32 +4,60 @@ import type { SessionSummary } from "@/api/client";
 
 const SESSION_COLORS = ["#2d6a4f", "#5b6a2d", "#6a2d5b", "#2d5b6a", "#6a4f2d", "#4f2d6a"];
 
+function providerBadge(provider: string | null | undefined, globalProvider: string): string {
+  const p = provider || globalProvider;
+  if (p === "kiro-cli") return "Kiro";
+  return "CC";
+}
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 interface Props {
   sessions: SessionSummary[];
   activeId: string | null;
   pinnedIds: Set<string>;
+  globalProvider: string;
   onSelect: (id: string) => void;
   onCreate: () => void;
   onDelete: (id: string) => void;
   onTogglePin: (id: string) => void;
   onSettings: () => void;
+  onResume: (session: SessionSummary) => void;
 }
 
 export default function SessionList({
   sessions,
   activeId,
   pinnedIds,
+  globalProvider,
   onSelect,
   onCreate,
   onDelete,
   onTogglePin,
   onSettings,
+  onResume,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SessionSummary[] | null>(null);
   const [colorMap, setColorMap] = useState<Record<string, number | null>>({});
+  const [history, setHistory] = useState<SessionSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyHoveredId, setHistoryHoveredId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    api.fetchHistory().then(setHistory).catch(() => {});
+  }, [sessions]); // refresh when active list changes (e.g. after delete)
 
   const handleSetColor = (id: string, color: number | null) => {
     setColorMap((prev) => ({ ...prev, [id]: color }));
@@ -105,7 +133,7 @@ export default function SessionList({
         />
       </div>
 
-      {/* Session list */}
+      {/* Active session list */}
       <div className="flex-1 overflow-y-auto py-2">
         {displayed.length === 0 && (
           <p className="px-4 py-3 text-[var(--muted)] text-[13px]">
@@ -117,6 +145,7 @@ export default function SessionList({
           const isPinned = pinnedIds.has(s.id);
           const isHovered = hoveredId === s.id;
           const colorIdx = getColor(s);
+          const badge = providerBadge(s.provider, globalProvider);
           return (
             <div
               key={s.id}
@@ -139,7 +168,15 @@ export default function SessionList({
                   {isPinned && (
                     <span className="text-[10px] text-[var(--accent)]">●</span>
                   )}
-                  <span className="truncate">{s.title}</span>
+                  <span className="truncate flex-1">{s.title}</span>
+                  <span className={[
+                    "shrink-0 text-[9px] px-1 py-0.5 rounded font-mono",
+                    badge === "Kiro"
+                      ? "bg-blue-900/30 text-blue-400"
+                      : "bg-[var(--cedar)]/20 text-[var(--cedar)]",
+                  ].join(" ")}>
+                    {badge}
+                  </span>
                 </button>
 
                 {/* Action buttons — visible on hover */}
@@ -196,6 +233,58 @@ export default function SessionList({
             </div>
           );
         })}
+
+        {/* History section */}
+        {history.length > 0 && !query && (
+          <div className="mt-2">
+            <button
+              onClick={() => setHistoryOpen((v) => !v)}
+              className="w-full flex items-center justify-between px-4 py-1.5 text-[11px] text-[var(--muted)] hover:text-[var(--text)] transition-colors border-t border-[var(--border)]"
+            >
+              <span className="uppercase tracking-wider">History ({history.length})</span>
+              <span>{historyOpen ? "▴" : "▾"}</span>
+            </button>
+
+            {historyOpen && history.map((s) => {
+              const isHovered = historyHoveredId === s.id;
+              const badge = providerBadge(s.provider, globalProvider);
+              return (
+                <div
+                  key={s.id}
+                  className="flex items-center pr-1 hover:bg-[var(--border)] transition-colors"
+                  onMouseEnter={() => setHistoryHoveredId(s.id)}
+                  onMouseLeave={() => setHistoryHoveredId(null)}
+                >
+                  <div className="flex-1 px-4 py-2 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span className="truncate text-[12px] text-[var(--muted)] flex-1">{s.title}</span>
+                      <span className={[
+                        "shrink-0 text-[9px] px-1 py-0.5 rounded font-mono",
+                        badge === "Kiro"
+                          ? "bg-blue-900/30 text-blue-400"
+                          : "bg-[var(--cedar)]/20 text-[var(--cedar)]",
+                      ].join(" ")}>
+                        {badge}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-[var(--muted)]/60 mt-0.5">
+                      {s.message_count} msgs · {relativeTime(s.updated_at)}
+                    </div>
+                  </div>
+                  {isHovered && (
+                    <button
+                      onClick={() => onResume(s)}
+                      title="Resume session"
+                      className="shrink-0 mr-2 px-2 py-1 rounded-lg text-[10px] text-[var(--cedar)] border border-[var(--cedar)]/30 hover:bg-[var(--cedar)]/10 transition-colors"
+                    >
+                      Resume
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Footer */}

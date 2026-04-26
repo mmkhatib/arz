@@ -10,6 +10,7 @@ export interface SessionSummary {
   active: boolean;
   color?: number | null;
   work_dir?: string | null;
+  provider?: string | null;
 }
 
 export interface MessageRecord {
@@ -60,11 +61,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   fetchSessions: () => request<SessionSummary[]>("/sessions"),
 
-  createSession: (surface = "dashboard", chat_id = "web") =>
+  createSession: (provider?: string, surface = "dashboard", chat_id = "web") =>
     request<SessionSummary>("/sessions", {
       method: "POST",
-      body: JSON.stringify({ surface, chat_id }),
+      body: JSON.stringify({ surface, chat_id, ...(provider ? { provider } : {}) }),
     }),
+
+  fetchHistory: () => request<SessionSummary[]>("/sessions/history"),
+
+  reactivateSession: (id: string) =>
+    request<SessionSummary>(`/sessions/${id}/reactivate`, { method: "POST" }),
 
   getSession: (id: string) => request<SessionDetail>(`/sessions/${id}`),
 
