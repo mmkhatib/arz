@@ -1,1 +1,5 @@
-"""Slack surface — ships in Phase 6. Implements :class:`arz.surfaces.MessagingSurface` via slack-bolt Socket Mode."""
+"""Slack surface — slack-bolt Socket Mode adapter."""
+
+from arz.surfaces.slack.surface import SlackSurface
+
+__all__ = ["SlackSurface"]

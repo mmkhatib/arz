@@ -74,6 +74,8 @@ async def write_markdown(key: str, body: MarkdownPut, request: Request) -> Markd
     if not _KEY_RE.match(key):
         raise HTTPException(status_code=422, detail="invalid key")
     _markdown_store(request).save(key, body.content)
+    if body.content.strip():
+        _vector_store(request).add(f"md:{key}", body.content, meta={"source": "markdown", "key": key})
     return MarkdownEntry(key=key, content=body.content)
 
 
@@ -86,6 +88,7 @@ async def delete_markdown(key: str, request: Request) -> None:
     if not path.exists():
         raise HTTPException(status_code=404, detail="entry not found")
     path.unlink()
+    _vector_store(request).remove(f"md:{key}")
 
 
 # ── Lessons CRUD ───────────────────────────────────────────────────────────────
@@ -117,6 +120,11 @@ async def list_lessons(
 @router.post("/api/memory/lessons", response_model=LessonRow, status_code=201)
 async def create_lesson(body: LessonCreate, request: Request) -> LessonRow:
     lesson = _lessons_store(request).add(body.content, body.tags)
+    _vector_store(request).add(
+        f"lesson:{lesson.id}",
+        lesson.content,
+        meta={"source": "lesson", "tags": lesson.tags},
+    )
     return LessonRow(
         id=lesson.id, content=lesson.content, tags=lesson.tags, created_at=lesson.created_at
     )
@@ -126,6 +134,7 @@ async def create_lesson(body: LessonCreate, request: Request) -> LessonRow:
 async def delete_lesson(lesson_id: int, request: Request) -> None:
     if not _lessons_store(request).remove(lesson_id):
         raise HTTPException(status_code=404, detail="lesson not found")
+    _vector_store(request).remove(f"lesson:{lesson_id}")
 
 
 # ── Vector / semantic search ───────────────────────────────────────────────────

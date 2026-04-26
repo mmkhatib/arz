@@ -1,1 +1,5 @@
-"""Telegram surface — ships in Phase 6. Implements :class:`arz.surfaces.MessagingSurface` via aiogram 3.x."""
+"""Telegram surface — aiogram 3.x adapter."""
+
+from arz.surfaces.telegram.surface import TelegramSurface
+
+__all__ = ["TelegramSurface"]

@@ -5,6 +5,7 @@ import MessageBubble from "./MessageBubble";
 import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
+import CompareModal from "./CompareModal";
 import { formatTokens } from "@/utils/tokens";
 
 function ThinkingDots() {
@@ -117,6 +118,7 @@ interface Props {
   onSseEvent?: (type: string, summary?: string) => void;
   onSeedFiles?: (paths: string[]) => void;
   onFileOpen?: (path: string) => void;
+  onOpenSidebar?: () => void;
 }
 
 export default function ChatPanel({
@@ -129,6 +131,7 @@ export default function ChatPanel({
   onSseEvent,
   onSeedFiles,
   onFileOpen,
+  onOpenSidebar,
 }: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
@@ -141,6 +144,7 @@ export default function ChatPanel({
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
   const [settings, setSettings] = useState<{ model: string } | null>(null);
   const [workDir, setWorkDir] = useState("");
+  const [compareTarget, setCompareTarget] = useState<{ prompt: string; baseline: string; baselineModel: string | null } | null>(null);
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
@@ -325,8 +329,27 @@ export default function ChatPanel({
 
   return (
     <div className="flex flex-col flex-1 min-w-0 h-full">
+      {compareTarget && (
+        <CompareModal
+          prompt={compareTarget.prompt}
+          baselineReply={compareTarget.baseline}
+          baselineModel={compareTarget.baselineModel}
+          provider="claude-code"
+          onClose={() => setCompareTarget(null)}
+        />
+      )}
       {/* Session header */}
-      <div className="shrink-0 px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)] flex items-center">
+      <div className="shrink-0 px-4 md:px-6 py-3 border-b border-[var(--border)] bg-[var(--surface)] flex items-center gap-2">
+        {onOpenSidebar && (
+          <button
+            onClick={onOpenSidebar}
+            className="md:hidden text-[var(--muted)] hover:text-[var(--text)] -ml-1 p-1"
+            aria-label="Open sidebar"
+            title="Open sidebar"
+          >
+            ☰
+          </button>
+        )}
         <h2 className="text-[13px] font-medium text-[var(--text)] truncate">{title}</h2>
         <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
@@ -359,9 +382,27 @@ export default function ChatPanel({
           />
         )}
 
-        {messages.map((msg, i) => (
-          <MessageBubble key={i} message={msg} onFileOpen={onFileOpen} />
-        ))}
+        {messages.map((msg, i) => {
+          const prevUser = msg.role === "assistant"
+            ? [...messages.slice(0, i)].reverse().find((m) => m.role === "user")
+            : null;
+          return (
+            <MessageBubble
+              key={i}
+              message={msg}
+              onFileOpen={onFileOpen}
+              onCompare={
+                msg.role === "assistant" && prevUser
+                  ? () => setCompareTarget({
+                      prompt: prevUser.text,
+                      baseline: msg.text,
+                      baselineModel: msg.model ?? settings?.model ?? null,
+                    })
+                  : undefined
+              }
+            />
+          );
+        })}
 
         {/* Live streaming bubble */}
         {streaming && (

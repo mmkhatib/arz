@@ -9,3 +9,12 @@ createRoot(document.getElementById("root")!).render(
     <App />
   </StrictMode>
 );
+
+// Register the PWA service worker. Only in production builds — Vite's dev
+// server doesn't ship the public/sw.js the same way, and SWs in dev
+// complicate hot reload.
+if ("serviceWorker" in navigator && (import.meta as { env?: { PROD?: boolean } }).env?.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}

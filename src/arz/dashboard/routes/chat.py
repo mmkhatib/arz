@@ -154,11 +154,30 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     if not message:
         raise HTTPException(status_code=422, detail="message is required")
 
+    cfg = request.app.state.config
+
+    # RAG: prepend top-k memory hits when auto_recall is enabled. Off by default.
+    if cfg.dashboard.auto_recall:
+        try:
+            vec = getattr(request.app.state, "vector_store", None)
+            if vec is None:
+                from arz.memory.vector import VectorStore
+                vec = VectorStore()
+                request.app.state.vector_store = vec
+            hits = vec.search(message, k=cfg.dashboard.recall_k)
+            if hits:
+                preface = "\n".join(
+                    f"- ({k}) {content[:400]}" for k, content, _ in hits
+                )
+                message = (
+                    f"<memory>\n{preface}\n</memory>\n\n{message}"
+                )
+        except Exception:
+            log.exception("Auto-recall failed; continuing without context injection")
+
     history: list[dict] | None = None
     if session and session.messages:
         history = [{"role": m.role, "text": m.text} for m in session.messages]
-
-    cfg = request.app.state.config
     session_map: SessionMap = request.app.state.session_map
     session_work_dir = getattr(session, "work_dir", None)
 

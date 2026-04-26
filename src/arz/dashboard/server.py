@@ -18,18 +18,25 @@ from arz.config.schema import ArzConfig
 from arz.dashboard.routes.approvals import router as approvals_router
 from arz.dashboard.routes.chat import router as chat_router
 from arz.dashboard.routes.files import router as files_router
+from arz.dashboard.audit import AuditLog
 from arz.dashboard.cron import CronEntry, CronRegistry
+from arz.dashboard.routes.analytics import router as analytics_router
+from arz.dashboard.routes.audit import router as audit_router
+from arz.dashboard.routes.compare import router as compare_router
 from arz.dashboard.routes.cron import router as cron_router
 from arz.dashboard.routes.health import router as health_router
 from arz.dashboard.routes.memory import router as memory_router
 from arz.dashboard.routes.search import router as search_router
 from arz.dashboard.routes.sessions import router as sessions_router
 from arz.dashboard.routes.settings import router as settings_router
+from arz.dashboard.routes.tools import router as tools_router
 from arz.dashboard.search import SessionSearchIndex
 from arz.dashboard.token_auth import load_token
+from arz.core.router import MessageRouter
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
 from arz.session.session_map import SessionMap
+from arz.surfaces.manager import SurfaceManager
 
 log = structlog.get_logger(__name__)
 
@@ -100,8 +107,10 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Search index ready", sessions=indexed)
     app.state.cron_registry.start()
     log.info("Cron scheduler started")
+    await app.state.surface_manager.start()
     yield
     log.info("Arz gateway shutting down")
+    await app.state.surface_manager.shutdown()
     app.state.cron_registry.shutdown()
     await app.state.provider_pool.shutdown_all()
 
@@ -122,6 +131,22 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.state.yolo_sessions: set[str] = set()
     app.state.session_modes: dict[str, str] = {}
     app.state.cron_registry = CronRegistry(runner=lambda entry: _spawn_cron_run(app, entry))
+    app.state.message_router = MessageRouter(app.state.session_manager)
+    app.state.surface_manager = SurfaceManager(config, app.state.message_router)
+    app.state.audit_log = AuditLog()
+
+    # Mirror every router event into the audit log.
+    def _audit_handler(event):
+        from arz.core.event_bus import Event as _Event
+        if isinstance(event, _Event):
+            app.state.audit_log.log(
+                kind=event.kind,
+                summary=str(event.payload.get("session_id") or event.source),
+                session_id=event.payload.get("session_id"),
+                actor=event.payload.get("user_id"),
+                details=dict(event.payload),
+            )
+    app.state.message_router.event_bus.subscribe_all(_audit_handler)
 
     origins = [
         "http://localhost:3000",
@@ -145,6 +170,10 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(search_router)
     app.include_router(memory_router)
     app.include_router(cron_router)
+    app.include_router(compare_router)
+    app.include_router(tools_router)
+    app.include_router(audit_router)
+    app.include_router(analytics_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

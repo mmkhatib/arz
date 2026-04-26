@@ -14,6 +14,7 @@ function shortModel(model: string): string {
 interface Props {
   message: MessageRecord;
   onFileOpen?: (path: string) => void;
+  onCompare?: () => void;
 }
 
 function formatTime(iso: string): string {
@@ -90,7 +91,7 @@ function CodeBlock({ children, className }: { children?: React.ReactNode; classN
   );
 }
 
-export default function MessageBubble({ message, onFileOpen }: Props) {
+export default function MessageBubble({ message, onFileOpen, onCompare }: Props) {
   const isUser = message.role === "user";
 
   return (
@@ -203,6 +204,15 @@ export default function MessageBubble({ message, onFileOpen }: Props) {
               {" "}
               {formatTokens(message.usage.output_tokens)}↓
             </span>
+          )}
+          {!isUser && onCompare && (
+            <button
+              onClick={onCompare}
+              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
+              title="Compare with another model"
+            >
+              ↔ compare
+            </button>
           )}
         </div>
       </div>

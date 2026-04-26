@@ -51,6 +51,11 @@ interface Props {
   onSettings: () => void;
   onMemory?: () => void;
   onSchedule?: () => void;
+  onAnalytics?: () => void;
+  cronBadge?: number;
+  /** Visible state on mobile (overlay drawer). On md+ the sidebar is always visible. */
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
   onResume: (session: SessionSummary) => void;
 }
 
@@ -67,6 +72,10 @@ export default function SessionList({
   onSettings,
   onMemory,
   onSchedule,
+  onAnalytics,
+  cronBadge,
+  mobileOpen = false,
+  onMobileClose,
   onResume,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
@@ -153,7 +162,23 @@ export default function SessionList({
   });
 
   return (
-    <aside className="flex flex-col w-56 shrink-0 border-r border-[var(--border)] bg-[var(--surface)]">
+    <>
+      {/* Backdrop on mobile when drawer is open */}
+      {mobileOpen && onMobileClose && (
+        <div
+          onClick={onMobileClose}
+          className="md:hidden fixed inset-0 z-30 bg-black/50 backdrop-blur-sm"
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={[
+          "flex flex-col bg-[var(--surface)] border-r border-[var(--border)]",
+          "md:static md:flex md:w-56 md:shrink-0",
+          "fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200",
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        ].join(" ")}
+      >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
         <span className="text-[var(--accent)] font-semibold tracking-wide text-[13px]">
@@ -364,13 +389,27 @@ export default function SessionList({
               🧠
             </button>
           )}
+          {onAnalytics && (
+            <button
+              onClick={onAnalytics}
+              title="Analytics"
+              className="w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+            >
+              📊
+            </button>
+          )}
           {onSchedule && (
             <button
               onClick={onSchedule}
-              title="Scheduled tasks"
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+              title={cronBadge ? `${cronBadge} new run${cronBadge === 1 ? "" : "s"}` : "Scheduled tasks"}
+              className="relative w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
             >
               ⏱
+              {cronBadge !== undefined && cronBadge > 0 && (
+                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-[var(--cedar)] text-white text-[9px] font-mono flex items-center justify-center px-1 leading-none">
+                  {cronBadge > 9 ? "9+" : cronBadge}
+                </span>
+              )}
             </button>
           )}
           <button
@@ -382,6 +421,7 @@ export default function SessionList({
           </button>
         </div>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

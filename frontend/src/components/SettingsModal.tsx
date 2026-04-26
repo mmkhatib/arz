@@ -147,6 +147,25 @@ export default function SettingsModal({ onClose }: Props) {
         </SettingsCard>
       </SettingsSection>
 
+      <SettingsSection title="Memory">
+        <SettingsCard>
+          <SettingsToggle
+            label="Auto-recall (RAG)"
+            description="Prepend top-K relevant memory entries to every prompt. Off by default."
+            checked={settings.auto_recall}
+            onChange={(v) => patch({ auto_recall: v })}
+          />
+          <SettingsSelect
+            label="Recall depth (K)"
+            description="How many memory hits to include when auto-recall is enabled"
+            value={String(settings.recall_k)}
+            options={["1", "2", "3", "5", "8"]}
+            onChange={(v) => patch({ recall_k: Number(v) })}
+            disabled={!settings.auto_recall}
+          />
+        </SettingsCard>
+      </SettingsSection>
+
       <SettingsSection title="Advanced">
         <SettingsCard>
           <SettingsSelect

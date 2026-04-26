@@ -24,6 +24,8 @@ class SettingsResponse(BaseModel):
     token_auth: bool
     system_prompt: str
     log_level: str
+    auto_recall: bool
+    recall_k: int
 
 
 class SettingsPatch(BaseModel):
@@ -35,6 +37,8 @@ class SettingsPatch(BaseModel):
     token_auth: bool | None = None
     system_prompt: str | None = None
     log_level: str | None = None
+    auto_recall: bool | None = None
+    recall_k: int | None = Field(default=None, ge=1, le=20)
 
 
 def _to_response(cfg) -> SettingsResponse:
@@ -47,6 +51,8 @@ def _to_response(cfg) -> SettingsResponse:
         token_auth=cfg.dashboard.token_auth,
         system_prompt=cfg.dashboard.system_prompt,
         log_level=cfg.log_level,
+        auto_recall=cfg.dashboard.auto_recall,
+        recall_k=cfg.dashboard.recall_k,
     )
 
 
@@ -75,6 +81,10 @@ async def patch_settings(body: SettingsPatch, request: Request) -> SettingsRespo
         cfg.dashboard.system_prompt = body.system_prompt
     if body.log_level is not None:
         cfg.log_level = body.log_level
+    if body.auto_recall is not None:
+        cfg.dashboard.auto_recall = body.auto_recall
+    if body.recall_k is not None:
+        cfg.dashboard.recall_k = body.recall_k
 
     save_config(cfg)
     return _to_response(cfg)

@@ -38,6 +38,14 @@ export interface SessionDetail extends SessionSummary {
   messages: MessageRecord[];
 }
 
+export interface ToolView {
+  name: string;
+  description: string;
+  input_schema: Record<string, unknown>;
+  source_path: string;
+  error?: string | null;
+}
+
 export interface CronEntry {
   id: number;
   name: string;
@@ -92,6 +100,8 @@ export interface Settings {
   token_auth: boolean;
   system_prompt: string;
   log_level: string;
+  auto_recall: boolean;
+  recall_k: number;
 }
 
 export interface SSEChunk {
@@ -194,6 +204,38 @@ export const api = {
   },
   runCronNow: (id: number) =>
     request<{ queued: boolean }>(`/cron/${id}/run`, { method: "POST" }),
+
+  // ── Tools ──
+  listTools: () => request<ToolView[]>("/tools"),
+  reloadTools: () => request<{ loaded: number }>("/tools/reload", { method: "POST" }),
+  invokeTool: (name: string, input: Record<string, unknown>) =>
+    request<{ result: string }>(`/tools/${encodeURIComponent(name)}/invoke`, {
+      method: "POST",
+      body: JSON.stringify({ input }),
+    }),
+
+  // ── Analytics ──
+  analyticsMessagesByDay: (days = 30) =>
+    request<{ date: string; count: number }[]>(`/analytics/messages-by-day?days=${days}`),
+  analyticsTokensByDay: (days = 30) =>
+    request<{ date: string; count: number }[]>(`/analytics/tokens-by-day?days=${days}`),
+  analyticsToolUsage: () =>
+    request<{ name: string; count: number }[]>("/analytics/tool-usage"),
+  analyticsProviders: () =>
+    request<{ provider: string; messages: number }[]>("/analytics/providers"),
+  analyticsLatency: () =>
+    request<{ provider: string; samples: number; p50_ms: number; p95_ms: number; avg_ms: number }[]>(
+      "/analytics/latency",
+    ),
+  analyticsCsvUrl: () => `${BASE}/analytics/export.csv`,
+
+  // ── Compare ──
+  compareStream: (prompt: string, provider: string, model: string): Promise<Response> =>
+    fetch(`${BASE}/compare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, provider, model }),
+    }),
 
   uploadFiles: async (sessionId: string, files: File[]): Promise<UploadedFile[]> => {
     const fd = new FormData();

@@ -7,6 +7,7 @@ import SettingsModal from "@/components/SettingsModal";
 import NewSessionModal from "@/components/NewSessionModal";
 import MemoryModal from "@/components/MemoryModal";
 import ScheduleModal from "@/components/ScheduleModal";
+import AnalyticsModal from "@/components/AnalyticsModal";
 import ShortcutsOverlay from "@/components/ShortcutsOverlay";
 import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -45,6 +46,9 @@ export default function ChatPage() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showMemory, setShowMemory] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [cronBadge, setCronBadge] = useState(0);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [showAnalytics, setShowAnalytics] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSessions = async () => {
@@ -68,6 +72,40 @@ export default function ChatPage() {
   useEffect(() => {
     api.getSettings().then((s) => setGlobalProvider(s.provider)).catch(() => {});
   }, []);
+
+  // Cron badge: poll for new completed runs since last viewed
+  useEffect(() => {
+    let cancelled = false;
+    const computeBadge = async () => {
+      try {
+        const items = await api.listCrons();
+        if (cancelled) return;
+        let unseen = 0;
+        for (const c of items) {
+          if (c.last_run_at == null) continue;
+          const seenRaw = localStorage.getItem(`arz:cron-seen:${c.id}`);
+          const seen = seenRaw ? Number(seenRaw) : 0;
+          if (c.last_run_at > seen) unseen++;
+        }
+        setCronBadge(unseen);
+      } catch {}
+    };
+    computeBadge();
+    const interval = setInterval(computeBadge, 30_000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
+  const markCronSeen = async () => {
+    try {
+      const items = await api.listCrons();
+      for (const c of items) {
+        if (c.last_run_at != null) {
+          localStorage.setItem(`arz:cron-seen:${c.id}`, String(c.last_run_at));
+        }
+      }
+      setCronBadge(0);
+    } catch {}
+  };
 
   useEffect(() => {
     loadSessions();
@@ -221,6 +259,7 @@ export default function ChatPage() {
         />
       )}
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
+      {showAnalytics && <AnalyticsModal onClose={() => setShowAnalytics(false)} />}
       {showMemory && <MemoryModal onClose={() => setShowMemory(false)} />}
       {showSchedule && (
         <ScheduleModal
@@ -246,13 +285,17 @@ export default function ChatPage() {
         pinnedIds={pinnedIds}
         globalProvider={globalProvider}
         searchInputRef={searchInputRef}
-        onSelect={handleSelect}
+        mobileOpen={mobileSidebarOpen}
+        onMobileClose={() => setMobileSidebarOpen(false)}
+        onSelect={(id) => { setMobileSidebarOpen(false); handleSelect(id); }}
         onCreate={handleCreate}
         onDelete={handleDelete}
         onTogglePin={handleTogglePin}
         onSettings={() => setShowSettings(true)}
         onMemory={() => setShowMemory(true)}
-        onSchedule={() => setShowSchedule(true)}
+        onSchedule={() => { markCronSeen(); setShowSchedule(true); }}
+        onAnalytics={() => setShowAnalytics(true)}
+        cronBadge={cronBadge}
         onResume={handleResume}
       />
 
@@ -262,6 +305,7 @@ export default function ChatPage() {
             <ChatPanel
               key={activeId}
               sessionId={activeId}
+              onOpenSidebar={() => setMobileSidebarOpen(true)}
               onToolCall={(tc) => setToolEntries((prev) => [...prev, { ...tc, done: false }])}
               onToolResult={(callId, content) => setToolEntries((prev) =>
                 prev.map((e) => e.callId === callId ? { ...e, result: content, done: true } : e)

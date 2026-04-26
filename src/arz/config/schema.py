@@ -35,6 +35,8 @@ class DashboardConfig(BaseModel):
     token_auth: bool = False
     max_active_sessions: int = 5
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
+    auto_recall: bool = False
+    recall_k: int = 3
 
 
 class SlackConfig(BaseModel):
