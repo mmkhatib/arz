@@ -439,7 +439,10 @@ class AcpClient:
 
             # session/prompt completion response
             if msg.is_response_for(prompt_id):
-                yield AcpEvent(kind=EVENT_COMPLETE, stop_reason="end_turn")
+                stop_reason = "end_turn"
+                if isinstance(msg.result, dict):
+                    stop_reason = msg.result.get("stopReason") or "end_turn"
+                yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=stop_reason)
                 return
 
             # session/update notifications carry text chunks and tool calls
@@ -464,27 +467,77 @@ class AcpClient:
         raise AcpTimeoutError()
 
     async def _process_update(self, msg: JsonRpcMessage) -> AsyncIterator[AcpEvent]:
-        """Parse a session/update notification into zero or more AcpEvents."""
-        params = msg.params or {}
-        updates = params if isinstance(params, list) else [params]
+        """Parse a session/update notification into zero or more AcpEvents.
+
+        ACP spec wraps the actual payload under ``params.update`` and uses the
+        field name ``sessionUpdate`` to discriminate. ``content`` is a content
+        block ``{type:"text"|"thought", text:"..."}``. Older code paths sent a
+        flat ``params.{type, content:str}`` shape; both are tolerated for
+        backward compat with anything still emitting that.
+        """
+        raw = msg.params or {}
+        # Spec form: { sessionId, update: { sessionUpdate, ... } }
+        # Legacy/flat form: { type, content, ... }  (or a list of those)
+        if isinstance(raw, list):
+            updates = raw
+        elif "update" in raw and isinstance(raw["update"], dict):
+            updates = [raw["update"]]
+        else:
+            updates = [raw]
+
         for update in updates:
-            update_type = update.get("type")
-            if update_type == UPDATE_AGENT_MESSAGE_CHUNK:
-                content = update.get("content", "")
-                thinking = update.get("thinking", "")
-                if thinking:
-                    yield AcpEvent(kind=EVENT_THINKING_CHUNK, text=thinking)
-                if content:
+            update_type = update.get("sessionUpdate") or update.get("type")
+
+            if update_type == UPDATE_AGENT_MESSAGE_CHUNK or update_type == "agent_thought_chunk":
+                content = update.get("content")
+                if isinstance(content, dict):
+                    text = content.get("text", "")
+                    block_type = content.get("type", "text")
+                    if not text:
+                        continue
+                    if update_type == "agent_thought_chunk" or block_type == "thought":
+                        yield AcpEvent(kind=EVENT_THINKING_CHUNK, text=text)
+                    else:
+                        yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=text)
+                elif isinstance(content, str) and content:
                     yield AcpEvent(kind=EVENT_TEXT_CHUNK, text=content)
+                # Legacy/flat: separate `thinking` field
+                legacy_thinking = update.get("thinking")
+                if isinstance(legacy_thinking, str) and legacy_thinking:
+                    yield AcpEvent(kind=EVENT_THINKING_CHUNK, text=legacy_thinking)
+
             elif update_type == UPDATE_TOOL_CALL:
+                tool_id = update.get("toolCallId") or update.get("id", "")
                 yield AcpEvent(
                     kind=EVENT_TOOL_CALL,
-                    tool_call_id=update.get("id", ""),
-                    title=update.get("name", ""),
-                    tool_input=json.dumps(update.get("input", {})),
+                    tool_call_id=tool_id,
+                    title=update.get("title", "") or update.get("name", ""),
+                    tool_input=json.dumps(update.get("rawInput") or update.get("input", {})),
                 )
+
+            elif update_type == "tool_call_update":
+                tool_id = update.get("toolCallId") or update.get("id", "")
+                # ACP packs tool output under `content` as a list of content blocks.
+                contents = update.get("content", [])
+                texts: list[str] = []
+                if isinstance(contents, list):
+                    for c in contents:
+                        if not isinstance(c, dict):
+                            continue
+                        inner = c.get("content")
+                        if isinstance(inner, dict) and isinstance(inner.get("text"), str):
+                            texts.append(inner["text"])
+                        elif isinstance(c.get("text"), str):
+                            texts.append(c["text"])
+                if texts:
+                    yield AcpEvent(
+                        kind=EVENT_TOOL_RESULT,
+                        tool_call_id=tool_id,
+                        tool_output="\n".join(texts),
+                    )
+
             else:
-                # Emit tool results and other update types as-is (for extensibility)
+                # Legacy fallback: bare `result` field
                 result = update.get("result")
                 if result is not None:
                     yield AcpEvent(
