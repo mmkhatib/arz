@@ -116,7 +116,7 @@ export default function ChatPage() {
     setShowNewSession(true);
   };
 
-  const handleNewSessionConfirm = async (provider: string) => {
+  const handleNewSessionConfirm = async (provider: string, _agentName?: string) => {
     setShowNewSession(false);
     try {
       const session = await api.createSession(provider);

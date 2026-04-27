@@ -20,7 +20,11 @@ from arz.dashboard.routes.chat import router as chat_router
 from arz.dashboard.routes.files import router as files_router
 from arz.dashboard.audit import AuditLog
 from arz.dashboard.cron import CronEntry, CronRegistry
+from arz.dashboard.routes.agents import router as agents_router
 from arz.dashboard.routes.analytics import router as analytics_router
+from arz.dashboard.routes.mcp import router as mcp_router
+from arz.dashboard.routes.overview import router as overview_router
+from arz.dashboard.routes.prompts import router as prompts_router
 from arz.dashboard.routes.audit import router as audit_router
 from arz.dashboard.routes.compare import router as compare_router
 from arz.dashboard.routes.cron import router as cron_router
@@ -181,6 +185,10 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(tools_router)
     app.include_router(audit_router)
     app.include_router(analytics_router)
+    app.include_router(overview_router)
+    app.include_router(agents_router)
+    app.include_router(mcp_router)
+    app.include_router(prompts_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

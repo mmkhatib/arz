@@ -8,11 +8,14 @@ import {
   Keyboard,
   ChevronLeft,
   ChevronRight,
+  LayoutDashboard,
+  Bot,
+  Puzzle,
 } from "lucide-react";
 
 const STORAGE_KEY = "arz:nav-collapsed";
 
-export type NavSection = "chat" | "memory" | "schedule" | "analytics" | "settings" | "shortcuts";
+export type NavSection = "overview" | "chat" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "settings" | "shortcuts";
 
 interface Props {
   active: NavSection;
@@ -28,7 +31,9 @@ interface NavEntry {
 }
 
 const ENTRIES: NavEntry[] = [
+  { id: "overview", label: "Overview", icon: <LayoutDashboard size={16} /> },
   { id: "chat", label: "Chat", icon: <MessageSquare size={16} /> },
+  { id: "agents", label: "Agents", icon: <Bot size={16} /> },
   { id: "memory", label: "Memory", icon: <Brain size={16} /> },
   {
     id: "schedule",
@@ -42,6 +47,7 @@ const ENTRIES: NavEntry[] = [
       ) : null,
   },
   { id: "analytics", label: "Analytics", icon: <BarChart3 size={16} /> },
+  { id: "capabilities", label: "Capabilities", icon: <Puzzle size={16} /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon size={16} /> },
   { id: "shortcuts", label: "Shortcuts", icon: <Keyboard size={16} /> },
 ];

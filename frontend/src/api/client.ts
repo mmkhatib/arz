@@ -96,6 +96,73 @@ export interface SearchHit {
   rank: number;
 }
 
+export interface ProviderStatus {
+  name: string;
+  installed: boolean;
+  binary_path: string | null;
+  is_active: boolean;
+}
+
+export interface CronHealth {
+  total: number;
+  enabled: number;
+  last_run_at: number | null;
+  error_count_24h: number;
+}
+
+export interface OverviewCounts {
+  sessions_active: number;
+  sessions_history: number;
+  crons: number;
+  memory_notes: number;
+  memory_lessons: number;
+}
+
+export interface AuditEntryPub {
+  id: number;
+  ts: number;
+  kind: string;
+  summary: string;
+  session_id: string | null;
+}
+
+export interface OverviewResponse {
+  counts: OverviewCounts;
+  providers: ProviderStatus[];
+  cron_health: CronHealth;
+  recent_activity: AuditEntryPub[];
+}
+
+export interface AgentConfig {
+  name: string;
+  provider: string;
+  model: string;
+  work_dir: string;
+  system_prompt: string;
+  approval_mode: string;
+  tool_allowlist: string[];
+  description: string;
+  is_default: boolean;
+}
+
+export interface McpServer {
+  name: string;
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+  source: string;
+  enabled: boolean;
+}
+
+export interface PromptTemplate {
+  slug: string;
+  title: string;
+  body: string;
+  tags: string[];
+  created_at: number;
+  updated_at: number;
+}
+
 export interface Settings {
   provider: "claude-code" | "kiro-cli" | "anthropic";
   model: string;
@@ -247,6 +314,37 @@ export const api = {
       "/analytics/latency",
     ),
   analyticsCsvUrl: () => `${BASE}/analytics/export.csv`,
+
+  // ── Overview ──
+  getOverview: (activityLimit = 10) =>
+    request<OverviewResponse>(`/overview?activity_limit=${activityLimit}`),
+
+  // ── Agents ──
+  listAgents: () => request<AgentConfig[]>("/agents"),
+  createAgent: (agent: Omit<AgentConfig, never>) =>
+    request<AgentConfig>("/agents", { method: "POST", body: JSON.stringify(agent) }),
+  updateAgent: (name: string, agent: Omit<AgentConfig, "name">) =>
+    request<AgentConfig>(`/agents/${encodeURIComponent(name)}`, { method: "PUT", body: JSON.stringify(agent) }),
+  deleteAgent: async (name: string): Promise<void> => {
+    const res = await fetch(`${BASE}/agents/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  // ── MCP ──
+  listMcpServers: () => request<McpServer[]>("/mcp/servers"),
+  toggleMcpServer: (source: string, name: string) =>
+    request<McpServer>(`/mcp/servers/${encodeURIComponent(source)}/${encodeURIComponent(name)}/toggle`, { method: "POST" }),
+
+  // ── Prompts ──
+  listPrompts: () => request<PromptTemplate[]>("/prompts"),
+  createPrompt: (title: string, body: string, tags: string[] = []) =>
+    request<PromptTemplate>("/prompts", { method: "POST", body: JSON.stringify({ title, body, tags }) }),
+  updatePrompt: (slug: string, title: string, body: string, tags: string[] = []) =>
+    request<PromptTemplate>(`/prompts/${encodeURIComponent(slug)}`, { method: "PUT", body: JSON.stringify({ title, body, tags }) }),
+  deletePrompt: async (slug: string): Promise<void> => {
+    const res = await fetch(`${BASE}/prompts/${encodeURIComponent(slug)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
 
   // ── Compare ──
   compareStream: (prompt: string, provider: string, model: string): Promise<Response> =>

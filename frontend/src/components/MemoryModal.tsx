@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
-import type { MemoryHit, MemoryLesson, ToolView } from "@/api/client";
-import { Brain, FileText, BookOpen, Search as SearchIcon, Trash2, Plus, Save, Wrench, RefreshCw, AlertTriangle } from "lucide-react";
+import type { MemoryHit, MemoryLesson } from "@/api/client";
+import { Brain, FileText, BookOpen, Search as SearchIcon, Trash2, Plus, Save } from "lucide-react";
 
 interface Props {
   onClose?: () => void;
   variant?: "modal" | "page";
 }
 
-type Tab = "markdown" | "lessons" | "search" | "tools";
+type Tab = "markdown" | "lessons" | "search";
 
 export default function MemoryModal({ onClose, variant = "modal" }: Props) {
   const [tab, setTab] = useState<Tab>("markdown");
@@ -41,7 +41,6 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
       <TabButton icon={<FileText size={13} />} label="Notes" active={tab === "markdown"} onClick={() => setTab("markdown")} />
       <TabButton icon={<BookOpen size={13} />} label="Lessons" active={tab === "lessons"} onClick={() => setTab("lessons")} />
       <TabButton icon={<SearchIcon size={13} />} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
-      <TabButton icon={<Wrench size={13} />} label="Tools" active={tab === "tools"} onClick={() => setTab("tools")} />
     </div>
   );
   const body = (
@@ -49,7 +48,6 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
       {tab === "markdown" && <MarkdownTab />}
       {tab === "lessons" && <LessonsTab />}
       {tab === "search" && <SearchTab />}
-      {tab === "tools" && <ToolsTab />}
     </div>
   );
 
@@ -412,75 +410,3 @@ function SearchTab() {
   );
 }
 
-// ── Tools tab ──────────────────────────────────────────────────────────────────
-
-function ToolsTab() {
-  const [tools, setTools] = useState<ToolView[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [reloading, setReloading] = useState(false);
-
-  const refresh = () =>
-    api.listTools().then(setTools).catch((e) => setError(String(e)));
-
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const reload = async () => {
-    setReloading(true);
-    setError(null);
-    try {
-      await api.reloadTools();
-      await refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setReloading(false);
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-3 h-[480px]">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[12px] text-[var(--muted)]">
-          Drop Python files in <code className="text-[var(--cedar)]">~/.arz/tools/</code> — each declares <code>tool_spec</code> and <code>async run(input)</code>.
-        </span>
-        <button
-          onClick={reload}
-          disabled={reloading}
-          className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)] shrink-0"
-        >
-          <RefreshCw size={11} className={reloading ? "animate-spin" : ""} /> Reload
-        </button>
-      </div>
-      <div className="flex-1 overflow-y-auto flex flex-col gap-2">
-        {tools.length === 0 && (
-          <div className="text-center text-[var(--muted)]/60 text-[12px] py-8">No tools loaded.</div>
-        )}
-        {tools.map((t) => (
-          <div
-            key={t.source_path}
-            className={[
-              "border rounded-lg p-3 bg-[var(--surface)]",
-              t.error ? "border-amber-400/40" : "border-[var(--border)]",
-            ].join(" ")}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <Wrench size={12} className="text-[var(--cedar)]" />
-              <span className="text-[13px] font-mono text-[var(--text)]">{t.name}</span>
-              {t.error && <AlertTriangle size={11} className="text-amber-400" />}
-              <span className="text-[10px] font-mono text-[var(--muted)]/60 truncate ml-auto">{t.source_path}</span>
-            </div>
-            <div className="text-[12px] text-[var(--muted)]">{t.description}</div>
-            {t.error && (
-              <pre className="mt-2 text-[10px] text-red-400 bg-red-900/10 rounded p-2 whitespace-pre-wrap overflow-x-auto">
-                {t.error}
-              </pre>
-            )}
-          </div>
-        ))}
-      </div>
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
-    </div>
-  );
-}
