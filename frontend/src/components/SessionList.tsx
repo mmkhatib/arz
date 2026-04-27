@@ -96,9 +96,14 @@ export default function SessionList({
   const [historyHoveredId, setHistoryHoveredId] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Refetch history only when a session is removed from the active list
+  // (the typical event that grows history). New sessions don't move into
+  // history, and rerendering shouldn't refetch — coupling to the array
+  // reference would refire on every state update for zero benefit.
+  const activeSessionCount = sessions.length;
   useEffect(() => {
     api.fetchHistory().then(setHistory).catch(() => {});
-  }, [sessions]); // refresh when active list changes (e.g. after delete)
+  }, [activeSessionCount]);
 
   const handleSetColor = (id: string, color: number | null) => {
     setColorMap((prev) => ({ ...prev, [id]: color }));

@@ -73,10 +73,12 @@ export default function ChatPage() {
     api.getSettings().then((s) => setGlobalProvider(s.provider)).catch(() => {});
   }, []);
 
-  // Cron badge: poll for new completed runs since last viewed
+  // Cron badge: poll for new completed runs since last viewed.
+  // Pauses when the tab is hidden — idle users don't need polling.
   useEffect(() => {
     let cancelled = false;
     const computeBadge = async () => {
+      if (document.hidden) return;
       try {
         const items = await api.listCrons();
         if (cancelled) return;
@@ -91,8 +93,14 @@ export default function ChatPage() {
       } catch {}
     };
     computeBadge();
-    const interval = setInterval(computeBadge, 30_000);
-    return () => { cancelled = true; clearInterval(interval); };
+    const interval = setInterval(computeBadge, 60_000);
+    const onVisible = () => { if (!document.hidden) computeBadge(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   const markCronSeen = async () => {
@@ -109,8 +117,14 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadSessions();
-    const interval = setInterval(loadSessions, 30_000);
-    return () => clearInterval(interval);
+    const tick = () => { if (!document.hidden) loadSessions(); };
+    const interval = setInterval(tick, 60_000);
+    const onVisible = () => { if (!document.hidden) loadSessions(); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   // On session switch: load persisted activity from localStorage instead of clearing
