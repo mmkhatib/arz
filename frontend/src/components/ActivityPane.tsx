@@ -318,7 +318,7 @@ interface Props {
 
 /* ── Main component ── */
 export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seedPaths, requestedFile, onFileOpenHandled, onClose, width, onWidthChange, onSpawnSession }: Props) {
-  const [tab, setTab] = useState<Tab>("tools");
+  const [tab, setTab] = useState<Tab>("files");
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -386,6 +386,20 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
     if (subagentEntries.length > 0 && !hadSubagents.current) { setTab("subagents"); }
     hadSubagents.current = subagentEntries.length > 0;
   }, [subagentEntries.length]);
+
+  // Auto-switch to Files tab and open the latest touched file when one
+  // appears. Acts like a "default to source view" — the moment the agent
+  // creates or edits a file, that file is shown rendered with syntax
+  // highlighting in the right pane.
+  const lastSeenTouchedPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (touchedFiles.length === 0) return;
+    const latest = touchedFiles[touchedFiles.length - 1];
+    if (latest.path === lastSeenTouchedPath.current) return;
+    lastSeenTouchedPath.current = latest.path;
+    setTab("files");
+    setSelectedFile(latest.path);
+  }, [touchedFiles]);
 
   const lastToolIdx = toolEntries.reduce((last, e, i) => (!e.done ? i : last), -1);
   const activeIdx = toolEntries.findIndex((e) => !e.done);
