@@ -77,6 +77,8 @@ class ClaudeCodeProvider(LLMProvider):
                 request_id=acp_event.request_id or None,
                 context_usage_pct=acp_event.context_usage_pct or None,
                 usage=acp_event.usage,
+                title=acp_event.title or None,
+                options=list(acp_event.options or []),
             )
 
     async def approve_tool(self, request_id: str | int) -> None:

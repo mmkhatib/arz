@@ -34,6 +34,8 @@ class LLMEvent:
     request_id: str | int | None = None
     context_usage_pct: float | None = None
     usage: Any = None  # Usage dataclass from arz.acp.types when available
+    title: str | None = None  # for permission_request / tool_call display
+    options: list[dict[str, str]] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
