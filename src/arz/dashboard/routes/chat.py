@@ -10,6 +10,7 @@ from typing import AsyncIterator
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from arz.acp.client import AcpError
 from arz.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
 from arz.dashboard.sse import sse_chunk, sse_complete, sse_error, sse_permission_request, sse_tool_call, sse_tool_result
 from arz.dashboard.token_auth import require_token
@@ -193,7 +194,16 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             p.set_resume_session_id(provider_sid)
         return p
 
-    provider = await pool.activate(session_id, _factory)
+    try:
+        provider = await pool.activate(session_id, _factory)
+    except AcpError as e:
+        # Most common cause: the configured provider's CLI binary isn't installed
+        # on this machine. Surface a clean 503 instead of a 500 traceback so the
+        # frontend can render a useful error toast.
+        raise HTTPException(
+            status_code=503,
+            detail=f"Provider {effective_provider_name!r} unavailable: {e}",
+        )
 
     # Auto-evict if provider was started with a different model than current config.
     desired_model = cfg.provider.model
@@ -207,10 +217,16 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         # Clear session map so the new provider starts fresh with the correct model
         session_map.remove(session_id)
         await pool.deactivate(session_id)
-        provider = await pool.activate(
-            session_id,
-            lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name),
-        )
+        try:
+            provider = await pool.activate(
+                session_id,
+                lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name),
+            )
+        except AcpError as e:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Provider {effective_provider_name!r} unavailable: {e}",
+            )
 
     # Persist provider session ID for future resume
     if provider.session_id:

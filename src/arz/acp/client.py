@@ -113,6 +113,7 @@ class AcpClient:
         self._pending_permissions: dict[Any, asyncio.Event] = {}
         self._permission_outcomes: dict[Any, str] = {}
         self._stderr_task: asyncio.Task[None] | None = None
+        self._stderr_tail: list[str] = []
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -156,13 +157,26 @@ class AcpClient:
                 pass
 
     async def stream_events(self, message: str) -> AsyncIterator[AcpEvent]:
-        """Send a prompt and stream events until completion."""
+        """Send a prompt and stream events until completion.
+
+        ACP `session/prompt` requires ``sessionId`` and ``prompt`` (a list of
+        content blocks), not a free-form ``message`` field — Kiro 2.x crashes
+        the subprocess silently if the shape is wrong, surfacing as
+        ``Process closed stdout mid-prompt`` to callers.
+        """
         if not self._process or self._session_id is None:
             raise AcpError("Client not initialized — call start() first")
 
         prompt_id = self._next_req_id()
         await self._send(
-            JsonRpcRequest(method=METHOD_PROMPT, params={"message": message}, id=prompt_id)
+            JsonRpcRequest(
+                method=METHOD_PROMPT,
+                params={
+                    "sessionId": self._session_id,
+                    "prompt": [{"type": "text", "text": message}],
+                },
+                id=prompt_id,
+            )
         )
 
         async for event in self._read_until_complete(prompt_id):
@@ -214,12 +228,24 @@ class AcpClient:
                 self._drain_stderr(self._process.stderr)
             )
 
+    def _died_reason(self, base: str) -> str:
+        """Compose a death message including recent stderr lines."""
+        if not self._stderr_tail:
+            return base
+        tail = "\n".join(self._stderr_tail[-10:])
+        return f"{base}\n--- subprocess stderr (last 10 lines) ---\n{tail}"
+
     async def _drain_stderr(self, stderr: asyncio.StreamReader) -> None:
         while True:
             line = await stderr.readline()
             if not line:
                 break
-            logger.debug("ACP stderr: %s", line.decode(errors="replace").strip())
+            text = line.decode(errors="replace").rstrip()
+            logger.debug("ACP stderr: %s", text)
+            # Retain a tail buffer so AcpProcessDied can include real diagnostics
+            self._stderr_tail.append(text)
+            if len(self._stderr_tail) > 40:
+                self._stderr_tail.pop(0)
 
     # ── ACP handshake ─────────────────────────────────────────────────────────
 
@@ -276,26 +302,41 @@ class AcpClient:
             else:
                 logger.info("kiro session file missing for %s — starting fresh", resume_sid)
 
-        # Fall back to new session
+        # Fall back to new session. ACP `session/new` takes {cwd, mcpServers}
+        # and *returns* the sessionId — clients don't pick it. Sending a
+        # client-supplied sessionId crashes kiro-cli silently.
         if not self._session_id:
-            import uuid
-            self._session_id = str(uuid.uuid4())
             new_id = self._next_req_id()
             await self._send(JsonRpcRequest(
                 method=METHOD_SESSION_NEW,
-                params={"sessionId": self._session_id},
+                params={"cwd": str(self._work_dir), "mcpServers": []},
                 id=new_id,
             ))
-            await self._drain_briefly(0.5)
+            new_resp = await asyncio.wait_for(
+                self._read_response(new_id), timeout=_INIT_TIMEOUT
+            )
+            if new_resp.error:
+                raise AcpError(f"ACP session/new failed: {new_resp.error}")
+            sid = (new_resp.result or {}).get("sessionId")
+            if not sid:
+                raise AcpError(f"ACP session/new returned no sessionId: {new_resp.result}")
+            self._session_id = sid
             logger.info("kiro-cli session created: %s", self._session_id)
 
-        model_id = self._next_req_id()
-        await self._send(JsonRpcRequest(
-            method=METHOD_SET_MODEL,
-            params={"model": self._model},
-            id=model_id,
-        ))
-        await self._drain_briefly(0.2)
+        # session/set_model is per-session and takes {sessionId, modelId}.
+        # Kiro 2.x rejects bare {model: …} and dies; skip it if the model is
+        # "auto" (Kiro's default) so we don't tickle that path needlessly.
+        if self._model and self._model != "auto":
+            model_id = self._next_req_id()
+            await self._send(JsonRpcRequest(
+                method=METHOD_SET_MODEL,
+                params={"sessionId": self._session_id, "modelId": self._model},
+                id=model_id,
+            ))
+            try:
+                await asyncio.wait_for(self._read_response(model_id), timeout=_INIT_TIMEOUT)
+            except (AcpError, asyncio.TimeoutError):
+                logger.warning("session/set_model failed for %s — proceeding with default", self._model)
         logger.info("ACP session ready (id=%s model=%s resumed=%s)", self._session_id, self._model, self._resumed)
 
     # ── I/O helpers ───────────────────────────────────────────────────────────
@@ -369,7 +410,7 @@ class AcpClient:
         deadline = asyncio.get_event_loop().time() + _PROMPT_TIMEOUT
         while asyncio.get_event_loop().time() < deadline:
             if not self._process or not self._process.stdout:
-                raise AcpProcessDied("Stdout closed mid-stream")
+                raise AcpProcessDied(self._died_reason("Stdout closed mid-stream"))
 
             try:
                 raw = await asyncio.wait_for(
@@ -377,11 +418,11 @@ class AcpClient:
                 )
             except asyncio.TimeoutError:
                 if not self.is_alive():
-                    raise AcpProcessDied("Process exited while waiting for events")
+                    raise AcpProcessDied(self._died_reason("Process exited while waiting for events"))
                 continue
 
             if not raw:
-                raise AcpProcessDied("Process closed stdout mid-prompt")
+                raise AcpProcessDied(self._died_reason("Process closed stdout mid-prompt"))
 
             try:
                 obj = json.loads(raw.decode(errors="replace"))
