@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
-import SettingsModal from "@/components/SettingsModal";
 import NewSessionModal from "@/components/NewSessionModal";
-import MemoryModal from "@/components/MemoryModal";
-import ScheduleModal from "@/components/ScheduleModal";
-import AnalyticsModal from "@/components/AnalyticsModal";
-import NavBar, { type NavSection } from "@/components/NavBar";
-import ShortcutsOverlay from "@/components/ShortcutsOverlay";
 import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
@@ -20,6 +15,7 @@ interface SseLogEntry {
 }
 
 export default function ChatPage() {
+  const navigate = useNavigate();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pinnedIds, setPinnedIds] = useState<Set<string>>(() => {
@@ -31,7 +27,6 @@ export default function ChatPage() {
     }
   });
   const [loading, setLoading] = useState(true);
-  const [showSettings, setShowSettings] = useState(false);
   const [showNewSession, setShowNewSession] = useState(false);
   const [globalProvider, setGlobalProvider] = useState("claude-code");
   const [activityOpen, setActivityOpen] = useState(false);
@@ -44,12 +39,7 @@ export default function ChatPage() {
   });
   const [seedPaths, setSeedPaths] = useState<string[]>([]);
   const [requestedFile, setRequestedFile] = useState<string | null>(null);
-  const [showShortcuts, setShowShortcuts] = useState(false);
-  const [showMemory, setShowMemory] = useState(false);
-  const [showSchedule, setShowSchedule] = useState(false);
-  const [cronBadge, setCronBadge] = useState(0);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [showAnalytics, setShowAnalytics] = useState(false);
   const [focusTick, setFocusTick] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -81,47 +71,8 @@ export default function ChatPage() {
     api.getSettings().then((s) => setGlobalProvider(s.provider)).catch(() => {});
   }, []);
 
-  // Cron badge: poll for new completed runs since last viewed.
-  // Pauses when the tab is hidden — idle users don't need polling.
-  useEffect(() => {
-    let cancelled = false;
-    const computeBadge = async () => {
-      if (document.hidden) return;
-      try {
-        const items = await api.listCrons();
-        if (cancelled) return;
-        let unseen = 0;
-        for (const c of items) {
-          if (c.last_run_at == null) continue;
-          const seenRaw = localStorage.getItem(`arz:cron-seen:${c.id}`);
-          const seen = seenRaw ? Number(seenRaw) : 0;
-          if (c.last_run_at > seen) unseen++;
-        }
-        setCronBadge(unseen);
-      } catch {}
-    };
-    computeBadge();
-    const interval = setInterval(computeBadge, 60_000);
-    const onVisible = () => { if (!document.hidden) computeBadge(); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
-
-  const markCronSeen = async () => {
-    try {
-      const items = await api.listCrons();
-      for (const c of items) {
-        if (c.last_run_at != null) {
-          localStorage.setItem(`arz:cron-seen:${c.id}`, String(c.last_run_at));
-        }
-      }
-      setCronBadge(0);
-    } catch {}
-  };
+  // Cron badge polling now lives in Layout so it's visible on every page,
+  // not just /. See pages/Layout.tsx.
 
   useEffect(() => {
     loadSessions();
@@ -257,11 +208,9 @@ export default function ChatPage() {
     "mod+[": () => navigateSession(-1),
     "mod+]": () => navigateSession(1),
     "mod+w": () => activeId && handleDelete(activeId),
-    "?": () => setShowShortcuts(true),
+    "?": () => navigate("/shortcuts"),
     esc: () => {
-      if (showShortcuts) setShowShortcuts(false);
-      else if (showSettings) setShowSettings(false);
-      else if (showNewSession) setShowNewSession(false);
+      if (showNewSession) setShowNewSession(false);
     },
   });
 
@@ -274,8 +223,7 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex w-full h-full overflow-hidden">
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+    <>
       {showNewSession && (
         <NewSessionModal
           defaultProvider={globalProvider}
@@ -283,48 +231,6 @@ export default function ChatPage() {
           onCancel={() => setShowNewSession(false)}
         />
       )}
-      {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
-      {showAnalytics && <AnalyticsModal onClose={() => setShowAnalytics(false)} />}
-      {showMemory && <MemoryModal onClose={() => setShowMemory(false)} />}
-      {showSchedule && (
-        <ScheduleModal
-          onClose={() => setShowSchedule(false)}
-          onJumpToSession={(id) => {
-            setShowSchedule(false);
-            // Reactivate the session if it's not already active, then select it
-            api.reactivateSession(id)
-              .then((s) => {
-                setSessions((prev) => {
-                  const exists = prev.find((p) => p.id === s.id);
-                  return exists ? prev.map((p) => p.id === s.id ? s : p) : [s, ...prev];
-                });
-                setActiveId(s.id);
-              })
-              .catch(() => setActiveId(id));
-          }}
-        />
-      )}
-
-      <NavBar
-        active={
-          (showSettings ? "settings"
-          : showMemory ? "memory"
-          : showSchedule ? "schedule"
-          : showAnalytics ? "analytics"
-          : showShortcuts ? "shortcuts"
-          : "chat") as NavSection
-        }
-        cronBadge={cronBadge}
-        onSelect={(s) => {
-          // Close anything currently open, then open the selected destination.
-          setShowSettings(s === "settings");
-          setShowMemory(s === "memory");
-          setShowAnalytics(s === "analytics");
-          setShowShortcuts(s === "shortcuts");
-          if (s === "schedule") { markCronSeen(); setShowSchedule(true); }
-          else setShowSchedule(false);
-        }}
-      />
 
       <SessionList
         sessions={sessions}
@@ -396,6 +302,6 @@ export default function ChatPage() {
           />
         )}
       </main>
-    </div>
+    </>
   );
 }

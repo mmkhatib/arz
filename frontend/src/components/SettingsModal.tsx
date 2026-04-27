@@ -10,14 +10,16 @@ import {
 } from "./settings/primitives";
 
 interface Props {
-  onClose: () => void;
+  onClose?: () => void;
+  variant?: "modal" | "page";
 }
 
 const PROVIDER_OPTIONS = ["claude-code", "kiro-cli", "anthropic"];
 const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "Anthropic API (direct)"];
 const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
-export default function SettingsModal({ onClose }: Props) {
+export default function SettingsModal({ onClose, variant = "modal" }: Props) {
+  const handleClose = onClose ?? (() => {});
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState(0);
@@ -43,14 +45,15 @@ export default function SettingsModal({ onClose }: Props) {
       .catch((e: Error) => setError(e.message));
   }, []);
 
-  // Esc to close
+  // Esc to close — only in modal variant; page variant has no close action
   useEffect(() => {
+    if (variant !== "modal") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [variant, handleClose]);
 
   const patch = async (body: Partial<Settings>) => {
     setError(null);
@@ -65,7 +68,7 @@ export default function SettingsModal({ onClose }: Props) {
 
   if (!settings && !error) {
     return (
-      <Shell onClose={onClose}>
+      <Shell variant={variant} onClose={handleClose}>
         <div className="text-center text-[var(--muted)] py-12 text-sm animate-pulse">Loading…</div>
       </Shell>
     );
@@ -73,7 +76,7 @@ export default function SettingsModal({ onClose }: Props) {
 
   if (!settings) {
     return (
-      <Shell onClose={onClose}>
+      <Shell variant={variant} onClose={handleClose}>
         <div className="text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">{error}</div>
       </Shell>
     );
@@ -82,7 +85,7 @@ export default function SettingsModal({ onClose }: Props) {
   const justSaved = Date.now() - savedAt < 1500;
 
   return (
-    <Shell onClose={onClose} savedFlag={justSaved} error={error}>
+    <Shell variant={variant} onClose={handleClose} savedFlag={justSaved} error={error}>
       <SettingsSection title="Provider">
         <SettingsCard>
           <SettingsSelect
@@ -197,12 +200,51 @@ function Shell({
   children,
   savedFlag,
   error,
+  variant = "modal",
 }: {
   onClose: () => void;
   children: React.ReactNode;
   savedFlag?: boolean;
   error?: string | null;
+  variant?: "modal" | "page";
 }) {
+  const header = (
+    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
+      <div className="flex items-center gap-3">
+        <h2 className="text-[15px] font-semibold text-[var(--text)]">Settings</h2>
+        {savedFlag && (
+          <span className="text-[11px] text-[var(--accent)] uppercase tracking-wider animate-pulse">
+            Saved
+          </span>
+        )}
+      </div>
+      {variant === "modal" && (
+        <button
+          onClick={onClose}
+          className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none"
+          aria-label="Close settings"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+  const errorBlock = error && (
+    <div className="mx-5 mt-3 text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">
+      {error}
+    </div>
+  );
+
+  if (variant === "page") {
+    return (
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+        {header}
+        {errorBlock}
+        <div className="overflow-y-auto px-5 py-4 flex-1 max-w-3xl w-full mx-auto">{children}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
@@ -211,28 +253,8 @@ function Shell({
       }}
     >
       <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-          <div className="flex items-center gap-3">
-            <h2 className="text-[15px] font-semibold text-[var(--text)]">Settings</h2>
-            {savedFlag && (
-              <span className="text-[11px] text-[var(--accent)] uppercase tracking-wider animate-pulse">
-                Saved
-              </span>
-            )}
-          </div>
-          <button
-            onClick={onClose}
-            className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none"
-            aria-label="Close settings"
-          >
-            ×
-          </button>
-        </div>
-        {error && (
-          <div className="mx-5 mt-3 text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">
-            {error}
-          </div>
-        )}
+        {header}
+        {errorBlock}
         <div className="overflow-y-auto px-5 py-4 flex-1">{children}</div>
       </div>
     </div>

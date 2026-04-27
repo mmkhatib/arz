@@ -4,8 +4,9 @@ import type { CronEntry } from "@/api/client";
 import { Clock, Plus, Trash2, Play, Power } from "lucide-react";
 
 interface Props {
-  onClose: () => void;
+  onClose?: () => void;
   onJumpToSession?: (sessionId: string) => void;
+  variant?: "modal" | "page";
 }
 
 const SCHEDULE_PRESETS: { label: string; expr: string }[] = [
@@ -16,7 +17,7 @@ const SCHEDULE_PRESETS: { label: string; expr: string }[] = [
   { label: "Every Monday, 8 AM", expr: "0 8 * * 1" },
 ];
 
-export default function ScheduleModal({ onClose, onJumpToSession }: Props) {
+export default function ScheduleModal({ onClose, onJumpToSession, variant = "modal" }: Props) {
   const [items, setItems] = useState<CronEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -25,18 +26,20 @@ export default function ScheduleModal({ onClose, onJumpToSession }: Props) {
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [schedule, setSchedule] = useState("0 9 * * *");
+  const handleClose = onClose ?? (() => {});
 
   const refresh = () =>
     api.listCrons().then(setItems).catch((e) => setError(String(e)));
 
   useEffect(() => {
     refresh();
+    if (variant !== "modal") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [variant, handleClose]);
 
   const create = async () => {
     if (!name.trim() || !prompt.trim() || !schedule.trim()) return;
@@ -82,23 +85,20 @@ export default function ScheduleModal({ onClose, onJumpToSession }: Props) {
     }
   };
 
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-          <div className="flex items-center gap-2">
-            <Clock size={16} className="text-[var(--cedar)]" />
-            <h2 className="text-[15px] font-semibold text-[var(--text)]">Scheduled tasks</h2>
-          </div>
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none" aria-label="Close">×</button>
-        </div>
-        <div className="overflow-y-auto px-5 py-4 flex-1">
-          <div className="flex items-center justify-between mb-3">
+  const header = (
+    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
+      <div className="flex items-center gap-2">
+        <Clock size={16} className="text-[var(--cedar)]" />
+        <h2 className="text-[15px] font-semibold text-[var(--text)]">Scheduled tasks</h2>
+      </div>
+      {variant === "modal" && (
+        <button onClick={handleClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none" aria-label="Close">×</button>
+      )}
+    </div>
+  );
+  const body = (
+    <div className="overflow-y-auto px-5 py-4 flex-1">
+      <div className="flex items-center justify-between mb-3">
             <span className="text-[12px] text-[var(--muted)]">{items.length} schedule{items.length === 1 ? "" : "s"}</span>
             <button
               onClick={() => setCreating((v) => !v)}
@@ -224,6 +224,29 @@ export default function ScheduleModal({ onClose, onJumpToSession }: Props) {
           </div>
           {error && <div className="mt-3 text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
         </div>
+  );
+
+  if (variant === "page") {
+    return (
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+        {header}
+        <div className="flex-1 overflow-hidden flex flex-col max-w-4xl w-full mx-auto">
+          {body}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) handleClose();
+      }}
+    >
+      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col">
+        {header}
+        {body}
       </div>
     </div>
   );

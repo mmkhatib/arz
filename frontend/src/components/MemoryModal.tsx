@@ -4,51 +4,76 @@ import type { MemoryHit, MemoryLesson, ToolView } from "@/api/client";
 import { Brain, FileText, BookOpen, Search as SearchIcon, Trash2, Plus, Save, Wrench, RefreshCw, AlertTriangle } from "lucide-react";
 
 interface Props {
-  onClose: () => void;
+  onClose?: () => void;
+  variant?: "modal" | "page";
 }
 
 type Tab = "markdown" | "lessons" | "search" | "tools";
 
-export default function MemoryModal({ onClose }: Props) {
+export default function MemoryModal({ onClose, variant = "modal" }: Props) {
   const [tab, setTab] = useState<Tab>("markdown");
+  const handleClose = onClose ?? (() => {});
 
   useEffect(() => {
+    if (variant !== "modal") return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") handleClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [variant, handleClose]);
+
+  const header = (
+    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
+      <div className="flex items-center gap-2">
+        <Brain size={16} className="text-[var(--cedar)]" />
+        <h2 className="text-[15px] font-semibold text-[var(--text)]">Memory</h2>
+      </div>
+      {variant === "modal" && (
+        <button onClick={handleClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none" aria-label="Close memory">
+          ×
+        </button>
+      )}
+    </div>
+  );
+  const tabs = (
+    <div className="flex border-b border-[var(--border)] px-3">
+      <TabButton icon={<FileText size={13} />} label="Notes" active={tab === "markdown"} onClick={() => setTab("markdown")} />
+      <TabButton icon={<BookOpen size={13} />} label="Lessons" active={tab === "lessons"} onClick={() => setTab("lessons")} />
+      <TabButton icon={<SearchIcon size={13} />} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
+      <TabButton icon={<Wrench size={13} />} label="Tools" active={tab === "tools"} onClick={() => setTab("tools")} />
+    </div>
+  );
+  const body = (
+    <div className="overflow-y-auto px-5 py-4 flex-1">
+      {tab === "markdown" && <MarkdownTab />}
+      {tab === "lessons" && <LessonsTab />}
+      {tab === "search" && <SearchTab />}
+      {tab === "tools" && <ToolsTab />}
+    </div>
+  );
+
+  if (variant === "page") {
+    return (
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+        {header}
+        {tabs}
+        {body}
+      </div>
+    );
+  }
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleClose();
       }}
     >
       <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col">
-        <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-          <div className="flex items-center gap-2">
-            <Brain size={16} className="text-[var(--cedar)]" />
-            <h2 className="text-[15px] font-semibold text-[var(--text)]">Memory</h2>
-          </div>
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none" aria-label="Close memory">
-            ×
-          </button>
-        </div>
-        <div className="flex border-b border-[var(--border)] px-3">
-          <TabButton icon={<FileText size={13} />} label="Notes" active={tab === "markdown"} onClick={() => setTab("markdown")} />
-          <TabButton icon={<BookOpen size={13} />} label="Lessons" active={tab === "lessons"} onClick={() => setTab("lessons")} />
-          <TabButton icon={<SearchIcon size={13} />} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
-          <TabButton icon={<Wrench size={13} />} label="Tools" active={tab === "tools"} onClick={() => setTab("tools")} />
-        </div>
-        <div className="overflow-y-auto px-5 py-4 flex-1">
-          {tab === "markdown" && <MarkdownTab />}
-          {tab === "lessons" && <LessonsTab />}
-          {tab === "search" && <SearchTab />}
-          {tab === "tools" && <ToolsTab />}
-        </div>
+        {header}
+        {tabs}
+        {body}
       </div>
     </div>
   );
