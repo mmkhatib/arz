@@ -8,6 +8,7 @@ import NewSessionModal from "@/components/NewSessionModal";
 import MemoryModal from "@/components/MemoryModal";
 import ScheduleModal from "@/components/ScheduleModal";
 import AnalyticsModal from "@/components/AnalyticsModal";
+import NavBar, { type NavSection } from "@/components/NavBar";
 import ShortcutsOverlay from "@/components/ShortcutsOverlay";
 import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -303,6 +304,28 @@ export default function ChatPage() {
           }}
         />
       )}
+
+      <NavBar
+        active={
+          (showSettings ? "settings"
+          : showMemory ? "memory"
+          : showSchedule ? "schedule"
+          : showAnalytics ? "analytics"
+          : showShortcuts ? "shortcuts"
+          : "chat") as NavSection
+        }
+        cronBadge={cronBadge}
+        onSelect={(s) => {
+          // Close anything currently open, then open the selected destination.
+          setShowSettings(s === "settings");
+          setShowMemory(s === "memory");
+          setShowAnalytics(s === "analytics");
+          setShowShortcuts(s === "shortcuts");
+          if (s === "schedule") { markCronSeen(); setShowSchedule(true); }
+          else setShowSchedule(false);
+        }}
+      />
+
       <SessionList
         sessions={sessions}
         activeId={activeId}
@@ -315,11 +338,6 @@ export default function ChatPage() {
         onCreate={handleCreate}
         onDelete={handleDelete}
         onTogglePin={handleTogglePin}
-        onSettings={() => setShowSettings(true)}
-        onMemory={() => setShowMemory(true)}
-        onSchedule={() => { markCronSeen(); setShowSchedule(true); }}
-        onAnalytics={() => setShowAnalytics(true)}
-        cronBadge={cronBadge}
         onResume={handleResume}
       />
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, BarChart3, Clock, Settings as SettingsIcon, ChevronDown, ChevronRight, Trash2, Palette } from "lucide-react";
+import { ChevronDown, ChevronRight, Trash2, Palette } from "lucide-react";
 import { api } from "@/api/client";
 import type { SearchHit, SessionSummary } from "@/api/client";
 
@@ -55,11 +55,6 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onTogglePin: (id: string) => void;
-  onSettings: () => void;
-  onMemory?: () => void;
-  onSchedule?: () => void;
-  onAnalytics?: () => void;
-  cronBadge?: number;
   /** Visible state on mobile (overlay drawer). On md+ the sidebar is always visible. */
   mobileOpen?: boolean;
   onMobileClose?: () => void;
@@ -76,11 +71,6 @@ export default function SessionList({
   onCreate,
   onDelete,
   onTogglePin,
-  onSettings,
-  onMemory,
-  onSchedule,
-  onAnalytics,
-  cronBadge,
   mobileOpen = false,
   onMobileClose,
   onResume,
@@ -421,51 +411,8 @@ export default function SessionList({
         </div>
       )}
 
-      {/* Footer */}
-      <div className="flex items-center justify-between px-3 py-2.5 border-t border-[var(--border)] text-[11px] text-[var(--muted)]">
-        <span className="px-1">arz v0.1.0</span>
-        <div className="flex items-center gap-0.5">
-          {onMemory && (
-            <button
-              onClick={onMemory}
-              title="Memory"
-              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
-            >
-              <Brain size={18} />
-            </button>
-          )}
-          {onAnalytics && (
-            <button
-              onClick={onAnalytics}
-              title="Analytics"
-              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
-            >
-              <BarChart3 size={18} />
-            </button>
-          )}
-          {onSchedule && (
-            <button
-              onClick={onSchedule}
-              title={cronBadge ? `${cronBadge} new run${cronBadge === 1 ? "" : "s"}` : "Scheduled tasks"}
-              className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
-            >
-              <Clock size={18} />
-              {cronBadge !== undefined && cronBadge > 0 && (
-                <span className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] rounded-full bg-[var(--cedar)] text-white text-[9px] font-mono flex items-center justify-center px-1 leading-none">
-                  {cronBadge > 9 ? "9+" : cronBadge}
-                </span>
-              )}
-            </button>
-          )}
-          <button
-            onClick={onSettings}
-            title="Settings"
-            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
-          >
-            <SettingsIcon size={18} />
-          </button>
-        </div>
-      </div>
+      {/* Footer kept intentionally minimal — Memory/Schedule/Analytics/Settings
+          live in the global NavBar to the left. */}
       </aside>
     </>
   );
