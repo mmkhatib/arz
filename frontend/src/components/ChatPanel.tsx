@@ -192,6 +192,8 @@ interface Props {
   onSeedFiles?: (paths: string[]) => void;
   onFileOpen?: (path: string) => void;
   onOpenSidebar?: () => void;
+  /** Counter from parent — when it changes, the input bar refocuses. */
+  focusSignal?: number;
 }
 
 export default function ChatPanel({
@@ -205,6 +207,7 @@ export default function ChatPanel({
   onSeedFiles,
   onFileOpen,
   onOpenSidebar,
+  focusSignal,
 }: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
@@ -540,6 +543,7 @@ export default function ChatPanel({
         approvalMode={approvalMode}
         onApprovalModeChange={handleApprovalModeChange}
         onModelChange={handleModelChange}
+        focusSignal={focusSignal}
       />
     </div>
   );

@@ -49,6 +49,7 @@ export default function ChatPage() {
   const [cronBadge, setCronBadge] = useState(0);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [showAnalytics, setShowAnalytics] = useState(false);
+  const [focusTick, setFocusTick] = useState(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadSessions = async () => {
@@ -199,7 +200,10 @@ export default function ChatPage() {
     });
   };
 
-  const handleSelect = (id: string) => setActiveId(id);
+  const handleSelect = (id: string) => {
+    setActiveId(id);
+    setFocusTick((n) => n + 1);
+  };
 
   const handleResume = async (session: SessionSummary) => {
     try {
@@ -325,6 +329,7 @@ export default function ChatPage() {
             <ChatPanel
               key={activeId}
               sessionId={activeId}
+              focusSignal={focusTick}
               onOpenSidebar={() => setMobileSidebarOpen(true)}
               onToolCall={(tc) => setToolEntries((prev) => [...prev, { ...tc, done: false }])}
               onToolResult={(callId, content) => setToolEntries((prev) =>

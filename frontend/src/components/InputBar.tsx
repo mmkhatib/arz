@@ -36,6 +36,8 @@ interface Props {
   approvalMode?: ApprovalMode;
   onApprovalModeChange?: (mode: ApprovalMode) => void;
   onModelChange?: (model: string) => void;
+  /** Increment to request focus on the textarea (e.g., re-clicking the active session). */
+  focusSignal?: number;
 }
 
 export default function InputBar({
@@ -49,6 +51,7 @@ export default function InputBar({
   approvalMode = "normal",
   onApprovalModeChange,
   onModelChange,
+  focusSignal,
 }: Props) {
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -92,7 +95,7 @@ export default function InputBar({
 
   useEffect(() => {
     if (!disabled && !isRunning) textareaRef.current?.focus();
-  }, [disabled, isRunning]);
+  }, [disabled, isRunning, focusSignal]);
 
   useEffect(() => {
     if (!wrapperRef.current) return;
@@ -249,6 +252,7 @@ export default function InputBar({
       >
         <textarea
           ref={textareaRef}
+          autoFocus
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
