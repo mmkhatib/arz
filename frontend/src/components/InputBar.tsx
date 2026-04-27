@@ -274,11 +274,11 @@ export default function InputBar({
             <div className="relative shrink-0">
               <button
                 onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); }}
-                className="h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center gap-1.5 transition-all whitespace-nowrap"
+                className="h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center gap-1.5 transition-all whitespace-nowrap mr-2"
                 title="Switch model"
               >
                 <ContextRing pct={contextPct} />
-                <span className="truncate max-w-[110px]">
+                <span className="truncate max-w-[180px]">
                   {activeModel?.label ?? model ?? "Model"}
                 </span>
               </button>

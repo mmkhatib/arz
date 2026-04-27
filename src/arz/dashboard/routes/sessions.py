@@ -37,6 +37,7 @@ def _session_to_dict(session: object) -> dict:
         "color": session.color,
         "work_dir": session.work_dir,
         "provider": session.provider,
+        "approval_mode": session.approval_mode,
     }
 
 
@@ -175,6 +176,44 @@ async def close_session(session_id: str, request: Request) -> None:
     mgr.close(session_id)
 
 
+@router.delete("/api/sessions/{session_id}/permanent", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session_permanent(session_id: str, request: Request) -> None:
+    """Hard-delete a session: removes the JSON file and clears in-memory state.
+
+    Closing a session keeps the file so it can be resumed from history.
+    This endpoint is the destructive variant — used by the history-purge UI.
+    """
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Drop in-memory references and the on-disk file
+    key = (session.surface, session.chat_id, session.thread_id)
+    mgr._surface_index.pop(key, None)  # noqa: SLF001
+    mgr._sessions.pop(session_id, None)  # noqa: SLF001
+    path = mgr._dir / f"{session_id}.json"  # noqa: SLF001
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"Failed to remove session file: {e}")
+
+    # Clean ancillary state
+    search_index = getattr(request.app.state, "search_index", None)
+    if search_index is not None:
+        try:
+            search_index.remove_session(session_id)
+        except Exception:
+            pass
+    request.app.state.session_map.remove(session_id) if hasattr(request.app.state, "session_map") else None
+    pool = getattr(request.app.state, "provider_pool", None)
+    if pool is not None:
+        try:
+            await pool.deactivate(session_id)
+        except Exception:
+            pass
+
+
 @router.patch("/api/sessions/{session_id}/color", status_code=status.HTTP_204_NO_CONTENT)
 async def set_session_color(session_id: str, request: Request) -> None:
     mgr: SessionManager = _get_manager(request)
@@ -207,6 +246,25 @@ async def set_work_dir(session_id: str, request: Request) -> None:
     mgr.save(session)
 
 
+@router.patch("/api/sessions/{session_id}/title", status_code=status.HTTP_204_NO_CONTENT)
+async def rename_session(session_id: str, request: Request) -> None:
+    """Manually rename a session."""
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    new_title = (body.get("title") or "").strip()
+    if not new_title:
+        raise HTTPException(status_code=422, detail="title must be non-empty")
+    if len(new_title) > 200:
+        raise HTTPException(status_code=422, detail="title must be ≤200 chars")
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    session.title = new_title
+    mgr.save(session)
+
+
 @router.post("/api/sessions/{session_id}/generate-title")
 async def generate_title(session_id: str, request: Request) -> dict:
     mgr: SessionManager = _get_manager(request)
@@ -214,9 +272,25 @@ async def generate_title(session_id: str, request: Request) -> dict:
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    body = await request.json()
-    user_msg: str = body.get("user_msg", "")[:300]
-    assistant_msg: str = body.get("assistant_msg", "")[:300]
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    user_msg: str = (body.get("user_msg") or "")[:300]
+    assistant_msg: str = (body.get("assistant_msg") or "")[:300]
+    # Fall back to first user/assistant turn from history when omitted.
+    if not user_msg or not assistant_msg:
+        from arz.session.session import Session
+        assert isinstance(session, Session)
+        first_user = next((m for m in session.messages if m.role == "user"), None)
+        first_asst = next((m for m in session.messages if m.role == "assistant"), None)
+        if not user_msg and first_user:
+            user_msg = first_user.text[:300]
+        if not assistant_msg and first_asst:
+            assistant_msg = first_asst.text[:300]
+    if not user_msg:
+        raise HTTPException(status_code=422, detail="session has no user messages to title from")
 
     claude_bin = shutil.which("claude")
     if not claude_bin:

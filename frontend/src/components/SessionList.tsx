@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from "react";
+import { Brain, BarChart3, Clock, Settings as SettingsIcon, ChevronDown, ChevronRight, Trash2, Palette } from "lucide-react";
 import { api } from "@/api/client";
 import type { SearchHit, SessionSummary } from "@/api/client";
 
 const SESSION_COLORS = ["#2d6a4f", "#5b6a2d", "#6a2d5b", "#2d5b6a", "#6a4f2d", "#4f2d6a"];
 
-function providerBadge(provider: string | null | undefined, globalProvider: string): string {
+interface ProviderBadge {
+  label: string;
+  className: string;
+}
+
+function providerBadge(provider: string | null | undefined, globalProvider: string): ProviderBadge {
   const p = provider || globalProvider;
-  if (p === "kiro-cli") return "Kiro";
-  return "CC";
+  if (p === "kiro-cli") return { label: "Kiro", className: "bg-blue-900/30 text-blue-400" };
+  if (p === "anthropic") return { label: "API", className: "bg-purple-900/30 text-purple-400" };
+  return { label: "Claude", className: "bg-orange-900/40 text-orange-300" };
 }
 
 /** Render an FTS snippet as React nodes, with <mark> tokens highlighted.
@@ -79,6 +86,7 @@ export default function SessionList({
   onResume,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SessionSummary[] | null>(null);
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
@@ -249,12 +257,10 @@ export default function SessionList({
                     </span>
                   )}
                   <span className={[
-                    "shrink-0 text-[9px] px-1 py-0.5 rounded font-mono",
-                    badge === "Kiro"
-                      ? "bg-blue-900/30 text-blue-400"
-                      : "bg-[var(--cedar)]/20 text-[var(--cedar)]",
+                    "shrink-0 text-[9px] px-1.5 py-0.5 rounded font-medium",
+                    badge.className,
                   ].join(" ")}>
-                    {badge}
+                    {badge.label}
                   </span>
                 </button>
 
@@ -267,6 +273,16 @@ export default function SessionList({
                       className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--border)] transition-colors"
                     >
                       {isPinned ? "★" : "☆"}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setColorPickerFor((prev) => (prev === s.id ? null : s.id));
+                      }}
+                      title="Color"
+                      className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)] transition-colors"
+                    >
+                      <Palette size={11} />
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}
@@ -289,7 +305,7 @@ export default function SessionList({
                 </div>
               )}
 
-              {isHovered && (
+              {colorPickerFor === s.id && (
                 <div className="flex items-center gap-1 px-4 pb-1.5">
                   {[0, 1, 2, 3, 4, 5].map((idx) => (
                     <button
@@ -301,8 +317,8 @@ export default function SessionList({
                       }}
                       title={`Color ${idx + 1}`}
                       className={[
-                        "w-3 h-3 rounded-full transition-opacity",
-                        colorIdx === idx ? "opacity-100 ring-1 ring-[var(--text)]" : "opacity-60 hover:opacity-100",
+                        "w-3.5 h-3.5 rounded-full transition-opacity",
+                        colorIdx === idx ? "opacity-100 ring-1 ring-[var(--text)]" : "opacity-70 hover:opacity-100",
                       ].join(" ")}
                       style={{ backgroundColor: SESSION_COLORS[idx] }}
                     />
@@ -311,9 +327,10 @@ export default function SessionList({
                     onClick={(e) => {
                       e.stopPropagation();
                       handleSetColor(s.id, null);
+                      setColorPickerFor(null);
                     }}
                     title="Clear color"
-                    className="w-3 h-3 flex items-center justify-center text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
+                    className="w-3.5 h-3.5 flex items-center justify-center text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
                   >
                     ✕
                   </button>
@@ -323,90 +340,113 @@ export default function SessionList({
           );
         })}
 
-        {/* History section */}
-        {history.length > 0 && !query && (
-          <div className="mt-2">
-            <button
-              onClick={() => setHistoryOpen((v) => !v)}
-              className="w-full flex items-center justify-between px-4 py-1.5 text-[11px] text-[var(--muted)] hover:text-[var(--text)] transition-colors border-t border-[var(--border)]"
-            >
-              <span className="uppercase tracking-wider">History ({history.length})</span>
-              <span>{historyOpen ? "▴" : "▾"}</span>
-            </button>
-
-            {historyOpen && history.map((s) => {
-              const isHovered = historyHoveredId === s.id;
-              const badge = providerBadge(s.provider, globalProvider);
-              return (
-                <div
-                  key={s.id}
-                  className="flex items-center pr-1 hover:bg-[var(--border)] transition-colors"
-                  onMouseEnter={() => setHistoryHoveredId(s.id)}
-                  onMouseLeave={() => setHistoryHoveredId(null)}
-                >
-                  <div className="flex-1 px-4 py-2 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className="truncate text-[12px] text-[var(--muted)] flex-1">{s.title}</span>
-                      <span className={[
-                        "shrink-0 text-[9px] px-1 py-0.5 rounded font-mono",
-                        badge === "Kiro"
-                          ? "bg-blue-900/30 text-blue-400"
-                          : "bg-[var(--cedar)]/20 text-[var(--cedar)]",
-                      ].join(" ")}>
-                        {badge}
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-[var(--muted)]/60 mt-0.5">
-                      {s.message_count} msgs · {relativeTime(s.updated_at)}
-                    </div>
-                  </div>
-                  {isHovered && (
-                    <button
-                      onClick={() => onResume(s)}
-                      title="Resume session"
-                      className="shrink-0 mr-2 px-2 py-1 rounded-lg text-[10px] text-[var(--cedar)] border border-[var(--cedar)]/30 hover:bg-[var(--cedar)]/10 transition-colors"
-                    >
-                      Resume
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
       </div>
 
+      {/* History — anchored above footer, collapsible. Hidden while searching. */}
+      {history.length > 0 && !query && (
+        <div className={[
+          "border-t border-[var(--border)] flex flex-col min-h-0",
+          historyOpen ? "max-h-[40%]" : "",
+        ].join(" ")}>
+          <button
+            onClick={() => setHistoryOpen((v) => !v)}
+            className="w-full flex items-center justify-between px-4 py-2 text-[11px] text-[var(--muted)] hover:text-[var(--text)] transition-colors shrink-0"
+          >
+            <span className="uppercase tracking-wider flex items-center gap-1.5">
+              {historyOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              History ({history.length})
+            </span>
+          </button>
+
+          {historyOpen && (
+            <div className="overflow-y-auto flex-1">
+              {history.map((s) => {
+                const isHovered = historyHoveredId === s.id;
+                const badge = providerBadge(s.provider, globalProvider);
+                return (
+                  <div
+                    key={s.id}
+                    className="flex items-center pr-1 hover:bg-[var(--border)] transition-colors"
+                    onMouseEnter={() => setHistoryHoveredId(s.id)}
+                    onMouseLeave={() => setHistoryHoveredId(null)}
+                  >
+                    <div className="flex-1 px-4 py-2 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate text-[12px] text-[var(--muted)] flex-1">{s.title}</span>
+                        <span className={[
+                          "shrink-0 text-[9px] px-1.5 py-0.5 rounded font-medium",
+                          badge.className,
+                        ].join(" ")}>
+                          {badge.label}
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-[var(--muted)]/60 mt-0.5">
+                        {s.message_count} msgs · {relativeTime(s.updated_at)}
+                      </div>
+                    </div>
+                    {isHovered && (
+                      <div className="shrink-0 flex items-center gap-1 mr-1.5">
+                        <button
+                          onClick={() => onResume(s)}
+                          title="Resume session"
+                          className="px-2 py-1 rounded-lg text-[10px] text-[var(--cedar)] border border-[var(--cedar)]/30 hover:bg-[var(--cedar)]/10 transition-colors"
+                        >
+                          Resume
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (confirm(`Permanently delete "${s.title}"? This cannot be undone.`)) {
+                              api.permanentDeleteSession(s.id)
+                                .then(() => setHistory((prev) => prev.filter((h) => h.id !== s.id)))
+                                .catch((e) => alert(`Delete failed: ${e}`));
+                            }
+                          }}
+                          title="Permanently delete"
+                          className="w-6 h-6 flex items-center justify-center rounded-lg text-[var(--muted)] hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                        >
+                          <Trash2 size={11} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Footer */}
-      <div className="flex items-center justify-between px-4 py-3 border-t border-[var(--border)] text-[11px] text-[var(--muted)]">
-        <span>arz v0.1.0</span>
-        <div className="flex items-center gap-1">
+      <div className="flex items-center justify-between px-3 py-2.5 border-t border-[var(--border)] text-[11px] text-[var(--muted)]">
+        <span className="px-1">arz v0.1.0</span>
+        <div className="flex items-center gap-0.5">
           {onMemory && (
             <button
               onClick={onMemory}
               title="Memory"
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
             >
-              🧠
+              <Brain size={18} />
             </button>
           )}
           {onAnalytics && (
             <button
               onClick={onAnalytics}
               title="Analytics"
-              className="w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+              className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
             >
-              📊
+              <BarChart3 size={18} />
             </button>
           )}
           {onSchedule && (
             <button
               onClick={onSchedule}
               title={cronBadge ? `${cronBadge} new run${cronBadge === 1 ? "" : "s"}` : "Scheduled tasks"}
-              className="relative w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+              className="relative w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
             >
-              ⏱
+              <Clock size={18} />
               {cronBadge !== undefined && cronBadge > 0 && (
-                <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] rounded-full bg-[var(--cedar)] text-white text-[9px] font-mono flex items-center justify-center px-1 leading-none">
+                <span className="absolute top-0.5 right-0.5 min-w-[15px] h-[15px] rounded-full bg-[var(--cedar)] text-white text-[9px] font-mono flex items-center justify-center px-1 leading-none">
                   {cronBadge > 9 ? "9+" : cronBadge}
                 </span>
               )}
@@ -415,9 +455,9 @@ export default function SessionList({
           <button
             onClick={onSettings}
             title="Settings"
-            className="w-6 h-6 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
+            className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-[var(--border)] hover:text-[var(--text)] transition-colors"
           >
-            ⚙
+            <SettingsIcon size={18} />
           </button>
         </div>
       </div>

@@ -11,6 +11,7 @@ export interface SessionSummary {
   color?: number | null;
   work_dir?: string | null;
   provider?: string | null;
+  approval_mode?: "normal" | "trust_reads" | "trust" | "yolo";
 }
 
 export interface UsageRecord {
@@ -149,6 +150,20 @@ export const api = {
 
   deleteSession: (id: string) =>
     fetch(`${BASE}/sessions/${id}`, { method: "DELETE" }),
+
+  permanentDeleteSession: async (id: string): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${id}/permanent`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  renameSession: async (id: string, title: string): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${id}/title`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
 
   /** Send a message; returns the raw Response for SSE streaming. */
   sendMessage: (sessionId: string, message: string): Promise<Response> =>
@@ -324,11 +339,14 @@ export const api = {
       `/sessions/${id}/files`
     ),
 
-  async generateTitle(sessionId: string, userMsg: string, assistantMsg: string): Promise<string> {
+  async generateTitle(sessionId: string, userMsg?: string, assistantMsg?: string): Promise<string> {
+    const body: Record<string, string> = {};
+    if (userMsg) body.user_msg = userMsg;
+    if (assistantMsg) body.assistant_msg = assistantMsg;
     const res = await fetch(`${BASE}/sessions/${sessionId}/generate-title`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ user_msg: userMsg, assistant_msg: assistantMsg }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) return "";
     const data = await res.json() as { title: string };

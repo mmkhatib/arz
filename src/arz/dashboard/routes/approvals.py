@@ -60,9 +60,17 @@ async def evict_session(session_id: str, request: Request) -> None:
 async def set_session_mode(session_id: str, body: ModeBody, request: Request) -> dict:
     if body.mode not in VALID_MODES:
         raise HTTPException(status_code=400, detail=f"Invalid mode: {body.mode}")
-    modes: dict[str, str] = request.app.state.session_modes
-    modes[session_id] = body.mode
-    # Sync with yolo_sessions for backward compat
+    mgr = request.app.state.session_manager
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    # Persist on the session itself so it survives server restarts.
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    session.approval_mode = body.mode
+    mgr.save(session)
+    # Mirror to in-memory dicts for the chat hot path.
+    request.app.state.session_modes[session_id] = body.mode
     yolo: set[str] = request.app.state.yolo_sessions
     if body.mode == "yolo":
         yolo.add(session_id)

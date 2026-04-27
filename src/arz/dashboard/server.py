@@ -103,6 +103,13 @@ async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Arz gateway starting", port=app.state.config.dashboard.port)
     app.state.session_manager.load_all()
+    # Hydrate approval-mode hot path from persisted session state.
+    for s in app.state.session_manager._sessions.values():  # noqa: SLF001
+        mode = getattr(s, "approval_mode", "normal")
+        if mode != "normal":
+            app.state.session_modes[s.id] = mode
+        if mode == "yolo":
+            app.state.yolo_sessions.add(s.id)
     indexed = app.state.search_index.rebuild(app.state.session_manager)
     log.info("Search index ready", sessions=indexed)
     app.state.cron_registry.start()

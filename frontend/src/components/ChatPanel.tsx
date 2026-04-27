@@ -22,6 +22,79 @@ function ThinkingDots() {
   );
 }
 
+function SessionTitle({
+  title,
+  messageCount,
+  onRename,
+  onRegenerate,
+}: {
+  title: string;
+  messageCount: number;
+  onRename: (next: string) => void | Promise<void>;
+  onRegenerate: () => void | Promise<void>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const [regenerating, setRegenerating] = useState(false);
+
+  useEffect(() => {
+    if (!editing) setDraft(title);
+  }, [title, editing]);
+
+  const commit = async () => {
+    const next = draft.trim();
+    if (next && next !== title) await onRename(next);
+    setEditing(false);
+  };
+
+  const regenerate = async () => {
+    if (regenerating || messageCount < 2) return;
+    setRegenerating(true);
+    try {
+      await onRegenerate();
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") { setDraft(title); setEditing(false); }
+        }}
+        className="flex-1 min-w-0 bg-[var(--bg)] border border-[var(--cedar)]/40 rounded px-2 py-0.5 text-[13px] font-medium text-[var(--text)] focus:outline-none"
+        maxLength={200}
+      />
+    );
+  }
+
+  return (
+    <div className="group flex items-center gap-1.5 min-w-0">
+      <h2
+        className="text-[13px] font-medium text-[var(--text)] truncate cursor-text"
+        title="Click to rename"
+        onClick={() => setEditing(true)}
+      >
+        {title}
+      </h2>
+      <button
+        onClick={regenerate}
+        disabled={regenerating || messageCount < 2}
+        title={messageCount < 2 ? "Send a message first" : "Regenerate with AI"}
+        className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-[var(--muted)] hover:text-[var(--cedar)] disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+      >
+        {regenerating ? "…" : "✨"}
+      </button>
+    </div>
+  );
+}
+
 function ExportMenu({ sessionId }: { sessionId: string }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -160,6 +233,7 @@ export default function ChatPanel({
         setMessages(s.messages);
         setTitle(s.title);
         setWorkDir(s.work_dir ?? "");
+        if (s.approval_mode) setApprovalMode(s.approval_mode);
         // Seed file paths from message history so the Files tab is pre-populated
         if (onSeedFiles) {
           const FILE_TOOL_NAMES = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"]);
@@ -350,7 +424,26 @@ export default function ChatPanel({
             ☰
           </button>
         )}
-        <h2 className="text-[13px] font-medium text-[var(--text)] truncate">{title}</h2>
+        <SessionTitle
+          title={title}
+          messageCount={messages.length}
+          onRename={async (next) => {
+            try {
+              await api.renameSession(sessionId, next);
+              setTitle(next);
+              onTitleChange?.(next);
+            } catch (e) {
+              console.error("rename failed", e);
+            }
+          }}
+          onRegenerate={async () => {
+            const generated = await api.generateTitle(sessionId);
+            if (generated) {
+              setTitle(generated);
+              onTitleChange?.(generated);
+            }
+          }}
+        />
         <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
           <ExportMenu sessionId={sessionId} />
