@@ -77,6 +77,7 @@ class KiroCliProvider(LLMProvider):
                 stop_reason=acp_event.stop_reason or None,
                 request_id=acp_event.request_id or None,
                 context_usage_pct=acp_event.context_usage_pct or None,
+                usage=acp_event.usage,
             )
 
     async def approve_tool(self, request_id: str | int) -> None:

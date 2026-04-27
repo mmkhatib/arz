@@ -33,6 +33,7 @@ class LLMEvent:
     stop_reason: str | None = None
     request_id: str | int | None = None
     context_usage_pct: float | None = None
+    usage: Any = None  # Usage dataclass from arz.acp.types when available
     extra: dict[str, Any] = field(default_factory=dict)
 
 
