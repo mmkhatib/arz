@@ -55,7 +55,7 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
 
   if (variant === "page") {
     return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
         {tabs}
         {body}

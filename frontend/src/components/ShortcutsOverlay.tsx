@@ -58,9 +58,9 @@ export default function ShortcutsOverlay({ onClose, variant = "modal" }: Props) 
 
   if (variant === "page") {
     return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
-        <div className="overflow-y-auto flex-1 max-w-md w-full mx-auto">
+        <div className="overflow-y-auto flex-1 px-6">
           {body}
         </div>
       </div>

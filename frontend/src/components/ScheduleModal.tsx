@@ -228,11 +228,9 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
 
   if (variant === "page") {
     return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
-        <div className="flex-1 overflow-hidden flex flex-col max-w-4xl w-full mx-auto">
-          {body}
-        </div>
+        {body}
       </div>
     );
   }

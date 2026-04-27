@@ -237,10 +237,10 @@ function Shell({
 
   if (variant === "page") {
     return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
         {errorBlock}
-        <div className="overflow-y-auto px-5 py-4 flex-1 max-w-3xl w-full mx-auto">{children}</div>
+        <div className="overflow-y-auto px-6 py-4 flex-1">{children}</div>
       </div>
     );
   }

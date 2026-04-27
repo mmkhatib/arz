@@ -118,9 +118,9 @@ export default function AnalyticsModal({ onClose, variant = "modal" }: Props) {
 
   if (variant === "page") {
     return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 overflow-hidden">
+      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
-        <div className="flex-1 overflow-y-auto px-5 py-4 max-w-5xl w-full mx-auto grid grid-cols-1 md:grid-cols-2 gap-4 content-start">
+        <div className="flex-1 overflow-y-auto px-6 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 content-start">
           {panels}
         </div>
         {error && <div className="m-3 text-red-400 text-[11px] bg-red-900/20 rounded px-3 py-2">{error}</div>}
