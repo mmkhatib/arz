@@ -55,12 +55,18 @@ export default function ChatPage() {
     try {
       const data = await api.fetchSessions();
       setSessions(data);
-      if (!activeId && data.length > 0) {
+      // Auto-select on first load only. Use the functional setter form so we
+      // see the current activeId — never clobber a user-picked session on
+      // subsequent polls (this is what was making the chat flip back to the
+      // top of the list every refresh cycle).
+      setActiveId((prev) => {
+        if (prev) return prev;
+        if (data.length === 0) return null;
         const hash = window.location.hash;
         const m = hash.match(/session=([^&]+)/);
         const deepId = m && data.find((s) => s.id === m[1]) ? m[1] : null;
-        setActiveId(deepId ?? data[0].id);
-      }
+        return deepId ?? data[0].id;
+      });
     } catch (e) {
       console.error("Failed to load sessions:", e);
     } finally {
