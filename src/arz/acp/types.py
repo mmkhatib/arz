@@ -78,20 +78,33 @@ class JsonRpcMessage:
 
 @dataclass
 class Usage:
-    """Token usage for one assistant turn. All counts are >= 0."""
+    """Per-turn usage. Token counts come from Anthropic-style providers
+    (Claude Code); ``credits``/``credit_unit`` come from Kiro's metering
+    metadata. ``turn_duration_ms`` is the wall time the agent reported (Kiro)
+    or that we measured (CC). Fields are union-of-providers so the dashboard
+    can surface whichever the active provider offers."""
 
     input_tokens: int = 0
     output_tokens: int = 0
     cache_creation_input_tokens: int = 0
     cache_read_input_tokens: int = 0
+    credits: float = 0.0
+    credit_unit: str = ""
+    turn_duration_ms: int = 0
 
-    def to_dict(self) -> dict[str, int]:
-        return {
+    def to_dict(self) -> dict[str, Any]:
+        d: dict[str, Any] = {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "cache_creation_input_tokens": self.cache_creation_input_tokens,
             "cache_read_input_tokens": self.cache_read_input_tokens,
         }
+        if self.credits:
+            d["credits"] = self.credits
+            d["credit_unit"] = self.credit_unit or "credit"
+        if self.turn_duration_ms:
+            d["turn_duration_ms"] = self.turn_duration_ms
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> "Usage | None":
@@ -102,6 +115,9 @@ class Usage:
             output_tokens=int(d.get("output_tokens", 0) or 0),
             cache_creation_input_tokens=int(d.get("cache_creation_input_tokens", 0) or 0),
             cache_read_input_tokens=int(d.get("cache_read_input_tokens", 0) or 0),
+            credits=float(d.get("credits", 0.0) or 0.0),
+            credit_unit=str(d.get("credit_unit", "") or ""),
+            turn_duration_ms=int(d.get("turn_duration_ms", 0) or 0),
         )
 
 

@@ -178,8 +178,9 @@ export default function MessageBubble({ message, onFileOpen, onCompare }: Props)
           )}
         </div>
 
-        {/* Footer: timestamp + elapsed + tool calls — visible on hover */}
-        <div className={`flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity px-1 text-[10px] text-[var(--muted)] ${isUser ? "justify-end" : "justify-start"}`}>
+        {/* Footer: timestamp + model + usage. Always visible — usage is
+            information users want to see at a glance, not on hover. */}
+        <div className={`flex items-center gap-2 px-1 text-[10px] text-[var(--muted)]/70 ${isUser ? "justify-end" : "justify-start"}`}>
           <span className="font-mono">{formatTime(message.created_at)}</span>
           {!isUser && message.elapsed_ms !== undefined && (
             <span className="font-mono">{fmtElapsed(message.elapsed_ms)}</span>
@@ -187,15 +188,15 @@ export default function MessageBubble({ message, onFileOpen, onCompare }: Props)
           {!isUser && message.tool_calls && message.tool_calls.length > 0 && (
             <span className="flex items-center gap-0.5">
               <span>🔧</span>
-              <span>{message.tool_calls.length} tool{message.tool_calls.length !== 1 ? "s" : ""}</span>
+              <span>{message.tool_calls.length}</span>
             </span>
           )}
           {!isUser && message.model && (
-            <span className="font-mono text-[var(--muted)]/70" title={message.model}>
+            <span className="font-mono text-[var(--muted)]" title={message.model}>
               {shortModel(message.model)}
             </span>
           )}
-          {!isUser && message.usage && (
+          {!isUser && message.usage && (message.usage.input_tokens > 0 || message.usage.output_tokens > 0) && (
             <span
               className="font-mono"
               title={`in ${message.usage.input_tokens} • out ${message.usage.output_tokens} • cache+ ${message.usage.cache_creation_input_tokens} • cache↻ ${message.usage.cache_read_input_tokens}`}
@@ -203,6 +204,14 @@ export default function MessageBubble({ message, onFileOpen, onCompare }: Props)
               {formatTokens(message.usage.input_tokens)}↑
               {" "}
               {formatTokens(message.usage.output_tokens)}↓
+            </span>
+          )}
+          {!isUser && message.usage && (message.usage.credits ?? 0) > 0 && (
+            <span
+              className="font-mono"
+              title={`${message.usage.credits!.toFixed(4)} ${message.usage.credit_unit || "credits"}`}
+            >
+              {message.usage.credits!.toFixed(3)} ¢
             </span>
           )}
           {!isUser && onCompare && (

@@ -19,6 +19,10 @@ export interface UsageRecord {
   output_tokens: number;
   cache_creation_input_tokens: number;
   cache_read_input_tokens: number;
+  /** Kiro-style metering. Absent / 0 for token-based providers. */
+  credits?: number;
+  credit_unit?: string;
+  turn_duration_ms?: number;
 }
 
 export interface MessageRecord {

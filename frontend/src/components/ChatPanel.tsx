@@ -164,19 +164,29 @@ function ExportMenu({ sessionId }: { sessionId: string }) {
 
 function SessionTotals({ messages }: { messages: MessageRecord[] }) {
   let inTok = 0,
-    outTok = 0;
+    outTok = 0,
+    credits = 0,
+    creditUnit = "";
   for (const m of messages) {
     if (!m.usage) continue;
     inTok += m.usage.input_tokens;
     outTok += m.usage.output_tokens;
+    if (m.usage.credits) {
+      credits += m.usage.credits;
+      if (!creditUnit && m.usage.credit_unit) creditUnit = m.usage.credit_unit;
+    }
   }
-  if (inTok === 0 && outTok === 0) return null;
+  if (inTok === 0 && outTok === 0 && credits === 0) return null;
+  const tokenStr = inTok > 0 || outTok > 0 ? `${formatTokens(inTok)}↑ ${formatTokens(outTok)}↓` : "";
+  const creditStr = credits > 0 ? `${credits.toFixed(3)} ${creditUnit || "¢"}` : "";
+  const title = [
+    inTok > 0 || outTok > 0 ? `tokens: ${inTok} in, ${outTok} out` : null,
+    credits > 0 ? `${credits.toFixed(4)} ${creditUnit || "credits"}` : null,
+  ].filter(Boolean).join(" • ");
   return (
-    <span
-      className="ml-3 text-[11px] font-mono text-[var(--muted)]"
-      title={`Session totals: ${inTok} in, ${outTok} out`}
-    >
-      {formatTokens(inTok)}↑ {formatTokens(outTok)}↓
+    <span className="ml-3 text-[11px] font-mono text-[var(--muted)] flex items-center gap-2" title={title}>
+      {tokenStr && <span>{tokenStr}</span>}
+      {creditStr && <span>{creditStr}</span>}
     </span>
   );
 }

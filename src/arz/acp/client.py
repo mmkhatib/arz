@@ -408,6 +408,13 @@ class AcpClient:
     async def _read_until_complete(self, prompt_id: int) -> AsyncIterator[AcpEvent]:
         """Yield events from stdout until the session/prompt response arrives."""
         deadline = asyncio.get_event_loop().time() + _PROMPT_TIMEOUT
+        # Per-prompt accumulators for vendor-extension metadata (Kiro emits
+        # _kiro.dev/metadata mid-stream with credits + context% + turn time;
+        # we attach the totals to the EVENT_COMPLETE event below).
+        kiro_credits = 0.0
+        kiro_credit_unit = ""
+        kiro_context_pct = 0.0
+        kiro_turn_ms = 0
         while asyncio.get_event_loop().time() < deadline:
             if not self._process or not self._process.stdout:
                 raise AcpProcessDied(self._died_reason("Stdout closed mid-stream"))
@@ -442,8 +449,38 @@ class AcpClient:
                 stop_reason = "end_turn"
                 if isinstance(msg.result, dict):
                     stop_reason = msg.result.get("stopReason") or "end_turn"
-                yield AcpEvent(kind=EVENT_COMPLETE, stop_reason=stop_reason)
+                from arz.acp.types import Usage
+                usage = None
+                if kiro_credits or kiro_turn_ms:
+                    usage = Usage(
+                        credits=kiro_credits,
+                        credit_unit=kiro_credit_unit,
+                        turn_duration_ms=kiro_turn_ms,
+                    )
+                yield AcpEvent(
+                    kind=EVENT_COMPLETE,
+                    stop_reason=stop_reason,
+                    context_usage_pct=kiro_context_pct,
+                    usage=usage,
+                )
                 return
+
+            # _kiro.dev/metadata: vendor extension, accumulate for COMPLETE
+            if msg.is_notification("_kiro.dev/metadata"):
+                params = msg.params or {}
+                if isinstance(params, dict):
+                    if isinstance(params.get("contextUsagePercentage"), (int, float)):
+                        kiro_context_pct = float(params["contextUsagePercentage"])
+                    metering = params.get("meteringUsage")
+                    if isinstance(metering, list):
+                        for m in metering:
+                            if isinstance(m, dict) and isinstance(m.get("value"), (int, float)):
+                                kiro_credits += float(m["value"])
+                                if not kiro_credit_unit and isinstance(m.get("unit"), str):
+                                    kiro_credit_unit = m["unit"]
+                    if isinstance(params.get("turnDurationMs"), (int, float)):
+                        kiro_turn_ms = int(params["turnDurationMs"])
+                continue
 
             # session/update notifications carry text chunks and tool calls
             if msg.is_notification(METHOD_SESSION_UPDATE):
