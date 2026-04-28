@@ -20,6 +20,16 @@ const KNOWN_MODELS = [
   { id: "claude-opus-4-5",           label: "Claude Opus 4.5" },
 ];
 
+const CODEX_MODELS = [
+  { id: "gpt-5.4",       label: "GPT-5.4" },
+  { id: "gpt-5.5",       label: "GPT-5.5" },
+  { id: "gpt-5.4-mini",  label: "GPT-5.4 Mini" },
+  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+  { id: "gpt-5.2",       label: "GPT-5.2" },
+];
+
+const CODEX_DEFAULT = "gpt-5.4";
+
 const INPUT_MIN_H = 44;
 const INPUT_MAX_H = 140;
 const INPUT_DRAG_MIN_H = 120;
@@ -190,7 +200,13 @@ export default function InputBar({
   };
 
   const activeApproval = APPROVAL_OPTIONS.find((o) => o.mode === approvalMode) ?? APPROVAL_OPTIONS[0];
-  const activeModel = KNOWN_MODELS.find((m) => m.id === model);
+  const isCodex = provider === "codex";
+  const effectiveModel = isCodex
+    ? (!model || model.startsWith("claude-") ? CODEX_DEFAULT : model)
+    : model;
+  const activeModel = isCodex
+    ? CODEX_MODELS.find((m) => m.id === effectiveModel)
+    : KNOWN_MODELS.find((m) => m.id === effectiveModel);
   const hasInput = value.trim().length > 0;
 
   return (
@@ -282,8 +298,8 @@ export default function InputBar({
         <div className="flex items-center justify-between px-2.5 pb-2 pt-0.5 gap-2">
           {/* Left: model + approval mode + context ring */}
           <div className="flex items-center gap-0.5 min-w-0 overflow-visible flex-1">
-            {/* Model picker (Claude) or provider label (other) */}
-            {provider && provider !== "claude-code" ? (
+            {/* Model picker (Claude/Codex) or static provider label */}
+            {provider && provider !== "claude-code" && provider !== "codex" ? (
               <div className="h-7 px-2 flex items-center gap-1.5 mr-2">
                 <ContextRing pct={contextPct} />
                 <span className="text-[12px] font-mono text-[var(--cedar)] whitespace-nowrap">
@@ -299,13 +315,13 @@ export default function InputBar({
               >
                 <ContextRing pct={contextPct} />
                 <span className="truncate max-w-[180px]">
-                  {activeModel?.label ?? model ?? "Model"}
+                  {activeModel?.label ?? effectiveModel ?? "Model"}
                 </span>
               </button>
               <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
                 <div className="px-1 py-0.5">
                   <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Model</div>
-                  {KNOWN_MODELS.map((m) => (
+                  {(isCodex ? CODEX_MODELS : KNOWN_MODELS).map((m) => (
                     <button
                       key={m.id}
                       onClick={() => {
@@ -315,9 +331,9 @@ export default function InputBar({
                       className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
                     >
                       <span className="w-3 shrink-0">
-                        {m.id === model && <Check size={12} className="text-[var(--cedar)]" />}
+                        {m.id === effectiveModel && <Check size={12} className="text-[var(--cedar)]" />}
                       </span>
-                      <span className={m.id === model ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
+                      <span className={m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
                         {m.label}
                       </span>
                     </button>

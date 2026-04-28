@@ -483,8 +483,8 @@ export default function ChatPanel({
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {messages.length === 0 && !streaming && (
           <WelcomeView
-            model={sessionProvider === "claude-code" || !sessionProvider ? settings?.model : undefined}
-            onModelChange={sessionProvider === "claude-code" || !sessionProvider ? handleModelChange : undefined}
+            model={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? settings?.model : undefined}
+            onModelChange={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? handleModelChange : undefined}
             provider={sessionProvider ?? undefined}
             workDir={workDir}
             onWorkDirChange={handleWorkDirChange}
@@ -552,11 +552,11 @@ export default function ChatPanel({
         disabled={false}
         isRunning={streaming}
         contextPct={contextPct}
-        model={sessionProvider === "claude-code" || !sessionProvider ? settings?.model : undefined}
+        model={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? settings?.model : undefined}
         provider={sessionProvider ?? undefined}
         approvalMode={approvalMode}
         onApprovalModeChange={handleApprovalModeChange}
-        onModelChange={sessionProvider === "claude-code" || !sessionProvider ? handleModelChange : undefined}
+        onModelChange={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? handleModelChange : undefined}
         focusSignal={focusSignal}
       />
     </div>
