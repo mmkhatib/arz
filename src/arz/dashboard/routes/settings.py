@@ -12,7 +12,7 @@ from arz.dashboard.token_auth import require_token
 
 router = APIRouter(dependencies=[Depends(require_token)])
 
-ProviderName = Literal["claude-code", "kiro-cli", "anthropic"]
+ProviderName = Literal["claude-code", "kiro-cli", "codex", "anthropic"]
 
 
 class SettingsResponse(BaseModel):

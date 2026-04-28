@@ -200,7 +200,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
 
     try:
         provider = await pool.activate(session_id, _factory)
-    except AcpError as e:
+    except (AcpError, FileNotFoundError, ValueError) as e:
         # Most common cause: the configured provider's CLI binary isn't installed
         # on this machine. Surface a clean 503 instead of a 500 traceback so the
         # frontend can render a useful error toast.
@@ -226,7 +226,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
                 session_id,
                 lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name),
             )
-        except AcpError as e:
+        except (AcpError, FileNotFoundError, ValueError) as e:
             raise HTTPException(
                 status_code=503,
                 detail=f"Provider {effective_provider_name!r} unavailable: {e}",

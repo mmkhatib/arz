@@ -43,13 +43,14 @@ class CodexProvider(LLMProvider):
         work_dir: str | Path | None = None,
         env_extra: dict[str, str] | None = None,
     ) -> None:
-        self._binary = _resolve_binary()
+        self._binary: str | None = None  # resolved lazily in start()
         self._model = model or ""
         self._work_dir = Path(work_dir) if work_dir else Path.home()
         self._env_extra = env_extra or {}
         self._process: asyncio.subprocess.Process | None = None
 
     async def start(self) -> None:
+        self._binary = _resolve_binary()  # raises FileNotFoundError if not installed
         if self._work_dir != Path.home():
             self._work_dir.mkdir(parents=True, exist_ok=True)
         log.info("codex provider ready", model=self._model or "default")
@@ -69,6 +70,8 @@ class CodexProvider(LLMProvider):
         return self._run(message)
 
     async def _run(self, message: str) -> AsyncIterator[LLMEvent]:  # type: ignore[return]
+        if not self._binary:
+            raise RuntimeError("CodexProvider.start() was not called")
         argv = [self._binary, "--approval-mode", "full-auto", "--quiet"]
         if self._model:
             argv += ["--model", self._model]
