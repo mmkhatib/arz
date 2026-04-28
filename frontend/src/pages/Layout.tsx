@@ -155,7 +155,7 @@ export default function Layout() {
           navigate(SECTION_TO_PATH[s]);
         }}
       />
-      <div className="relative flex-1 min-w-0 h-full overflow-hidden">
+      <div className="relative flex flex-1 min-w-0 h-full overflow-hidden">
         <ThemeQuickPicker />
         <Outlet />
       </div>
