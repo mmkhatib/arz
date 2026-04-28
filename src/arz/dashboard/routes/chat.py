@@ -47,6 +47,10 @@ def _make_provider(config: object, session_id: str, history: list[dict] | None, 
         from arz.providers.kiro_cli import KiroCliProvider
         return KiroCliProvider(model=model, work_dir=work_dir)
 
+    if provider_name == "codex":
+        from arz.providers.codex import CodexProvider
+        return CodexProvider(model=model, work_dir=work_dir)
+
     raise ValueError(f"Unknown provider: {provider_name!r}")
 
 

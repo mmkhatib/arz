@@ -55,6 +55,7 @@ def _spawn_cron_run(app: FastAPI, entry: CronEntry) -> None:
 async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
     """Execute a cron entry: create a session, stream the prompt, persist results."""
     from arz.providers.claude_code import ClaudeCodeProvider
+    from arz.providers.codex import CodexProvider
     from arz.providers.kiro_cli import KiroCliProvider
 
     cfg: ArzConfig = app.state.config
@@ -73,6 +74,8 @@ async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
         provider = ClaudeCodeProvider(model=cfg.provider.model, work_dir=cfg.provider.work_dir)
     elif cfg.provider.name == "kiro-cli":
         provider = KiroCliProvider(model=cfg.provider.model, work_dir=cfg.provider.work_dir)
+    elif cfg.provider.name == "codex":
+        provider = CodexProvider(model=cfg.provider.model, work_dir=cfg.provider.work_dir)
     else:
         registry.record_run(entry.id, "error: unsupported provider", session.id)
         return

@@ -9,8 +9,10 @@ import AnalyticsPage from "@/pages/AnalyticsPage";
 import CapabilitiesPage from "@/pages/CapabilitiesPage";
 import SettingsPage from "@/pages/SettingsPage";
 import ShortcutsPage from "@/pages/ShortcutsPage";
+import { useTheme } from "@/hooks/useTheme";
 
 export default function App() {
+  useTheme(); // applies theme from localStorage on mount
   return (
     <BrowserRouter>
       <Routes>

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 class ProviderConfig(BaseModel):
     """LLM provider settings."""
 
-    name: Literal["claude-code", "kiro-cli", "anthropic"] = "claude-code"
+    name: Literal["claude-code", "kiro-cli", "codex", "anthropic"] = "claude-code"
     model: str = "claude-opus-4-7"
     work_dir: str | None = None
 

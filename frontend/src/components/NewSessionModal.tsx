@@ -11,6 +11,7 @@ interface Props {
 const PROVIDERS = [
   { id: "claude-code", label: "Claude Code", description: "Anthropic's Claude Code CLI" },
   { id: "kiro-cli", label: "Kiro-cli", description: "Amazon Kiro AI assistant" },
+  { id: "codex", label: "Codex", description: "OpenAI Codex CLI" },
 ];
 
 export default function NewSessionModal({ defaultProvider, onConfirm, onCancel }: Props) {

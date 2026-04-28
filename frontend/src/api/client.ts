@@ -164,7 +164,7 @@ export interface PromptTemplate {
 }
 
 export interface Settings {
-  provider: "claude-code" | "kiro-cli" | "anthropic";
+  provider: "claude-code" | "kiro-cli" | "codex" | "anthropic";
   model: string;
   bot_name: string;
   host: string;

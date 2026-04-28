@@ -8,14 +8,16 @@ import {
   SettingsSection,
   SettingsCard,
 } from "./settings/primitives";
+import { useTheme, THEMES } from "@/hooks/useTheme";
+import type { ModePreference } from "@/hooks/useTheme";
 
 interface Props {
   onClose?: () => void;
   variant?: "modal" | "page";
 }
 
-const PROVIDER_OPTIONS = ["claude-code", "kiro-cli", "anthropic"];
-const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "Anthropic API (direct)"];
+const PROVIDER_OPTIONS = ["claude-code", "kiro-cli", "codex", "anthropic"];
+const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "OpenAI Codex CLI", "Anthropic API (direct)"];
 const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 export default function SettingsModal({ onClose, variant = "modal" }: Props) {
@@ -82,10 +84,31 @@ export default function SettingsModal({ onClose, variant = "modal" }: Props) {
     );
   }
 
+  const { colorTheme, mode: themeMode, setColorTheme, setMode: setThemeMode } = useTheme();
   const justSaved = Date.now() - savedAt < 1500;
 
   return (
     <Shell variant={variant} onClose={handleClose} savedFlag={justSaved} error={error}>
+      <SettingsSection title="Appearance">
+        <SettingsCard>
+          <SettingsSelect
+            label="Color Theme"
+            description="UI color palette"
+            value={colorTheme}
+            options={THEMES.map((t) => t.value)}
+            optionLabels={THEMES.map((t) => t.label)}
+            onChange={setColorTheme}
+          />
+          <SettingsSelect
+            label="Mode"
+            description="Light, dark, or follow system preference"
+            value={themeMode}
+            options={["system", "dark", "light"]}
+            optionLabels={["System", "Dark", "Light"]}
+            onChange={(v) => setThemeMode(v as ModePreference)}
+          />
+        </SettingsCard>
+      </SettingsSection>
       <SettingsSection title="Provider">
         <SettingsCard>
           <SettingsSelect

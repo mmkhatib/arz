@@ -66,6 +66,9 @@ def _detect_provider(name: str) -> tuple[bool, str | None]:
                 return True, str(cand)
         found = shutil.which("kiro-cli")
         return (bool(found), found)
+    if name == "codex":
+        found = shutil.which("codex")
+        return (bool(found), found)
     if name == "anthropic":
         # SDK provider — no CLI to detect; consider it "installed" if anthropic is importable
         try:
@@ -124,7 +127,7 @@ async def overview(
 
     # Providers — show currently configured one as active, plus install state
     cfg = state.config
-    provider_names = ["claude-code", "kiro-cli", "anthropic"]
+    provider_names = ["claude-code", "kiro-cli", "codex", "anthropic"]
     providers: list[ProviderStatus] = []
     for name in provider_names:
         installed, binary = _detect_provider(name)

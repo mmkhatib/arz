@@ -33,6 +33,9 @@ def _build_provider(cfg_path: Path | None = None) -> LLMProvider:
     elif provider_name == "kiro-cli":
         from arz.providers.kiro_cli import KiroCliProvider
         return KiroCliProvider(model=model, work_dir=work_dir)
+    elif provider_name == "codex":
+        from arz.providers.codex import CodexProvider
+        return CodexProvider(model=model, work_dir=work_dir)
     elif provider_name == "anthropic":
         raise typer.BadParameter("anthropic direct provider not yet implemented (Phase 3)")
     else:
@@ -121,6 +124,16 @@ def gateway(
     from arz.providers.pool import ProviderPool
     pool = ProviderPool(max_size=cfg.dashboard.max_active_sessions)
     web_app = create_app(cfg, pool)
+
+    import logging
+
+    class _QuietPolling(logging.Filter):
+        _SKIP = ("/api/health", "/api/cron", "/api/overview", "/api/sessions")
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            return not any(p in msg for p in self._SKIP)
+
+    logging.getLogger("uvicorn.access").addFilter(_QuietPolling())
 
     typer.echo(f"Arz gateway starting at http://{cfg.dashboard.host}:{cfg.dashboard.port}")
     uvicorn.run(
