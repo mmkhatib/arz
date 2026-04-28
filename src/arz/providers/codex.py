@@ -72,8 +72,8 @@ class CodexProvider(LLMProvider):
     async def _run(self, message: str) -> AsyncIterator[LLMEvent]:  # type: ignore[return]
         if not self._binary:
             raise RuntimeError("CodexProvider.start() was not called")
-        argv = [self._binary, "--approval-mode", "full-auto", "--quiet"]
-        if self._model:
+        argv = [self._binary, "--full-auto", "-q"]
+        if self._model and not self._model.startswith("claude-"):
             argv += ["--model", self._model]
         argv.append(message)
 

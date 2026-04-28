@@ -33,12 +33,19 @@ interface Props {
   isRunning?: boolean;
   contextPct?: number;
   model?: string;
+  provider?: string;
   approvalMode?: ApprovalMode;
   onApprovalModeChange?: (mode: ApprovalMode) => void;
   onModelChange?: (model: string) => void;
   /** Increment to request focus on the textarea (e.g., re-clicking the active session). */
   focusSignal?: number;
 }
+
+const PROVIDER_LABELS: Record<string, string> = {
+  "kiro-cli": "Kiro CLI",
+  "codex": "OpenAI Codex",
+  "anthropic": "Anthropic API",
+};
 
 export default function InputBar({
   onSend,
@@ -48,6 +55,7 @@ export default function InputBar({
   isRunning = false,
   contextPct = 0,
   model,
+  provider,
   approvalMode = "normal",
   onApprovalModeChange,
   onModelChange,
@@ -274,7 +282,15 @@ export default function InputBar({
         <div className="flex items-center justify-between px-2.5 pb-2 pt-0.5 gap-2">
           {/* Left: model + approval mode + context ring */}
           <div className="flex items-center gap-0.5 min-w-0 overflow-visible flex-1">
-            {/* Model picker */}
+            {/* Model picker (Claude) or provider label (other) */}
+            {provider && provider !== "claude-code" ? (
+              <div className="h-7 px-2 flex items-center gap-1.5 mr-2">
+                <ContextRing pct={contextPct} />
+                <span className="text-[12px] font-mono text-[var(--cedar)] whitespace-nowrap">
+                  {PROVIDER_LABELS[provider] ?? provider}
+                </span>
+              </div>
+            ) : (
             <div className="relative shrink-0">
               <button
                 onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); }}
@@ -309,6 +325,7 @@ export default function InputBar({
                 </div>
               </Popover>
             </div>
+            )}
 
             {/* Approval mode picker */}
             {onApprovalModeChange && (

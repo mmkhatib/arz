@@ -12,11 +12,18 @@ const KNOWN_MODELS = [
 interface Props {
   model?: string;
   onModelChange?: (model: string) => void;
+  provider?: string;
   workDir: string;
   onWorkDirChange: (path: string) => void;
 }
 
-export default function WelcomeView({ model, onModelChange, workDir, onWorkDirChange }: Props) {
+const PROVIDER_LABELS: Record<string, string> = {
+  "kiro-cli": "Kiro CLI",
+  "codex": "OpenAI Codex",
+  "anthropic": "Anthropic API",
+};
+
+export default function WelcomeView({ model, onModelChange, provider, workDir, onWorkDirChange }: Props) {
   const [modelOpen, setModelOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState(workDir);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
@@ -43,7 +50,17 @@ export default function WelcomeView({ model, onModelChange, workDir, onWorkDirCh
 
       {/* Options */}
       <div className="flex flex-col gap-3 w-full max-w-[360px]">
-        {/* Model picker */}
+        {/* Provider badge (non-Claude) or model picker (Claude) */}
+        {provider && provider !== "claude-code" ? (
+          <div className="flex flex-col gap-1.5">
+            <label className="text-[11px] text-[var(--muted)] uppercase tracking-wider font-medium px-1">Provider</label>
+            <div className="flex items-center gap-2 bg-[var(--surface)] border border-[var(--border)] rounded-xl px-3 py-2.5">
+              <span className="text-[13px] font-medium text-[var(--cedar)]">
+                {PROVIDER_LABELS[provider] ?? provider}
+              </span>
+            </div>
+          </div>
+        ) : (
         <div className="flex flex-col gap-1.5">
           <label className="text-[11px] text-[var(--muted)] uppercase tracking-wider font-medium px-1">Model</label>
           <div className="relative">
@@ -78,6 +95,7 @@ export default function WelcomeView({ model, onModelChange, workDir, onWorkDirCh
             </Popover>
           </div>
         </div>
+        )}
 
         {/* Working directory */}
         <div className="flex flex-col gap-1.5">

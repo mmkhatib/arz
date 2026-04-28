@@ -229,6 +229,7 @@ export default function ChatPanel({
   const [pendingApproval, setPendingApproval] = useState<{ requestId: string; title: string; toolInput: string } | null>(null);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
   const [settings, setSettings] = useState<{ model: string } | null>(null);
+  const [sessionProvider, setSessionProvider] = useState<string | null>(null);
   const [workDir, setWorkDir] = useState("");
   const [compareTarget, setCompareTarget] = useState<{ prompt: string; baseline: string; baselineModel: string | null } | null>(null);
   const firstUserMsgRef = useRef<string>("");
@@ -246,6 +247,7 @@ export default function ChatPanel({
         setMessages(s.messages);
         setTitle(s.title);
         setWorkDir(s.work_dir ?? "");
+        setSessionProvider(s.provider ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
         // Seed file paths from message history so the Files tab is pre-populated
         if (onSeedFiles) {
@@ -481,8 +483,9 @@ export default function ChatPanel({
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {messages.length === 0 && !streaming && (
           <WelcomeView
-            model={settings?.model}
-            onModelChange={handleModelChange}
+            model={sessionProvider === "claude-code" || !sessionProvider ? settings?.model : undefined}
+            onModelChange={sessionProvider === "claude-code" || !sessionProvider ? handleModelChange : undefined}
+            provider={sessionProvider ?? undefined}
             workDir={workDir}
             onWorkDirChange={handleWorkDirChange}
           />
@@ -549,10 +552,11 @@ export default function ChatPanel({
         disabled={false}
         isRunning={streaming}
         contextPct={contextPct}
-        model={settings?.model}
+        model={sessionProvider === "claude-code" || !sessionProvider ? settings?.model : undefined}
+        provider={sessionProvider ?? undefined}
         approvalMode={approvalMode}
         onApprovalModeChange={handleApprovalModeChange}
-        onModelChange={handleModelChange}
+        onModelChange={sessionProvider === "claude-code" || !sessionProvider ? handleModelChange : undefined}
         focusSignal={focusSignal}
       />
     </div>
