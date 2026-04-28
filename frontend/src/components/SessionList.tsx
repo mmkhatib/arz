@@ -14,6 +14,7 @@ function providerBadge(provider: string | null | undefined, globalProvider: stri
   const p = provider || globalProvider;
   if (p === "kiro-cli") return { label: "Kiro", className: "bg-blue-900/30 text-blue-400" };
   if (p === "anthropic") return { label: "API", className: "bg-purple-900/30 text-purple-400" };
+  if (p === "codex") return { label: "Codex", className: "bg-green-900/30 text-green-400" };
   return { label: "Claude", className: "bg-orange-900/40 text-orange-300" };
 }
 

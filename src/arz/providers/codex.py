@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 from collections.abc import AsyncIterator
@@ -18,6 +19,9 @@ _CODEX_BIN = "codex"
 _STDOUT_LIMIT = 10 * 1024 * 1024
 _TURN_TIMEOUT = 7200.0
 
+# Event types that carry the assistant's text reply
+_TEXT_EVENT_TYPES = {"agent_message", "assistant_message", "message"}
+
 
 def _resolve_binary() -> str:
     found = shutil.which(_CODEX_BIN)
@@ -28,11 +32,22 @@ def _resolve_binary() -> str:
     )
 
 
-class CodexProvider(LLMProvider):
-    """LLMProvider backed by the OpenAI Codex CLI.
+async def _drain_stderr(stream: asyncio.StreamReader) -> None:
+    """Consume stderr so the pipe buffer never blocks the child process."""
+    try:
+        while True:
+            line = await stream.readline()
+            if not line:
+                break
+    except Exception:
+        pass
 
-    Spawns a fresh process per turn using --approval-mode full-auto.
-    Tools are executed autonomously by the CLI; stdout is streamed as text.
+
+class CodexProvider(LLMProvider):
+    """LLMProvider backed by the OpenAI Codex CLI (`codex exec`).
+
+    Spawns a fresh process per turn in --full-auto mode with --json output.
+    Parses JSONL events from stdout; tool execution is handled by the CLI.
     """
 
     name = "codex"
@@ -72,9 +87,16 @@ class CodexProvider(LLMProvider):
     async def _run(self, message: str) -> AsyncIterator[LLMEvent]:  # type: ignore[return]
         if not self._binary:
             raise RuntimeError("CodexProvider.start() was not called")
-        argv = [self._binary, "--full-auto", "-q"]
+
+        argv = [
+            self._binary, "exec",
+            "--full-auto",
+            "--json",
+            "--color", "never",
+            "-C", str(self._work_dir),
+        ]
         if self._model and not self._model.startswith("claude-"):
-            argv += ["--model", self._model]
+            argv += ["-m", self._model]
         argv.append(message)
 
         env = {**os.environ, **self._env_extra}
@@ -83,27 +105,52 @@ class CodexProvider(LLMProvider):
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=str(self._work_dir),
             limit=_STDOUT_LIMIT,
             env=env,
         )
         self._process = process
+
+        assert process.stderr
+        asyncio.ensure_future(_drain_stderr(process.stderr))
 
         deadline = asyncio.get_event_loop().time() + _TURN_TIMEOUT
         assert process.stdout
         try:
             while asyncio.get_event_loop().time() < deadline:
                 try:
-                    raw = await asyncio.wait_for(process.stdout.read(512), timeout=60.0)
+                    line = await asyncio.wait_for(process.stdout.readline(), timeout=60.0)
                 except asyncio.TimeoutError:
                     if process.returncode is not None:
                         break
                     continue
-                if not raw:
+                if not line:
                     break
-                text = raw.decode(errors="replace")
-                if text:
-                    yield LLMEvent(kind="text_chunk", text=text)
+                line = line.strip()
+                if not line:
+                    continue
+
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    text = line.decode(errors="replace")
+                    if text:
+                        yield LLMEvent(kind="text_chunk", text=text + "\n")
+                    continue
+
+                etype = event.get("type", "")
+                emsg = event.get("message", "") or event.get("msg", "")
+
+                if etype in _TEXT_EVENT_TYPES and emsg:
+                    # Some events wrap message as an object with content blocks
+                    if isinstance(emsg, str):
+                        yield LLMEvent(kind="text_chunk", text=emsg)
+                    elif isinstance(emsg, list):
+                        for block in emsg:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                yield LLMEvent(kind="text_chunk", text=block.get("text", ""))
+                elif etype == "error" and emsg:
+                    yield LLMEvent(kind="text_chunk", text=f"[codex error] {emsg}\n")
+
         finally:
             if process.returncode is None:
                 process.kill()
