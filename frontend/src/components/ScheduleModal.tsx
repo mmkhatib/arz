@@ -39,7 +39,7 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [variant, handleClose]);
+  }, [variant]);
 
   const create = async () => {
     if (!name.trim() || !prompt.trim() || !schedule.trim()) return;

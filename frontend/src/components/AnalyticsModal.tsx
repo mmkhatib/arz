@@ -24,7 +24,7 @@ export default function AnalyticsModal({ onClose, variant = "modal" }: Props) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [variant, handleClose]);
+  }, [variant]);
 
   useEffect(() => {
     Promise.all([

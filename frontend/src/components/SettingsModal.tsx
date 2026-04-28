@@ -53,7 +53,7 @@ export default function SettingsModal({ onClose, variant = "modal" }: Props) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [variant, handleClose]);
+  }, [variant]);
 
   const patch = async (body: Partial<Settings>) => {
     setError(null);

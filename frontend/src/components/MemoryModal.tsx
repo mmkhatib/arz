@@ -21,7 +21,7 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [variant, handleClose]);
+  }, [variant]);
 
   const header = (
     <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
