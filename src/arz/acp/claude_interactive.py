@@ -166,17 +166,28 @@ class ClaudeInteractiveClient:
         })
 
         deadline = asyncio.get_event_loop().time() + _TURN_TIMEOUT
-        assert self._process and self._process.stdout
+        if not (self._process and self._process.stdout):
+            return  # nothing to read from — caller will see no events
 
         while asyncio.get_event_loop().time() < deadline:
+            # Re-check each iteration: another task can call shutdown() and
+            # null out self._process while we're streaming (e.g. user switches
+            # agent or approval mode mid-turn, which evicts the pool entry).
+            proc = self._process
+            if proc is None or proc.stdout is None:
+                logger.info("claude-code stream aborted — process gone (likely pool deactivation)")
+                return
             try:
                 raw = await asyncio.wait_for(
-                    self._process.stdout.readline(), timeout=_READ_TIMEOUT
+                    proc.stdout.readline(), timeout=_READ_TIMEOUT
                 )
             except asyncio.TimeoutError:
                 if not self.is_alive():
                     break
                 continue
+            except (BrokenPipeError, ConnectionResetError, AttributeError):
+                logger.info("claude-code stream aborted — read failed mid-turn")
+                return
 
             if not raw:
                 break

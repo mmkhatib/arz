@@ -604,6 +604,7 @@ export default function ChatPanel({
         agents={agents}
         onAgentChange={handleAgentChange}
         focusSignal={focusSignal}
+        draftKey={sessionId}
       />
     </div>
   );

@@ -117,6 +117,7 @@ async def _stream_response(
     full_reply = ""
     turn_started = _time.monotonic()
     turn_tool_calls: list[dict] = []
+    saved_assistant = False
     try:
         async for event in provider.stream(augmented_message):
             if event.kind == EVENT_TEXT_CHUNK and event.text:
@@ -195,6 +196,7 @@ async def _stream_response(
                     if turn_tool_calls:
                         msg.tool_calls = turn_tool_calls
                     mgr.save(session)
+                    saved_assistant = True
                 yield sse_complete(
                     event.stop_reason or "end_turn",
                     context_pct=event.context_usage_pct or 0.0,
@@ -204,10 +206,22 @@ async def _stream_response(
 
     except Exception as e:
         log.exception("Error streaming session %s", session_id)
-        if session and full_reply:
-            session.add_message("assistant", full_reply)
-            mgr.save(session)
         yield sse_error(str(e))
+    finally:
+        # Backstop: if we got partial output but never reached COMPLETE
+        # (client disconnected mid-stream, provider was deactivated by an
+        # agent/model/approval change, generator was cancelled, etc.),
+        # persist the partial reply so the user doesn't lose it on refresh.
+        if session and full_reply and not saved_assistant:
+            try:
+                msg = session.add_message("assistant", full_reply)
+                msg.model = provider.current_model
+                msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
+                if turn_tool_calls:
+                    msg.tool_calls = turn_tool_calls
+                mgr.save(session)
+            except Exception:
+                log.exception("Failed to persist partial reply on stream end")
 
 
 @router.post("/api/chat/{session_id}")

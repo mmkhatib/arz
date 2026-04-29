@@ -38,6 +38,8 @@ interface Props {
   onAgentChange?: (agent: string | null) => void;
   /** Increment to request focus on the textarea (e.g., re-clicking the active session). */
   focusSignal?: number;
+  /** When set, the unsent draft is persisted to localStorage keyed by this id. */
+  draftKey?: string;
 }
 
 export default function InputBar({
@@ -57,6 +59,7 @@ export default function InputBar({
   agents = [],
   onAgentChange,
   focusSignal,
+  draftKey,
 }: Props) {
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -84,7 +87,28 @@ export default function InputBar({
   const removePending = (path: string) => {
     setPendingFiles((prev) => prev.filter((f) => f.path !== path));
   };
-  const [value, setValue] = useState("");
+
+  const _draftStorageKey = draftKey ? `arz:draft:${draftKey}` : null;
+  const [value, setValue] = useState<string>(() => {
+    if (!_draftStorageKey) return "";
+    try { return localStorage.getItem(_draftStorageKey) ?? ""; } catch { return ""; }
+  });
+
+  // Re-hydrate when the active session changes (key swap).
+  useEffect(() => {
+    if (!_draftStorageKey) { setValue(""); return; }
+    try { setValue(localStorage.getItem(_draftStorageKey) ?? ""); } catch { setValue(""); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // Persist on every keystroke (light-write; localStorage handles fine).
+  useEffect(() => {
+    if (!_draftStorageKey) return;
+    try {
+      if (value) localStorage.setItem(_draftStorageKey, value);
+      else localStorage.removeItem(_draftStorageKey);
+    } catch {}
+  }, [value, _draftStorageKey]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
