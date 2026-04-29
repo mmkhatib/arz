@@ -37,6 +37,8 @@ def _session_to_dict(session: object) -> dict:
         "color": session.color,
         "work_dir": session.work_dir,
         "provider": session.provider,
+        "model": session.model,
+        "agent": session.agent,
         "approval_mode": session.approval_mode,
     }
 
@@ -56,10 +58,16 @@ async def create_session(request: Request) -> dict:
         chat_id=body.get("chat_id", "web"),
         thread_id=body.get("thread_id"),
     )
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    dirty = False
     if body.get("provider"):
-        from arz.session.session import Session
-        assert isinstance(session, Session)
         session.provider = body["provider"]
+        dirty = True
+    if body.get("model"):
+        session.model = body["model"]
+        dirty = True
+    if dirty:
         mgr.save(session)
     return _session_to_dict(session)
 
@@ -228,6 +236,62 @@ async def set_session_color(session_id: str, request: Request) -> None:
     assert isinstance(session, Session)
     session.color = color
     mgr.save(session)
+
+
+@router.patch("/api/sessions/{session_id}/agent", status_code=status.HTTP_204_NO_CONTENT)
+async def set_session_agent(session_id: str, request: Request) -> None:
+    mgr = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    agent_name = (body.get("agent") or "").strip() or None
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+
+    # When picking an agent, copy its provider/model/approval/system_prompt
+    # onto the session unless those fields were explicitly already set.
+    if agent_name:
+        registry = getattr(request.app.state, "agent_registry", None)
+        if registry is None:
+            from arz.agents import AgentRegistry
+            registry = AgentRegistry()
+            request.app.state.agent_registry = registry
+        agent = registry.get(agent_name)
+        if agent is not None:
+            session.agent = agent_name
+            if agent.provider:
+                session.provider = agent.provider
+            if agent.model:
+                session.model = agent.model
+            if agent.approval_mode:
+                session.approval_mode = agent.approval_mode
+        else:
+            session.agent = agent_name  # set anyway, for visibility
+    else:
+        session.agent = None
+    mgr.save(session)
+    pool = getattr(request.app.state, "provider_pool", None)
+    if pool is not None:
+        await pool.deactivate(session_id)
+
+
+@router.patch("/api/sessions/{session_id}/model", status_code=status.HTTP_204_NO_CONTENT)
+async def set_session_model(session_id: str, request: Request) -> None:
+    mgr = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    session.model = model or None
+    mgr.save(session)
+    # Drop the existing provider so the next message rebuilds with the new model.
+    pool = getattr(request.app.state, "provider_pool", None)
+    if pool is not None:
+        await pool.deactivate(session_id)
 
 
 @router.patch("/api/sessions/{session_id}/workdir", status_code=status.HTTP_204_NO_CONTENT)

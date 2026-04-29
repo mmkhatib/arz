@@ -47,9 +47,29 @@ class ToolRegistry:
     def __init__(self, directory: Path | None = None) -> None:
         self._dir = directory or _TOOLS_DIR
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._seed_bundled()
         self._lock = threading.Lock()
         self._tools: dict[str, ToolSpec] = {}
         self.reload()
+
+    def _seed_bundled(self) -> None:
+        """Copy the bundled tools (arz/tools/builtin/*.py) into ~/.arz/tools/.
+
+        Only seeds files that don't already exist locally — the user can
+        delete or override any individual tool.
+        """
+        try:
+            bundled_dir = Path(__file__).with_name("builtin")
+            if not bundled_dir.is_dir():
+                return
+            for src in bundled_dir.glob("*.py"):
+                if src.name.startswith("_"):
+                    continue
+                dst = self._dir / src.name
+                if not dst.exists():
+                    dst.write_bytes(src.read_bytes())
+        except OSError:
+            log.warning("failed to seed bundled tools", exc_info=True)
 
     @property
     def directory(self) -> Path:

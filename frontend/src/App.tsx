@@ -6,9 +6,10 @@ import AgentsPage from "@/pages/AgentsPage";
 import MemoryPage from "@/pages/MemoryPage";
 import SchedulePage from "@/pages/SchedulePage";
 import AnalyticsPage from "@/pages/AnalyticsPage";
+import AutonomyPage from "@/pages/AutonomyPage";
 import CapabilitiesPage from "@/pages/CapabilitiesPage";
+import LLMInstallerPage from "@/pages/LLMInstallerPage";
 import SettingsPage from "@/pages/SettingsPage";
-import ShortcutsPage from "@/pages/ShortcutsPage";
 import { useTheme } from "@/hooks/useTheme";
 
 export default function App() {
@@ -24,8 +25,9 @@ export default function App() {
           <Route path="/schedule" element={<SchedulePage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
           <Route path="/capabilities" element={<CapabilitiesPage />} />
+          <Route path="/autonomy" element={<AutonomyPage />} />
+          <Route path="/models" element={<LLMInstallerPage />} />
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/shortcuts" element={<ShortcutsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

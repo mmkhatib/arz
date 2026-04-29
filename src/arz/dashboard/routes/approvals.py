@@ -76,4 +76,8 @@ async def set_session_mode(session_id: str, body: ModeBody, request: Request) ->
         yolo.add(session_id)
     else:
         yolo.discard(session_id)
+    # Evict the pool entry so the next chat turn rebuilds the provider with the
+    # right --permission-mode flag for claude-code.
+    pool: ProviderPool = request.app.state.provider_pool
+    await pool.deactivate(session_id)
     return {"mode": body.mode}

@@ -26,13 +26,20 @@ from arz.dashboard.routes.mcp import router as mcp_router
 from arz.dashboard.routes.overview import router as overview_router
 from arz.dashboard.routes.prompts import router as prompts_router
 from arz.dashboard.routes.audit import router as audit_router
+from arz.dashboard.routes.channels import router as channels_router
 from arz.dashboard.routes.compare import router as compare_router
 from arz.dashboard.routes.cron import router as cron_router
 from arz.dashboard.routes.health import router as health_router
+from arz.dashboard.routes.heartbeat import router as heartbeat_router
+from arz.dashboard.routes.hooks import router as hooks_router
+from arz.dashboard.routes.installer import router as installer_router
+from arz.dashboard.routes.lessons import router as lessons_router
 from arz.dashboard.routes.memory import router as memory_router
 from arz.dashboard.routes.search import router as search_router
 from arz.dashboard.routes.sessions import router as sessions_router
 from arz.dashboard.routes.settings import router as settings_router
+from arz.dashboard.routes.subagents import router as subagents_router
+from arz.dashboard.routes.taskrunner import router as taskrunner_router
 from arz.dashboard.routes.tools import router as tools_router
 from arz.dashboard.search import SessionSearchIndex
 from arz.dashboard.token_auth import load_token
@@ -122,10 +129,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.cron_registry.start()
     log.info("Cron scheduler started")
     await app.state.surface_manager.start()
+    if getattr(app.state, "heartbeat_service", None) is not None:
+        app.state.heartbeat_service.start()
+        log.info("Heartbeat started")
     yield
     log.info("Arz gateway shutting down")
     await app.state.surface_manager.shutdown()
     app.state.cron_registry.shutdown()
+    if getattr(app.state, "heartbeat_service", None) is not None:
+        app.state.heartbeat_service.stop()
     await app.state.provider_pool.shutdown_all()
 
 
@@ -145,9 +157,67 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.state.yolo_sessions: set[str] = set()
     app.state.session_modes: dict[str, str] = {}
     app.state.cron_registry = CronRegistry(runner=lambda entry: _spawn_cron_run(app, entry))
+    from arz.dashboard.cron import set_cron_registry
+    set_cron_registry(app.state.cron_registry)
     app.state.message_router = MessageRouter(app.state.session_manager)
     app.state.surface_manager = SurfaceManager(config, app.state.message_router)
     app.state.audit_log = AuditLog()
+
+    # Subagent runner: spawns an isolated single-turn provider using the named
+    # agent's config (or the global default if missing).
+    from arz.agents import AgentRegistry
+    from arz.subagents import get_subagent_manager
+    agent_registry = AgentRegistry()
+    app.state.agent_registry = agent_registry
+
+    async def _run_subagent(agent_name: str, prompt: str) -> str:
+        from arz.acp.types import EVENT_COMPLETE as _EC, EVENT_TEXT_CHUNK as _ETC
+        from arz.providers.claude_code import ClaudeCodeProvider
+        from arz.providers.codex import CodexProvider
+        from arz.providers.kiro_cli import KiroCliProvider
+        from arz.prompts.loader import resolve_system_prompt
+
+        agent = agent_registry.get(agent_name)
+        provider_name = (agent.provider if agent else None) or config.provider.name
+        model = (agent.model if agent and agent.model else "") or config.provider.model
+        sys_prompt = resolve_system_prompt(agent.system_prompt if agent else None)
+
+        if provider_name == "claude-code":
+            provider = ClaudeCodeProvider(model=model, system_prompt=sys_prompt or None)
+        elif provider_name == "kiro-cli":
+            provider = KiroCliProvider(model=model)
+        elif provider_name == "codex":
+            provider = CodexProvider(model=model, system_prompt=sys_prompt or None)
+        else:
+            return f"(unsupported provider {provider_name!r})"
+
+        text = ""
+        try:
+            await provider.start()
+            async for event in provider.stream(prompt):
+                if event.kind == _ETC and event.text:
+                    text += event.text
+                elif event.kind == _EC:
+                    break
+        finally:
+            try:
+                await provider.shutdown()
+            except Exception:
+                pass
+        return text
+
+    get_subagent_manager().set_runner(_run_subagent)
+
+    # Heartbeat: separate background loop reading ~/.arz/HEARTBEAT.md.
+    from arz.heartbeat import HeartbeatService
+    interval = getattr(config.dashboard, "heartbeat_interval_s", 300)
+    app.state.heartbeat_service = HeartbeatService(
+        runner=_run_subagent, interval_s=interval, agent_name="general"
+    )
+
+    # Task runner shares the same single-turn runner.
+    from arz.taskrunner import get_task_runner
+    get_task_runner().set_runner(_run_subagent)
 
     # Mirror every router event into the audit log.
     def _audit_handler(event):
@@ -192,6 +262,13 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(agents_router)
     app.include_router(mcp_router)
     app.include_router(prompts_router)
+    app.include_router(lessons_router)
+    app.include_router(hooks_router)
+    app.include_router(subagents_router)
+    app.include_router(channels_router)
+    app.include_router(heartbeat_router)
+    app.include_router(taskrunner_router)
+    app.include_router(installer_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

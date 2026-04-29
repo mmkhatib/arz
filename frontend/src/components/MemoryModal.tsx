@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
-import type { MemoryHit, MemoryLesson } from "@/api/client";
-import { Brain, FileText, BookOpen, Search as SearchIcon, Trash2, Plus, Save } from "lucide-react";
+import type { MemoryHit } from "@/api/client";
+import { Brain, FileText, Search as SearchIcon, Trash2, Plus, Save, Sparkles, FileEdit, Pin, PinOff } from "lucide-react";
 
 interface Props {
   onClose?: () => void;
   variant?: "modal" | "page";
 }
 
-type Tab = "markdown" | "lessons" | "search";
+type Tab = "markdown" | "search" | "auto_lessons" | "files";
 
 export default function MemoryModal({ onClose, variant = "modal" }: Props) {
   const [tab, setTab] = useState<Tab>("markdown");
@@ -37,16 +37,18 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
     </div>
   );
   const tabs = (
-    <div className="flex border-b border-[var(--border)] px-3">
+    <div className="flex border-b border-[var(--border)] px-3 overflow-x-auto">
+      <TabButton icon={<Sparkles size={13} />} label="Lessons" active={tab === "auto_lessons"} onClick={() => setTab("auto_lessons")} />
+      <TabButton icon={<FileEdit size={13} />} label="Memory Files" active={tab === "files"} onClick={() => setTab("files")} />
       <TabButton icon={<FileText size={13} />} label="Notes" active={tab === "markdown"} onClick={() => setTab("markdown")} />
-      <TabButton icon={<BookOpen size={13} />} label="Lessons" active={tab === "lessons"} onClick={() => setTab("lessons")} />
       <TabButton icon={<SearchIcon size={13} />} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
     </div>
   );
   const body = (
     <div className="overflow-y-auto px-5 py-4 flex-1">
+      {tab === "auto_lessons" && <AutoLessonsTab />}
+      {tab === "files" && <MemoryFilesTab />}
       {tab === "markdown" && <MarkdownTab />}
-      {tab === "lessons" && <LessonsTab />}
       {tab === "search" && <SearchTab />}
     </div>
   );
@@ -89,6 +91,206 @@ function TabButton({ icon, label, active, onClick }: { icon: React.ReactNode; la
       {icon}
       {label}
     </button>
+  );
+}
+
+// ── Auto-inject Lessons tab (new /api/lessons store) ────────────────────────
+
+function AutoLessonsTab() {
+  const [items, setItems] = useState<{ id: number; category: string; text: string; pinned: boolean; created_at: number }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const [category, setCategory] = useState<"preference" | "tool" | "knowledge">("preference");
+  const [pinned, setPinned] = useState(false);
+
+  const refresh = () => api.listLessons().then(setItems).catch((e) => setError(String(e)));
+  useEffect(() => { refresh(); }, []);
+
+  const add = async () => {
+    if (!text.trim()) return;
+    setError(null);
+    try {
+      await api.addLesson(category, text.trim(), pinned);
+      setText("");
+      setPinned(false);
+      refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const togglePin = async (l: { id: number; pinned: boolean }) => {
+    try { await api.pinLesson(l.id, !l.pinned); refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const del = async (id: number) => {
+    if (!confirm("Delete this lesson?")) return;
+    try { await api.deleteLesson(id); refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  };
+
+  const grouped: Record<string, typeof items> = { preference: [], tool: [], knowledge: [] };
+  items.forEach((l) => { (grouped[l.category] ?? grouped.knowledge).push(l); });
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="text-[12px] text-[var(--muted)]">
+        Lessons here auto-inject into every chat turn. Pinned + preference
+        always include; others match by keyword overlap. Cap: 200 entries.
+      </div>
+
+      <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <select value={category} onChange={(e) => setCategory(e.target.value as "preference" | "tool" | "knowledge")} className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]">
+            <option value="preference">preference</option>
+            <option value="tool">tool</option>
+            <option value="knowledge">knowledge</option>
+          </select>
+          <label className="flex items-center gap-1.5 text-[11px] text-[var(--muted)] cursor-pointer">
+            <input type="checkbox" checked={pinned} onChange={(e) => setPinned(e.target.checked)} className="accent-[var(--cedar)]" />
+            pin
+          </label>
+        </div>
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          placeholder="One- or two-sentence lesson the agent should remember…"
+          rows={2}
+          className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+        />
+        <button
+          onClick={add}
+          disabled={!text.trim()}
+          className="self-end flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]"
+        >
+          <Plus size={11} /> Add
+        </button>
+      </div>
+
+      {(["preference", "tool", "knowledge"] as const).map((cat) => (
+        grouped[cat].length === 0 ? null : (
+          <div key={cat}>
+            <div className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-1">{cat}</div>
+            <div className="flex flex-col gap-1">
+              {grouped[cat].map((l) => (
+                <div key={l.id} className="group flex items-start gap-2 border border-[var(--border)] rounded-lg p-2 bg-[var(--surface)]">
+                  <span className="text-[10px] font-mono text-[var(--muted)]/60 shrink-0 mt-0.5">#{l.id}</span>
+                  <span className="text-[13px] text-[var(--text)] flex-1 min-w-0">{l.text}</span>
+                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100">
+                    <button onClick={() => togglePin(l)} title={l.pinned ? "Unpin" : "Pin"} className="p-1 rounded text-[var(--muted)] hover:text-amber-400 hover:bg-[var(--bg)]">
+                      {l.pinned ? <Pin size={12} fill="currentColor" /> : <PinOff size={12} />}
+                    </button>
+                    <button onClick={() => del(l.id)} title="Delete" className="p-1 rounded text-[var(--muted)] hover:text-red-400 hover:bg-[var(--bg)]">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )
+      ))}
+
+      {items.length === 0 && (
+        <div className="text-center text-[var(--muted)]/60 text-[12px] py-8">
+          No lessons yet. Add one above, or let the agent call <code>learn_add</code>.
+        </div>
+      )}
+      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+    </div>
+  );
+}
+
+// ── Memory Files tab (preferences.md / projects.md) ─────────────────────────
+
+function MemoryFilesTab() {
+  const [pref, setPref] = useState<string>("");
+  const [proj, setProj] = useState<string>("");
+  const [origPref, setOrigPref] = useState<string>("");
+  const [origProj, setOrigProj] = useState<string>("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [savedFlag, setSavedFlag] = useState(0);
+
+  const refresh = () =>
+    api.listMemoryFiles().then((d) => {
+      setPref(d.preferences); setOrigPref(d.preferences);
+      setProj(d.projects); setOrigProj(d.projects);
+      setHistory(d.history ?? []);
+    }).catch((e) => setError(String(e)));
+
+  useEffect(() => { refresh(); }, []);
+
+  const save = async (which: "preferences.md" | "projects.md") => {
+    setError(null);
+    setSaving(true);
+    try {
+      const content = which === "preferences.md" ? pref : proj;
+      await api.writeMemoryFile(which, content);
+      if (which === "preferences.md") setOrigPref(content);
+      else setOrigProj(content);
+      setSavedFlag(Date.now());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const justSaved = Date.now() - savedFlag < 1500;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="text-[12px] text-[var(--muted)]">
+        These files auto-inject into every chat turn:
+        <code className="text-[var(--cedar)] ml-1">preferences.md</code> (cap 1k chars) +
+        <code className="text-[var(--cedar)] ml-1">projects.md</code> (cap 2k chars).
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[12px] font-semibold text-[var(--text)]">preferences.md</div>
+          <div className="flex items-center gap-2">
+            {justSaved && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
+            <button onClick={() => save("preferences.md")} disabled={saving || pref === origPref} className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
+              <Save size={11} /> Save
+            </button>
+          </div>
+        </div>
+        <textarea
+          value={pref}
+          onChange={(e) => setPref(e.target.value)}
+          rows={8}
+          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+        />
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-[12px] font-semibold text-[var(--text)]">projects.md</div>
+          <button onClick={() => save("projects.md")} disabled={saving || proj === origProj} className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
+            <Save size={11} /> Save
+          </button>
+        </div>
+        <textarea
+          value={proj}
+          onChange={(e) => setProj(e.target.value)}
+          rows={10}
+          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+        />
+      </div>
+
+      {history.length > 0 && (
+        <div>
+          <div className="text-[12px] font-semibold text-[var(--text)] mb-1">history/</div>
+          <div className="text-[11px] font-mono text-[var(--muted)] flex flex-wrap gap-2">
+            {history.map((h) => <span key={h} className="px-2 py-0.5 rounded bg-[var(--surface)] border border-[var(--border)]">{h}</span>)}
+          </div>
+        </div>
+      )}
+
+      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+    </div>
   );
 }
 
@@ -240,110 +442,6 @@ function MarkdownTab() {
         )}
         {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
       </div>
-    </div>
-  );
-}
-
-// ── Lessons tab ───────────────────────────────────────────────────────────────
-
-function LessonsTab() {
-  const [lessons, setLessons] = useState<MemoryLesson[]>([]);
-  const [draft, setDraft] = useState("");
-  const [tags, setTags] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = () =>
-    api.memoryListLessons().then(setLessons).catch((e) => setError(String(e)));
-  useEffect(() => {
-    refresh();
-  }, []);
-
-  const create = async () => {
-    if (!draft.trim()) return;
-    try {
-      await api.memoryCreateLesson(
-        draft.trim(),
-        tags.split(",").map((t) => t.trim()).filter(Boolean),
-      );
-      setDraft("");
-      setTags("");
-      refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const del = async (id: number) => {
-    if (!confirm("Delete this lesson?")) return;
-    try {
-      await api.memoryDeleteLesson(id);
-      refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  return (
-    <div className="flex flex-col gap-3 h-[480px]">
-      <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder="Add a new lesson — a correction or preference Arzeh should remember…"
-          rows={3}
-          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
-        />
-        <div className="flex items-center gap-2 mt-2">
-          <input
-            value={tags}
-            onChange={(e) => setTags(e.target.value)}
-            placeholder="tags, comma, separated"
-            className="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
-          />
-          <button
-            onClick={create}
-            disabled={!draft.trim()}
-            className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]"
-          >
-            <Plus size={11} /> Add
-          </button>
-        </div>
-      </div>
-      <div className="flex-1 overflow-y-auto flex flex-col gap-2">
-        {lessons.length === 0 && (
-          <div className="text-center text-[var(--muted)]/60 text-[12px] py-6">No lessons yet</div>
-        )}
-        {lessons.map((l) => (
-          <div
-            key={l.id}
-            className="group flex items-start gap-2 border border-[var(--border)] bg-[var(--surface)] rounded-lg p-3"
-          >
-            <div className="flex-1 min-w-0">
-              <div className="text-[13px] text-[var(--text)] whitespace-pre-wrap break-words">{l.content}</div>
-              {l.tags.length > 0 && (
-                <div className="flex gap-1 mt-2">
-                  {l.tags.map((t) => (
-                    <span key={t} className="text-[10px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded">
-                      {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-              <div className="text-[10px] text-[var(--muted)]/40 mt-1">
-                {new Date(l.created_at * 1000).toLocaleString()}
-              </div>
-            </div>
-            <button
-              onClick={() => del(l.id)}
-              className="opacity-0 group-hover:opacity-100 text-[var(--muted)] hover:text-red-400 shrink-0"
-              title="Delete"
-            >
-              <Trash2 size={13} />
-            </button>
-          </div>
-        ))}
-      </div>
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
     </div>
   );
 }

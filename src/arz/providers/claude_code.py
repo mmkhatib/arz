@@ -42,6 +42,7 @@ class ClaudeCodeProvider(LLMProvider):
         system_prompt: str | None = None,
         history_messages: list[dict] | None = None,
         env_extra: dict[str, str] | None = None,
+        permission_mode: str | None = None,
     ) -> None:
         self._client = ClaudeInteractiveClient(
             binary=_resolve_binary(),
@@ -50,6 +51,7 @@ class ClaudeCodeProvider(LLMProvider):
             system_prompt=system_prompt,
             history_messages=history_messages,
             env_extra=env_extra,
+            permission_mode=permission_mode,
         )
 
     async def start(self) -> None:

@@ -19,8 +19,8 @@ _CODEX_BIN = "codex"
 _STDOUT_LIMIT = 10 * 1024 * 1024
 _TURN_TIMEOUT = 7200.0
 
-# Event types that carry the assistant's text reply
-_TEXT_EVENT_TYPES = {"agent_message", "assistant_message", "message"}
+# item.type values inside item.completed events that carry assistant text
+_TEXT_ITEM_TYPES = {"agent_message", "assistant_message", "message"}
 
 
 def _resolve_binary() -> str:
@@ -57,11 +57,13 @@ class CodexProvider(LLMProvider):
         model: str | None = None,
         work_dir: str | Path | None = None,
         env_extra: dict[str, str] | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._binary: str | None = None  # resolved lazily in start()
         self._model = model or ""
         self._work_dir = Path(work_dir) if work_dir else Path.home()
         self._env_extra = env_extra or {}
+        self._system_prompt = (system_prompt or "").strip()
         self._process: asyncio.subprocess.Process | None = None
 
     async def start(self) -> None:
@@ -93,11 +95,20 @@ class CodexProvider(LLMProvider):
             "--full-auto",
             "--json",
             "--color", "never",
+            "--skip-git-repo-check",
             "-C", str(self._work_dir),
         ]
         if self._model and not self._model.startswith("claude-"):
             argv += ["-m", self._model]
-        argv.append(message)
+        # Codex has no native system-prompt flag, so prepend it as a wrapper.
+        # The runtime treats `<system>…</system>` as instructions; modern
+        # frontier models honor this.
+        prompt = (
+            f"<system>\n{self._system_prompt}\n</system>\n\n{message}"
+            if self._system_prompt
+            else message
+        )
+        argv.append(prompt)
 
         env = {**os.environ, **self._env_extra}
         process = await asyncio.create_subprocess_exec(
@@ -138,18 +149,17 @@ class CodexProvider(LLMProvider):
                     continue
 
                 etype = event.get("type", "")
-                emsg = event.get("message", "") or event.get("msg", "")
 
-                if etype in _TEXT_EVENT_TYPES and emsg:
-                    # Some events wrap message as an object with content blocks
-                    if isinstance(emsg, str):
-                        yield LLMEvent(kind="text_chunk", text=emsg)
-                    elif isinstance(emsg, list):
-                        for block in emsg:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                yield LLMEvent(kind="text_chunk", text=block.get("text", ""))
-                elif etype == "error" and emsg:
-                    yield LLMEvent(kind="text_chunk", text=f"[codex error] {emsg}\n")
+                if etype == "item.completed":
+                    item = event.get("item") or {}
+                    if isinstance(item, dict) and item.get("type") in _TEXT_ITEM_TYPES:
+                        text = item.get("text", "")
+                        if text:
+                            yield LLMEvent(kind="text_chunk", text=text)
+                elif etype == "error":
+                    emsg = event.get("message", "") or event.get("msg", "")
+                    if emsg:
+                        yield LLMEvent(kind="text_chunk", text=f"[codex error] {emsg}\n")
 
         finally:
             if process.returncode is None:

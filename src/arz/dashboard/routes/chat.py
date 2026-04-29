@@ -14,6 +14,11 @@ from arz.acp.client import AcpError
 from arz.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
 from arz.dashboard.sse import sse_chunk, sse_complete, sse_error, sse_permission_request, sse_tool_call, sse_tool_result
 from arz.dashboard.token_auth import require_token
+from arz.hooks import get_hook_manager
+from arz.lessons import get_lesson_store
+from arz.memory.files import get_memory_files
+from arz.prompts.loader import resolve_system_prompt
+from arz.subagents import get_subagent_manager
 from arz.providers.base import LLMProvider
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
@@ -25,22 +30,41 @@ router = APIRouter(dependencies=[Depends(require_token)])
 _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
 
-def _make_provider(config: object, session_id: str, history: list[dict] | None, session_work_dir: str | None = None, provider_name_override: str | None = None) -> LLMProvider:
+_APPROVAL_TO_CLAUDE = {
+    "normal": None,                # default behavior
+    "trust_reads": "acceptEdits",  # auto-accept edits, ask for risky
+    "trust": "bypassPermissions",  # never ask
+    "yolo": "bypassPermissions",
+}
+
+
+def _make_provider(
+    config: object,
+    session_id: str,
+    history: list[dict] | None,
+    session_work_dir: str | None = None,
+    provider_name_override: str | None = None,
+    model_override: str | None = None,
+    approval_mode: str = "normal",
+) -> LLMProvider:
     """Factory: build the right provider for this session."""
     from arz.config.schema import ArzConfig
     assert isinstance(config, ArzConfig)
 
     provider_name = provider_name_override or config.provider.name
-    model = config.provider.model
+    model = model_override or config.provider.model
     work_dir = Path(session_work_dir) if session_work_dir else (_WORKSPACE_ROOT / session_id)
+    # Resolve the steered prompt: per-config override falls back to bundled.
+    system_prompt = resolve_system_prompt(config.dashboard.system_prompt or None)
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
         return ClaudeCodeProvider(
             model=model,
             work_dir=work_dir,
-            system_prompt=config.dashboard.system_prompt or None,
+            system_prompt=system_prompt or None,
             history_messages=history,
+            permission_mode=_APPROVAL_TO_CLAUDE.get(approval_mode),
         )
 
     if provider_name == "kiro-cli":
@@ -49,7 +73,7 @@ def _make_provider(config: object, session_id: str, history: list[dict] | None, 
 
     if provider_name == "codex":
         from arz.providers.codex import CodexProvider
-        return CodexProvider(model=model, work_dir=work_dir)
+        return CodexProvider(model=model, work_dir=work_dir, system_prompt=system_prompt or None)
 
     raise ValueError(f"Unknown provider: {provider_name!r}")
 
@@ -96,11 +120,23 @@ async def _stream_response(
                 if request_id:
                     mode = (session_modes or {}).get(session_id, "normal")
                     tool_name = str(event.text or "")
+                    hooks = get_hook_manager()
+                    # Hard-deny: surface a destructive command before we even ask.
+                    raw_input = str(event.tool_input or "")
+                    if tool_name == "Bash":
+                        rule = hooks.evaluate_command(raw_input)
+                        if rule and rule.severity == "block":
+                            await provider.reject_tool(request_id)
+                            yield sse_chunk(f"\n⚠️ blocked: {rule.reason}\n")
+                            continue
                     # trust/yolo: auto-approve all
                     # trust_reads: auto-approve read-only tools
+                    # hooks.auto_approve_tools: configured allowlist
                     if mode in ("trust", "yolo") or (yolo_sessions is not None and session_id in yolo_sessions):
                         await provider.approve_tool(request_id)
                     elif mode == "trust_reads" and tool_name in READ_ONLY_TOOLS:
+                        await provider.approve_tool(request_id)
+                    elif hooks.auto_approves(tool_name):
                         await provider.approve_tool(request_id)
                     elif pending_approvals is not None:
                         loop = asyncio.get_event_loop()
@@ -180,20 +216,51 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         except Exception:
             log.exception("Auto-recall failed; continuing without context injection")
 
+    # Auto-inject memory files (preferences + projects, ~3k chars total).
+    try:
+        memory_block = get_memory_files().render_for_prompt()
+        if memory_block:
+            message = f"{memory_block}\n\n{message}"
+    except Exception:
+        log.exception("Memory file injection failed; continuing without it")
+
+    # Auto-inject lessons (always-on; cheap; capped at ~6k chars).
+    try:
+        lessons_block = get_lesson_store().render_for_prompt(message)
+        if lessons_block:
+            message = f"{lessons_block}\n\n{message}"
+    except Exception:
+        log.exception("Lesson injection failed; continuing without it")
+
+    # Inject any completed subagent results that landed since the last turn.
+    try:
+        pending = get_subagent_manager().pop_pending_for(session_id)
+        if pending:
+            blocks: list[str] = []
+            for rec in pending:
+                blocks.append(
+                    f"[subagent:{rec.agent_name} status={rec.status}]\n{rec.result}"
+                )
+            message = "\n\n".join(blocks) + "\n\n" + message
+    except Exception:
+        log.exception("Subagent injection failed; continuing without it")
+
     history: list[dict] | None = None
     if session and session.messages:
         history = [{"role": m.role, "text": m.text} for m in session.messages]
     session_map: SessionMap = request.app.state.session_map
     session_work_dir = getattr(session, "work_dir", None)
 
-    # Per-session provider overrides global config
+    # Per-session provider/model overrides global config
     effective_provider_name = getattr(session, "provider", None) or cfg.provider.name
+    effective_model = getattr(session, "model", None) or cfg.provider.model
+    effective_approval = getattr(session, "approval_mode", "normal") or "normal"
 
     # Look up any prior provider session ID for native resume
     provider_sid = session_map.get(session_id)
 
     def _factory() -> LLMProvider:
-        p = _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name)
+        p = _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval)
         if provider_sid:
             p.set_resume_session_id(provider_sid)
         return p
@@ -209,8 +276,9 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             detail=f"Provider {effective_provider_name!r} unavailable: {e}",
         )
 
-    # Auto-evict if provider was started with a different model than current config.
-    desired_model = cfg.provider.model
+    # Auto-evict if provider was started with a different model than the
+    # session's effective model.
+    desired_model = effective_model
     if provider.current_model is not None and provider.current_model != desired_model:
         log.info(
             "Model mismatch — evicting and recreating provider",
@@ -224,7 +292,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         try:
             provider = await pool.activate(
                 session_id,
-                lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name),
+                lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval),
             )
         except (AcpError, FileNotFoundError, ValueError) as e:
             raise HTTPException(

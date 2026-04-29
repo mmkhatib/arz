@@ -3,6 +3,7 @@ import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Roc
 import type { UploadedFile } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
+import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
 
 export type ApprovalMode = "normal" | "trust_reads" | "trust" | "yolo";
 
@@ -13,22 +14,6 @@ const APPROVAL_OPTIONS: { mode: ApprovalMode; label: string; icon: React.ReactNo
   { mode: "yolo",        label: "YOLO",   icon: <Rocket size={13} />,      hint: "No approval prompts at all",     color: "text-red-400" },
 ];
 
-const KNOWN_MODELS = [
-  { id: "claude-opus-4-7",           label: "Claude Opus 4.7" },
-  { id: "claude-sonnet-4-6",         label: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
-  { id: "claude-opus-4-5",           label: "Claude Opus 4.5" },
-];
-
-const CODEX_MODELS = [
-  { id: "gpt-5.4",       label: "GPT-5.4" },
-  { id: "gpt-5.5",       label: "GPT-5.5" },
-  { id: "gpt-5.4-mini",  label: "GPT-5.4 Mini" },
-  { id: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
-  { id: "gpt-5.2",       label: "GPT-5.2" },
-];
-
-const CODEX_DEFAULT = "gpt-5.4";
 
 const INPUT_MIN_H = 44;
 const INPUT_MAX_H = 140;
@@ -42,20 +27,18 @@ interface Props {
   disabled: boolean;
   isRunning?: boolean;
   contextPct?: number;
+  contextEstimated?: boolean;
   model?: string;
   provider?: string;
   approvalMode?: ApprovalMode;
   onApprovalModeChange?: (mode: ApprovalMode) => void;
   onModelChange?: (model: string) => void;
+  agent?: string | null;
+  agents?: { name: string; description?: string; provider?: string }[];
+  onAgentChange?: (agent: string | null) => void;
   /** Increment to request focus on the textarea (e.g., re-clicking the active session). */
   focusSignal?: number;
 }
-
-const PROVIDER_LABELS: Record<string, string> = {
-  "kiro-cli": "Kiro CLI",
-  "codex": "OpenAI Codex",
-  "anthropic": "Anthropic API",
-};
 
 export default function InputBar({
   onSend,
@@ -64,11 +47,15 @@ export default function InputBar({
   disabled,
   isRunning = false,
   contextPct = 0,
+  contextEstimated = false,
   model,
   provider,
   approvalMode = "normal",
   onApprovalModeChange,
   onModelChange,
+  agent,
+  agents = [],
+  onAgentChange,
   focusSignal,
 }: Props) {
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
@@ -110,6 +97,7 @@ export default function InputBar({
   });
   const [approvalOpen, setApprovalOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
 
   useEffect(() => {
     if (!disabled && !isRunning) textareaRef.current?.focus();
@@ -200,13 +188,18 @@ export default function InputBar({
   };
 
   const activeApproval = APPROVAL_OPTIONS.find((o) => o.mode === approvalMode) ?? APPROVAL_OPTIONS[0];
-  const isCodex = provider === "codex";
-  const effectiveModel = isCodex
-    ? (!model || model.startsWith("claude-") ? CODEX_DEFAULT : model)
-    : model;
-  const activeModel = isCodex
-    ? CODEX_MODELS.find((m) => m.id === effectiveModel)
-    : KNOWN_MODELS.find((m) => m.id === effectiveModel);
+  const providerModels = modelsForProvider(provider);
+  const effectiveModel = isModelValid(provider, model) ? (model as string) : defaultModelForProvider(provider);
+  const activeModel = providerModels.find((m) => m.id === effectiveModel);
+
+  // Persist the resolved default up to the session so the picker, the badge,
+  // and the provider all agree.
+  useEffect(() => {
+    if (effectiveModel && effectiveModel !== model) {
+      onModelChange?.(effectiveModel);
+    }
+  }, [effectiveModel, model, onModelChange]);
+
   const hasInput = value.trim().length > 0;
 
   return (
@@ -298,49 +291,89 @@ export default function InputBar({
         <div className="flex items-center justify-between px-2.5 pb-2 pt-0.5 gap-2">
           {/* Left: model + approval mode + context ring */}
           <div className="flex items-center gap-0.5 min-w-0 overflow-visible flex-1">
-            {/* Model picker (Claude/Codex) or static provider label */}
-            {provider && provider !== "claude-code" && provider !== "codex" ? (
-              <div className="h-7 px-2 flex items-center gap-1.5 mr-2">
-                <ContextRing pct={contextPct} />
-                <span className="text-[12px] font-mono text-[var(--cedar)] whitespace-nowrap">
-                  {PROVIDER_LABELS[provider] ?? provider}
-                </span>
+            {/* Model picker — every provider with onModelChange gets one */}
+            {onModelChange ? (
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); }}
+                  className="h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center gap-1.5 transition-all whitespace-nowrap mr-2"
+                  title="Switch model"
+                >
+                  <ContextRing pct={contextPct} estimated={contextEstimated} />
+                  <span className="text-[10px] text-[var(--cedar)] mr-1">{PROVIDER_LABELS[provider ?? ""] ?? provider ?? ""}</span>
+                  <span className="truncate max-w-[180px]">
+                    {activeModel?.label ?? effectiveModel ?? "Model"}
+                  </span>
+                </button>
+                <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
+                  <div className="px-1 py-0.5">
+                    <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">{PROVIDER_LABELS[provider ?? ""] ?? "Model"}</div>
+                    {providerModels.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => {
+                          onModelChange?.(m.id);
+                          setModelOpen(false);
+                        }}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                      >
+                        <span className="w-3 shrink-0">
+                          {m.id === effectiveModel && <Check size={12} className="text-[var(--cedar)]" />}
+                        </span>
+                        <span className={m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
+                          {m.label}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </Popover>
               </div>
             ) : (
-            <div className="relative shrink-0">
-              <button
-                onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); }}
-                className="h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center gap-1.5 transition-all whitespace-nowrap mr-2"
-                title="Switch model"
-              >
-                <ContextRing pct={contextPct} />
-                <span className="truncate max-w-[180px]">
-                  {activeModel?.label ?? effectiveModel ?? "Model"}
+              <div className="h-7 px-2 flex items-center gap-1.5 mr-2">
+                <ContextRing pct={contextPct} estimated={contextEstimated} />
+                <span className="text-[12px] font-mono text-[var(--cedar)] whitespace-nowrap">
+                  {PROVIDER_LABELS[provider ?? ""] ?? provider}
                 </span>
-              </button>
-              <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
-                <div className="px-1 py-0.5">
-                  <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Model</div>
-                  {(isCodex ? CODEX_MODELS : KNOWN_MODELS).map((m) => (
+              </div>
+            )}
+
+            {/* Agent picker */}
+            {onAgentChange && (
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => { setAgentOpen((v) => !v); setModelOpen(false); setApprovalOpen(false); }}
+                  className="h-7 px-2 rounded-lg text-[12px] font-mono flex items-center gap-1 transition-all hover:bg-[var(--surface)] whitespace-nowrap text-[var(--muted)] hover:text-[var(--text)]"
+                  title="Switch agent"
+                >
+                  <span className="text-[10px]">🤖</span>
+                  <span className="truncate max-w-[120px]">{agent ?? "no agent"}</span>
+                </button>
+                <Popover open={agentOpen} onClose={() => setAgentOpen(false)}>
+                  <div className="px-1 py-0.5 min-w-[200px] max-h-[400px] overflow-y-auto">
+                    <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Agent (preset)</div>
                     <button
-                      key={m.id}
-                      onClick={() => {
-                        onModelChange?.(m.id);
-                        setModelOpen(false);
-                      }}
+                      onClick={() => { onAgentChange(null); setAgentOpen(false); }}
                       className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
                     >
-                      <span className="w-3 shrink-0">
-                        {m.id === effectiveModel && <Check size={12} className="text-[var(--cedar)]" />}
-                      </span>
-                      <span className={m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
-                        {m.label}
-                      </span>
+                      <span className="w-3 shrink-0">{!agent && <Check size={12} className="text-[var(--cedar)]" />}</span>
+                      <span className={!agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)] italic"}>(none)</span>
                     </button>
-                  ))}
-                </div>
-              </Popover>
-            </div>
+                    {agents.map((a) => (
+                      <button
+                        key={a.name}
+                        onClick={() => { onAgentChange(a.name); setAgentOpen(false); }}
+                        className="w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                      >
+                        <span className="w-3 shrink-0 mt-0.5">{a.name === agent && <Check size={12} className="text-[var(--cedar)]" />}</span>
+                        <span className="flex-1 min-w-0">
+                          <span className={a.name === agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>{a.name}</span>
+                          {a.description && <span className="block text-[10px] text-[var(--muted)]/60 truncate">{a.description}</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </Popover>
+              </div>
             )}
 
             {/* Approval mode picker */}

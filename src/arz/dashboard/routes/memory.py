@@ -167,3 +167,39 @@ async def search_memory(
                 continue
             hits.append(MemoryHit(key=key, content=content, score=0.0, source="markdown"))
     return hits[:k]
+
+
+# ── Memory files (preferences.md / projects.md / history) ───────────────────
+
+
+@router.get("/api/memory/files")
+async def list_memory_files() -> dict:
+    from arz.memory.files import get_memory_files
+    mf = get_memory_files()
+    return {
+        "preferences": mf.read("preferences.md"),
+        "projects": mf.read("projects.md"),
+        "history": mf.list_history(),
+    }
+
+
+@router.get("/api/memory/files/{name:path}")
+async def read_memory_file(name: str) -> dict:
+    from arz.memory.files import get_memory_files
+    try:
+        return {"name": name, "content": get_memory_files().read(name)}
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@router.put("/api/memory/files/{name:path}", status_code=204)
+async def write_memory_file(name: str, request: Request) -> None:
+    from arz.memory.files import get_memory_files
+    body = await request.json()
+    content = body.get("content")
+    if content is None:
+        raise HTTPException(status_code=422, detail="content required")
+    try:
+        get_memory_files().write(name, content)
+    except ValueError as e:
+        raise HTTPException(status_code=403, detail=str(e))

@@ -6,6 +6,7 @@ import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
+import ThemeDropdown from "./ThemeDropdown";
 import { formatTokens } from "@/utils/tokens";
 
 function ThinkingDots() {
@@ -225,11 +226,15 @@ export default function ChatPanel({
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
+  const [estimatedContext, setEstimatedContext] = useState(false);
   const [toolCalls, setToolCalls] = useState<{ callId: string; name: string; input: string }[]>([]);
   const [pendingApproval, setPendingApproval] = useState<{ requestId: string; title: string; toolInput: string } | null>(null);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
   const [settings, setSettings] = useState<{ model: string } | null>(null);
   const [sessionProvider, setSessionProvider] = useState<string | null>(null);
+  const [sessionModel, setSessionModel] = useState<string | null>(null);
+  const [sessionAgent, setSessionAgent] = useState<string | null>(null);
+  const [agents, setAgents] = useState<{ name: string; description?: string; provider?: string }[]>([]);
   const [workDir, setWorkDir] = useState("");
   const [compareTarget, setCompareTarget] = useState<{ prompt: string; baseline: string; baselineModel: string | null } | null>(null);
   const firstUserMsgRef = useRef<string>("");
@@ -248,6 +253,8 @@ export default function ChatPanel({
         setTitle(s.title);
         setWorkDir(s.work_dir ?? "");
         setSessionProvider(s.provider ?? null);
+        setSessionModel(s.model ?? null);
+        setSessionAgent(s.agent ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
         // Seed file paths from message history so the Files tab is pre-populated
         if (onSeedFiles) {
@@ -272,6 +279,9 @@ export default function ChatPanel({
 
   useEffect(() => {
     api.getSettings().then((s) => setSettings({ model: s.model })).catch(() => {});
+    api.listAgents().then((as) =>
+      setAgents(as.map((a) => ({ name: a.name, description: a.description, provider: a.provider })))
+    ).catch(() => {});
   }, []);
 
   // Auto-send a prompt stashed by "Open subagent task as new session"
@@ -289,15 +299,40 @@ export default function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
 
+  // Client-side context estimate when the provider doesn't report it.
+  // Approximation: ~4 chars/token, default 200k token window.
+  useEffect(() => {
+    if (contextPct > 0 && !estimatedContext) return;
+    const chars = messages.reduce((n, m) => n + (m.text?.length ?? 0), 0) + streamBuffer.length;
+    const estTokens = chars / 4;
+    const window = 200_000;
+    const pct = Math.min(99, (estTokens / window) * 100);
+    if (Math.abs(pct - contextPct) > 0.5) {
+      setContextPct(pct);
+      setEstimatedContext(true);
+    }
+  }, [messages, streamBuffer, contextPct, estimatedContext]);
+
   const handleApprovalModeChange = (mode: ApprovalMode) => {
     setApprovalMode(mode);
     api.setApprovalMode(sessionId, mode).catch(() => {});
   };
 
   const handleModelChange = (model: string) => {
-    setSettings((prev) => prev ? { ...prev, model } : { model });
-    api.saveSettings({ model })
-      .then(() => api.evictSession(sessionId))
+    setSessionModel(model);
+    api.setSessionModel(sessionId, model).catch(() => {});
+  };
+
+  const handleAgentChange = (agent: string | null) => {
+    setSessionAgent(agent);
+    api.setSessionAgent(sessionId, agent)
+      .then(() => api.getSession(sessionId))
+      .then((s) => {
+        // Picking an agent may change provider/model/approval — re-sync.
+        setSessionProvider(s.provider ?? null);
+        setSessionModel(s.model ?? null);
+        if (s.approval_mode) setApprovalMode(s.approval_mode);
+      })
       .catch(() => {});
   };
 
@@ -379,7 +414,10 @@ export default function ChatPanel({
           });
           onSseEvent?.("permission_request", chunk.title);
         } else if (chunk.type === "complete") {
-          if (chunk.context_pct) setContextPct(chunk.context_pct);
+          if (chunk.context_pct) {
+            setContextPct(chunk.context_pct);
+            setEstimatedContext(false);
+          }
           if (chunk.usage) turnUsage = chunk.usage;
           if (messages.length === 0 && fullText && firstUserMsgRef.current) {
             api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
@@ -461,6 +499,7 @@ export default function ChatPanel({
         />
         <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
+          <ThemeDropdown />
           <ExportMenu sessionId={sessionId} />
           {onToggleActivity && (
             <button
@@ -483,8 +522,8 @@ export default function ChatPanel({
       <div className="flex-1 overflow-y-auto px-6 py-6">
         {messages.length === 0 && !streaming && (
           <WelcomeView
-            model={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? settings?.model : undefined}
-            onModelChange={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? handleModelChange : undefined}
+            model={sessionModel ?? settings?.model}
+            onModelChange={handleModelChange}
             provider={sessionProvider ?? undefined}
             workDir={workDir}
             onWorkDirChange={handleWorkDirChange}
@@ -552,11 +591,15 @@ export default function ChatPanel({
         disabled={false}
         isRunning={streaming}
         contextPct={contextPct}
-        model={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? settings?.model : undefined}
+        contextEstimated={estimatedContext}
+        model={sessionModel ?? settings?.model}
         provider={sessionProvider ?? undefined}
         approvalMode={approvalMode}
         onApprovalModeChange={handleApprovalModeChange}
-        onModelChange={sessionProvider !== "kiro-cli" && sessionProvider !== "anthropic" ? handleModelChange : undefined}
+        onModelChange={handleModelChange}
+        agent={sessionAgent}
+        agents={agents}
+        onAgentChange={handleAgentChange}
         focusSignal={focusSignal}
       />
     </div>

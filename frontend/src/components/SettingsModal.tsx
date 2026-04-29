@@ -10,6 +10,7 @@ import {
 } from "./settings/primitives";
 import { useTheme, THEMES } from "@/hooks/useTheme";
 import type { ModePreference } from "@/hooks/useTheme";
+import { modelsForProvider, defaultModelForProvider, isModelValid } from "@/utils/models";
 
 interface Props {
   onClose?: () => void;
@@ -27,11 +28,13 @@ export default function SettingsModal({ onClose, variant = "modal" }: Props) {
   const [savedAt, setSavedAt] = useState(0);
 
   // Local-only buffers for fields with onBlur save semantics
-  const [model, setModel] = useState("");
+  const [, setModel] = useState("");
   const [botName, setBotName] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
+
+  const { colorTheme, mode: themeMode, setColorTheme, setMode: setThemeMode } = useTheme();
 
   useEffect(() => {
     api
@@ -84,7 +87,6 @@ export default function SettingsModal({ onClose, variant = "modal" }: Props) {
     );
   }
 
-  const { colorTheme, mode: themeMode, setColorTheme, setMode: setThemeMode } = useTheme();
   const justSaved = Date.now() - savedAt < 1500;
 
   return (
@@ -117,16 +119,27 @@ export default function SettingsModal({ onClose, variant = "modal" }: Props) {
             value={settings.provider}
             options={PROVIDER_OPTIONS}
             optionLabels={PROVIDER_LABELS}
-            onChange={(v) => patch({ provider: v as Settings["provider"] })}
+            onChange={(v) => {
+              const next = v as Settings["provider"];
+              const validForNext = isModelValid(next, settings.model);
+              const newModel = validForNext ? settings.model : defaultModelForProvider(next);
+              patch({ provider: next, model: newModel });
+              setModel(newModel);
+            }}
           />
-          <SettingsInput
-            label="Model"
-            description="Provider-specific model identifier (e.g. claude-opus-4-7, claude-sonnet-4-6)"
-            value={model}
-            onChange={setModel}
-            onBlur={() => model !== settings.model && patch({ model: model.trim() })}
-            placeholder="claude-opus-4-7"
-          />
+          {(() => {
+            const opts = modelsForProvider(settings.provider);
+            return (
+              <SettingsSelect
+                label="Model"
+                description={`Models available for ${settings.provider}.`}
+                value={isModelValid(settings.provider, settings.model) ? settings.model : defaultModelForProvider(settings.provider)}
+                options={opts.map((m) => m.id)}
+                optionLabels={opts.map((m) => m.label)}
+                onChange={(v) => { setModel(v); patch({ model: v }); }}
+              />
+            );
+          })()}
         </SettingsCard>
       </SettingsSection>
 

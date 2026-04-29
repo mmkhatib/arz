@@ -11,6 +11,8 @@ export interface SessionSummary {
   color?: number | null;
   work_dir?: string | null;
   provider?: string | null;
+  model?: string | null;
+  agent?: string | null;
   approval_mode?: "normal" | "trust_reads" | "trust" | "yolo";
 }
 
@@ -334,6 +336,17 @@ export const api = {
   listMcpServers: () => request<McpServer[]>("/mcp/servers"),
   toggleMcpServer: (source: string, name: string) =>
     request<McpServer>(`/mcp/servers/${encodeURIComponent(source)}/${encodeURIComponent(name)}/toggle`, { method: "POST" }),
+  installMcp: (body: { source: string; name?: string; command?: string; args?: string[]; env?: Record<string, string> }, signal?: AbortSignal): Promise<Response> =>
+    fetch(`${BASE}/mcp/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    }),
+  deleteMcpRegistry: async (name: string): Promise<void> => {
+    const res = await fetch(`${BASE}/mcp/registry/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
 
   // ── Prompts ──
   listPrompts: () => request<PromptTemplate[]>("/prompts"),
@@ -352,6 +365,119 @@ export const api = {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ prompt, provider, model }),
+    }),
+
+  // ── LLM Installer ──
+  getInstallerStatus: () => request<{
+    clis: { name: string; binary: string; description: string; installed: boolean; path?: string | null; docs_url: string; installable_here: boolean }[];
+    model_catalog: { id: string; runtime: string; name: string; label: string; description: string; size_gb: number }[];
+    ollama_installed_models: { name: string; id: string; size: string }[];
+  }>("/installer/status"),
+
+  installTarget: (target: string, signal?: AbortSignal): Promise<Response> =>
+    fetch(`${BASE}/installer/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target }),
+      signal,
+    }),
+
+  // ── Lessons (auto-injected on every chat turn) ──
+  listLessons: () =>
+    request<{ id: number; category: string; text: string; pinned: boolean; created_at: number }[]>("/lessons"),
+  addLesson: (category: string, text: string, pinned = false) =>
+    request<{ id: number; category: string; text: string; pinned: boolean; created_at: number }>(
+      "/lessons",
+      { method: "POST", body: JSON.stringify({ category, text, pinned }) },
+    ),
+  deleteLesson: async (id: number): Promise<void> => {
+    const res = await fetch(`${BASE}/lessons/${id}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  pinLesson: (id: number, pinned: boolean) =>
+    request<{ id: number; pinned: boolean }>(
+      `/lessons/${id}/pin`,
+      { method: "POST", body: JSON.stringify({ pinned }) },
+    ),
+
+  // ── Memory files (preferences.md / projects.md / history) ──
+  listMemoryFiles: () =>
+    request<{ preferences: string; projects: string; history: string[] }>("/memory/files"),
+  readMemoryFile: (name: string) =>
+    request<{ name: string; content: string }>(`/memory/files/${encodeURIComponent(name)}`),
+  writeMemoryFile: async (name: string, content: string): Promise<void> => {
+    const res = await fetch(`${BASE}/memory/files/${encodeURIComponent(name)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  // ── Hooks config ──
+  getHooks: () => request<{
+    auto_approve_tools: string[];
+    auto_replies: { pattern: string; reply: string }[];
+    deny: { pattern: string; reason: string; severity?: string }[];
+  }>("/hooks"),
+  putHooks: async (body: object): Promise<void> => {
+    const res = await fetch(`${BASE}/hooks`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  // ── Subagents ──
+  listSubagents: () =>
+    request<{ id: string; parent_session_id: string; agent_name: string; prompt: string;
+              status: string; result: string; started_at: number; finished_at: number }[]>("/subagents"),
+  spawnSubagent: (parent_session_id: string, agent_name: string, prompt: string) =>
+    request<{ id: string; status: string }>("/subagents", {
+      method: "POST",
+      body: JSON.stringify({ parent_session_id, agent_name, prompt }),
+    }),
+
+  // ── Channels ──
+  listChannels: () =>
+    request<{ id: string; name: string; members: { agent: string; listen_mode: string; approval: string }[];
+              messages: { id: number; from: string; text: string; ts: number; mentions: string[] }[] }[]>("/channels"),
+  createChannel: (name: string, members: string[] = []) =>
+    request<{ id: string; name: string }>("/channels", {
+      method: "POST",
+      body: JSON.stringify({ name, members }),
+    }),
+  deleteChannel: async (slug: string): Promise<void> => {
+    const res = await fetch(`${BASE}/channels/${slug}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  postToChannel: (slug: string, from: string, text: string) =>
+    request<{ id: number; from: string; text: string }>(
+      `/channels/${slug}/post`,
+      { method: "POST", body: JSON.stringify({ from, text }) },
+    ),
+
+  // ── Heartbeat ──
+  getHeartbeat: () => request<{ path: string; content: string }>("/heartbeat"),
+  putHeartbeat: async (content: string): Promise<void> => {
+    const res = await fetch(`${BASE}/heartbeat`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  // ── Task runner ──
+  listTasks: () =>
+    request<{ id: string; spec: string; agent: string; status: string;
+              steps: { n: number; text: string; status: string; result: string }[];
+              verdict: string; started_at: number; finished_at: number }[]>("/taskrun"),
+  kickoffTask: (spec: string, agent = "general") =>
+    request<{ id: string; status: string }>("/taskrun", {
+      method: "POST",
+      body: JSON.stringify({ spec, agent }),
     }),
 
   uploadFiles: async (sessionId: string, files: File[]): Promise<UploadedFile[]> => {
@@ -427,6 +553,22 @@ export const api = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
+    });
+  },
+
+  async setSessionModel(sessionId: string, model: string): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/model`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+  },
+
+  async setSessionAgent(sessionId: string, agent: string | null): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/agent`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agent ?? "" }),
     });
   },
 

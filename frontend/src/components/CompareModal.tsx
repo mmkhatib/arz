@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { GitCompare, Square, Copy, Check } from "lucide-react";
-
-const KNOWN_MODELS = [
-  { id: "claude-opus-4-7", label: "Claude Opus 4.7" },
-  { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
-];
+import { modelsForProvider, defaultModelForProvider, PROVIDER_LABELS, CLAUDE_MODELS, CODEX_MODELS, KIRO_MODELS, ANTHROPIC_MODELS } from "@/utils/models";
 
 interface Props {
   prompt: string;
@@ -16,10 +11,37 @@ interface Props {
   onClose: () => void;
 }
 
+interface ProviderOption {
+  id: string;
+  label: string;
+  models: { id: string; label: string }[];
+}
+
+const ALL_PROVIDERS: ProviderOption[] = [
+  { id: "claude-code", label: PROVIDER_LABELS["claude-code"], models: CLAUDE_MODELS },
+  { id: "codex",       label: PROVIDER_LABELS["codex"],       models: CODEX_MODELS },
+  { id: "kiro-cli",    label: PROVIDER_LABELS["kiro-cli"],    models: KIRO_MODELS },
+  { id: "anthropic",   label: PROVIDER_LABELS["anthropic"],   models: ANTHROPIC_MODELS },
+];
+
 export default function CompareModal({ prompt, baselineModel, baselineReply, provider, onClose }: Props) {
-  const [altModel, setAltModel] = useState(
-    baselineModel === "claude-opus-4-7" ? "claude-sonnet-4-6" : "claude-opus-4-7",
-  );
+  const [altProvider, setAltProvider] = useState<string>(provider || "claude-code");
+  const altModels = modelsForProvider(altProvider);
+  const [altModel, setAltModel] = useState<string>(() => {
+    // Default to a different model from the baseline within the same provider when possible
+    if (provider === altProvider && baselineModel) {
+      const other = altModels.find((m) => m.id !== baselineModel);
+      if (other) return other.id;
+    }
+    return defaultModelForProvider(altProvider);
+  });
+
+  // If user switches provider, ensure altModel is valid for the new provider
+  useEffect(() => {
+    if (!altModels.some((m) => m.id === altModel)) {
+      setAltModel(defaultModelForProvider(altProvider));
+    }
+  }, [altProvider, altModels, altModel]);
   const [streaming, setStreaming] = useState(false);
   const [altReply, setAltReply] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -43,7 +65,7 @@ export default function CompareModal({ prompt, baselineModel, baselineReply, pro
     setError(null);
     abortRef.current = new AbortController();
     try {
-      const res = await api.compareStream(prompt, provider, altModel);
+      const res = await api.compareStream(prompt, altProvider, altModel);
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       for await (const chunk of api.streamChat(res)) {
         if (chunk.type === "text_chunk" && chunk.text) {
@@ -118,12 +140,24 @@ export default function CompareModal({ prompt, baselineModel, baselineReply, pro
           <div className="flex flex-col min-h-0">
             <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)] bg-[var(--surface)] gap-2">
               <select
+                value={altProvider}
+                onChange={(e) => setAltProvider(e.target.value)}
+                disabled={streaming}
+                className="bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)]"
+                title="Provider"
+              >
+                {ALL_PROVIDERS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </select>
+              <select
                 value={altModel}
                 onChange={(e) => setAltModel(e.target.value)}
                 disabled={streaming}
                 className="bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-[12px] text-[var(--text)]"
+                title="Model"
               >
-                {KNOWN_MODELS.map((m) => (
+                {altModels.map((m) => (
                   <option key={m.id} value={m.id}>{m.label}</option>
                 ))}
               </select>

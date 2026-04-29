@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ShortcutsOverlay from "./ShortcutsOverlay";
 import {
   MessageSquare,
   Brain,
@@ -11,11 +12,13 @@ import {
   LayoutDashboard,
   Bot,
   Puzzle,
+  Cpu,
+  Activity,
 } from "lucide-react";
 
 const STORAGE_KEY = "arz:nav-collapsed";
 
-export type NavSection = "overview" | "chat" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "settings" | "shortcuts";
+export type NavSection = "overview" | "chat" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
 
 interface Props {
   active: NavSection;
@@ -48,16 +51,32 @@ const ENTRIES: NavEntry[] = [
   },
   { id: "analytics", label: "Analytics", icon: <BarChart3 size={16} /> },
   { id: "capabilities", label: "Capabilities", icon: <Puzzle size={16} /> },
+  { id: "autonomy", label: "Autonomy", icon: <Activity size={16} /> },
+  { id: "models", label: "Models", icon: <Cpu size={16} /> },
   { id: "settings", label: "Settings", icon: <SettingsIcon size={16} /> },
-  { id: "shortcuts", label: "Shortcuts", icon: <Keyboard size={16} /> },
 ];
 
 export default function NavBar({ active, cronBadge, onSelect }: Props) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === "1");
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
   }, [collapsed]);
+
+  // Global ? hotkey opens shortcuts modal
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "?" && !e.ctrlKey && !e.metaKey) {
+        const tag = (e.target as HTMLElement)?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        e.preventDefault();
+        setShortcutsOpen(true);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   return (
     <nav
@@ -102,9 +121,17 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
         })}
       </div>
 
-      <div className="px-3 py-2 text-[10px] text-[var(--muted)]/60 border-t border-[var(--border)]">
-        {!collapsed && <span>arz v0.1.0</span>}
+      <div className="px-2 py-2 border-t border-[var(--border)] flex items-center justify-between gap-2">
+        <button
+          onClick={() => setShortcutsOpen(true)}
+          title="Keyboard shortcuts (?)"
+          className="w-7 h-7 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
+        >
+          <Keyboard size={14} />
+        </button>
+        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.1.0</span>}
       </div>
+      {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
     </nav>
   );
 }

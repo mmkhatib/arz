@@ -57,6 +57,8 @@ class Session:
     color: int | None = None
     work_dir: str | None = None
     provider: str | None = None
+    model: str | None = None
+    agent: str | None = None
     approval_mode: str = "normal"  # "normal" | "trust_reads" | "trust" | "yolo"
 
     def add_message(self, role: Literal["user", "assistant", "system"], text: str) -> Message:
@@ -81,6 +83,8 @@ class Session:
             "color": self.color,
             "work_dir": self.work_dir,
             "provider": self.provider,
+            "model": self.model,
+            "agent": self.agent,
             "approval_mode": self.approval_mode,
         }
 
@@ -99,5 +103,7 @@ class Session:
             color=d.get("color"),
             work_dir=d.get("work_dir"),
             provider=d.get("provider"),
+            model=d.get("model"),
+            agent=d.get("agent"),
             approval_mode=d.get("approval_mode", "normal"),
         )

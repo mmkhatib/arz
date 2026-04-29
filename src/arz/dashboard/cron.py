@@ -249,3 +249,19 @@ class CronRegistry:
             last_status=row[7],
             last_session_id=row[8],
         )
+
+
+# Process-wide accessor — set by the gateway at startup so tools running
+# in the same process can find the registry without lugging around app.state.
+_singleton: "CronRegistry | None" = None
+
+
+def set_cron_registry(registry: "CronRegistry") -> None:
+    global _singleton
+    _singleton = registry
+
+
+def get_cron_registry() -> "CronRegistry":
+    if _singleton is None:
+        raise RuntimeError("CronRegistry not initialised")
+    return _singleton

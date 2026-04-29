@@ -57,6 +57,7 @@ class ClaudeInteractiveClient:
         system_prompt: str | None = None,
         history_messages: list[dict] | None = None,
         env_extra: dict[str, str] | None = None,
+        permission_mode: str | None = None,
     ) -> None:
         self._binary = shutil.which(binary) or binary
         self._model = model
@@ -64,6 +65,7 @@ class ClaudeInteractiveClient:
         self._system_prompt = system_prompt
         self._history_messages = history_messages or []
         self._env_extra = env_extra or {}
+        self._permission_mode = permission_mode
         self._process: asyncio.subprocess.Process | None = None
         self._session_id: str | None = None
         self._resume_session_id: str | None = None
@@ -102,6 +104,8 @@ class ClaudeInteractiveClient:
         ]
         if self._model:
             argv += ["--model", self._model]
+        if getattr(self, "_permission_mode", None):
+            argv += ["--permission-mode", self._permission_mode]
         if resume_sid and _claude_session_file_exists(resume_sid):
             argv += ["--resume", resume_sid]
             logger.info("Attempting Claude Code session resume: %s", resume_sid)
