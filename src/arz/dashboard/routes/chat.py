@@ -85,7 +85,12 @@ def _make_provider(
 
     if provider_name == "codex":
         from arz.providers.codex import CodexProvider
-        return CodexProvider(model=model, work_dir=work_dir, system_prompt=system_prompt or None)
+        return CodexProvider(
+            model=model,
+            work_dir=work_dir,
+            system_prompt=system_prompt or None,
+            history_messages=history,
+        )
 
     raise ValueError(f"Unknown provider: {provider_name!r}")
 

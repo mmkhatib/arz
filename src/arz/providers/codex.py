@@ -58,13 +58,23 @@ class CodexProvider(LLMProvider):
         work_dir: str | Path | None = None,
         env_extra: dict[str, str] | None = None,
         system_prompt: str | None = None,
+        history_messages: list[dict] | None = None,
     ) -> None:
         self._binary: str | None = None  # resolved lazily in start()
         self._model = model or ""
         self._work_dir = Path(work_dir) if work_dir else Path.home()
         self._env_extra = env_extra or {}
         self._system_prompt = (system_prompt or "").strip()
+        # Last N user/assistant turns. Used (a) as fallback context when we
+        # don't yet have a codex thread to resume and (b) to bridge across
+        # gateway restarts before resume kicks in.
+        self._history: list[dict] = history_messages or []
         self._process: asyncio.subprocess.Process | None = None
+        # Codex threads are persistent if we pass them through `exec resume`.
+        # We capture the thread_id from the first run's `thread.started` event
+        # and use it on every subsequent turn so codex remembers context.
+        self._thread_id: str | None = None
+        self._resume_thread_id: str | None = None
 
     async def start(self) -> None:
         self._binary = _resolve_binary()  # raises FileNotFoundError if not installed
@@ -83,15 +93,55 @@ class CodexProvider(LLMProvider):
     def is_alive(self) -> bool:
         return True
 
+    @property
+    def session_id(self) -> str | None:
+        return self._thread_id
+
+    def set_resume_session_id(self, sid: str) -> None:
+        self._resume_thread_id = sid
+
     def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         return self._run(message)
+
+    def _format_history(self) -> str:
+        """Render the last few turns as a transcript.
+
+        Used only on the FIRST turn of a session (when we don't yet have a
+        codex thread_id to resume). Caps total length to avoid blowing
+        codex's prompt budget.
+        """
+        if not self._history:
+            return ""
+        # Trim to the last N=10 messages and cap total chars.
+        recent = self._history[-10:]
+        max_chars = 8000
+        lines: list[str] = []
+        used = 0
+        for m in recent:
+            role = (m.get("role") or "user").upper()
+            text = (m.get("text") or "").strip()
+            if not text:
+                continue
+            line = f"{role}: {text}"
+            if used + len(line) + 1 > max_chars:
+                break
+            lines.append(line)
+            used += len(line) + 1
+        return "\n".join(lines)
 
     async def _run(self, message: str) -> AsyncIterator[LLMEvent]:  # type: ignore[return]
         if not self._binary:
             raise RuntimeError("CodexProvider.start() was not called")
 
-        argv = [
-            self._binary, "exec",
+        # Reuse a captured thread_id (this provider's own previous turns)
+        # OR a thread_id we were told to resume across gateway restarts.
+        thread_id = self._thread_id or self._resume_thread_id
+        argv = [self._binary, "exec"]
+        if thread_id:
+            # `codex exec resume <id>` continues an existing thread —
+            # codex picks up the prior conversation natively.
+            argv += ["resume", thread_id]
+        argv += [
             "--full-auto",
             "--json",
             "--color", "never",
@@ -100,14 +150,19 @@ class CodexProvider(LLMProvider):
         ]
         if self._model and not self._model.startswith("claude-"):
             argv += ["-m", self._model]
-        # Codex has no native system-prompt flag, so prepend it as a wrapper.
-        # The runtime treats `<system>…</system>` as instructions; modern
-        # frontier models honor this.
-        prompt = (
-            f"<system>\n{self._system_prompt}\n</system>\n\n{message}"
-            if self._system_prompt
-            else message
-        )
+
+        # Build the prompt. On the FIRST turn of a session (no thread yet),
+        # we synthesize an inline transcript of prior history so codex sees
+        # context. After that, codex's own thread carries the context.
+        parts: list[str] = []
+        if self._system_prompt:
+            parts.append(f"<system>\n{self._system_prompt}\n</system>")
+        if not thread_id:
+            transcript = self._format_history()
+            if transcript:
+                parts.append(f"<conversation>\n{transcript}\n</conversation>")
+        parts.append(message)
+        prompt = "\n\n".join(parts)
         argv.append(prompt)
 
         env = {**os.environ, **self._env_extra}
@@ -150,7 +205,13 @@ class CodexProvider(LLMProvider):
 
                 etype = event.get("type", "")
 
-                if etype == "item.completed":
+                if etype == "thread.started":
+                    # Capture the codex thread id so subsequent turns can
+                    # `exec resume <id>` and inherit the conversation.
+                    tid = event.get("thread_id")
+                    if isinstance(tid, str) and tid:
+                        self._thread_id = tid
+                elif etype == "item.completed":
                     item = event.get("item") or {}
                     if isinstance(item, dict) and item.get("type") in _TEXT_ITEM_TYPES:
                         text = item.get("text", "")
