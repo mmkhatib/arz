@@ -103,18 +103,11 @@ class CodexProvider(LLMProvider):
     def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         return self._run(message)
 
-    def _format_history(self) -> str:
-        """Render the last few turns as a transcript.
-
-        Used only on the FIRST turn of a session (when we don't yet have a
-        codex thread_id to resume). Caps total length to avoid blowing
-        codex's prompt budget.
-        """
+    def _format_history(self, *, max_messages: int = 10, max_chars: int = 8000) -> str:
+        """Render the last few turns as a compact transcript."""
         if not self._history:
             return ""
-        # Trim to the last N=10 messages and cap total chars.
-        recent = self._history[-10:]
-        max_chars = 8000
+        recent = self._history[-max_messages:]
         lines: list[str] = []
         used = 0
         for m in recent:
@@ -151,16 +144,26 @@ class CodexProvider(LLMProvider):
         if self._model and not self._model.startswith("claude-"):
             argv += ["-m", self._model]
 
-        # Build the prompt. On the FIRST turn of a session (no thread yet),
-        # we synthesize an inline transcript of prior history so codex sees
-        # context. After that, codex's own thread carries the context.
+        # Build the prompt. Strategy:
+        #   - Always inject the system prompt.
+        #   - Always inject a SHORT transcript of recent turns alongside the
+        #     thread_id resume. Codex's exec resume is documented as
+        #     occasionally flaky (drops history, starts a clean thread); the
+        #     inline transcript is a defensive safety net so the model still
+        #     has context even when resume fails.
+        #   - On the very first turn (no thread_id yet), the transcript is
+        #     the only source of context — keep it longer.
         parts: list[str] = []
         if self._system_prompt:
             parts.append(f"<system>\n{self._system_prompt}\n</system>")
-        if not thread_id:
-            transcript = self._format_history()
-            if transcript:
-                parts.append(f"<conversation>\n{transcript}\n</conversation>")
+        # First turn: longer transcript to bootstrap. Resume turns: shorter
+        # safety net (the thread should already have full history).
+        if thread_id:
+            transcript = self._format_history(max_messages=4, max_chars=2000)
+        else:
+            transcript = self._format_history(max_messages=10, max_chars=8000)
+        if transcript:
+            parts.append(f"<recent-context>\n{transcript}\n</recent-context>")
         parts.append(message)
         prompt = "\n\n".join(parts)
         argv.append(prompt)
