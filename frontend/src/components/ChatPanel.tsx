@@ -256,6 +256,12 @@ export default function ChatPanel({
         setSessionModel(s.model ?? null);
         setSessionAgent(s.agent ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
+        // If a turn is currently running for this session (e.g. the user
+        // navigated away and came back), attach to its detached stream and
+        // start showing live updates again.
+        if (s.streaming) {
+          reattachStream().catch(() => {});
+        }
         // Seed file paths from message history so the Files tab is pre-populated
         if (onSeedFiles) {
           const FILE_TOOL_NAMES = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"]);
@@ -359,6 +365,72 @@ export default function ChatPanel({
     return doSend(message);
   };
 
+  // Drain an SSE Response, updating UI state as events arrive. Used for
+  // both fresh sends (POST /api/chat) and re-attaches (GET /api/chat/{id}/stream).
+  const consumeStream = async (response: Response, sendStart: number, abortFlagRef: { aborted: boolean }) => {
+    let fullText = "";
+    let turnUsage: import("@/api/client").UsageRecord | undefined;
+    const turnToolCalls: { name: string; input: string }[] = [];
+    for await (const chunk of api.streamChat(response)) {
+      if (abortFlagRef.aborted) break;
+      if (chunk.type === "text_chunk" && chunk.text) {
+        fullText += chunk.text;
+        setStreamBuffer(fullText);
+        onSseEvent?.("text_chunk");
+      } else if (chunk.type === "tool_call" && chunk.tool_name) {
+        const callId = chunk.request_id || chunk.tool_name! + Date.now();
+        const tc = { callId, name: chunk.tool_name!, input: chunk.tool_input || "", time: new Date().toLocaleTimeString() };
+        turnToolCalls.push({ name: tc.name, input: tc.input });
+        setToolCalls((prev) => [...prev, { callId: tc.callId, name: tc.name, input: tc.input }]);
+        onToolCall?.(tc);
+        onSseEvent?.("tool_call", chunk.tool_name);
+      } else if (chunk.type === "tool_result" && chunk.tool_call_id) {
+        onToolResult?.(chunk.tool_call_id, chunk.content || "");
+        onSseEvent?.("tool_result", chunk.tool_call_id);
+      } else if (chunk.type === "permission_request" && chunk.request_id) {
+        setPendingApproval({
+          requestId: chunk.request_id!,
+          title: chunk.title || chunk.tool_name || "Permission",
+          toolInput: chunk.tool_input || "",
+        });
+        onSseEvent?.("permission_request", chunk.title);
+      } else if (chunk.type === "complete") {
+        if (chunk.context_pct) { setContextPct(chunk.context_pct); setEstimatedContext(false); }
+        if (chunk.usage) turnUsage = chunk.usage;
+        if (messages.length === 0 && fullText && firstUserMsgRef.current) {
+          api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
+            if (t) { setTitle(t); onTitleChange?.(t); }
+          }).catch(() => {});
+        }
+        onSseEvent?.("complete");
+        break;
+      } else if (chunk.type === "error") {
+        setError(chunk.message ?? "Unknown error");
+        onSseEvent?.("error", chunk.message);
+        break;
+      }
+    }
+    if (fullText && !abortFlagRef.aborted) {
+      const assistantMsg: MessageRecord = {
+        role: "assistant",
+        text: fullText,
+        created_at: new Date().toISOString(),
+        tool_calls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
+        elapsed_ms: Date.now() - sendStart,
+        usage: turnUsage,
+      };
+      // De-dupe: if the server already saved this message (we'll see it on
+      // next getSession), skip the optimistic add. Crude heuristic: if the
+      // last message is already an assistant message with the same text,
+      // don't double-add.
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last && last.role === "assistant" && last.text === fullText) return prev;
+        return [...prev, assistantMsg];
+      });
+    }
+  };
+
   const doSend = async (message: string) => {
     const userMsg: MessageRecord = {
       role: "user",
@@ -376,76 +448,44 @@ export default function ChatPanel({
     setToolCalls([]);
     setPendingApproval(null);
 
-    let aborted = false;
+    const abortFlag = { aborted: false };
     const sendStart = Date.now();
-    abortRef.current = () => { aborted = true; setStreaming(false); setStreamBuffer(""); };
+    abortRef.current = () => { abortFlag.aborted = true; setStreaming(false); setStreamBuffer(""); };
 
     try {
       const response = await api.sendMessage(sessionId, message);
       if (!response.ok) {
         throw new Error(`${response.status}: ${await response.text()}`);
       }
-
-      let fullText = "";
-      let turnUsage: import("@/api/client").UsageRecord | undefined;
-      const turnToolCalls: { name: string; input: string }[] = [];
-      for await (const chunk of api.streamChat(response)) {
-        if (aborted) break;
-
-        if (chunk.type === "text_chunk" && chunk.text) {
-          fullText += chunk.text;
-          setStreamBuffer(fullText);
-          onSseEvent?.("text_chunk");
-        } else if (chunk.type === "tool_call" && chunk.tool_name) {
-          const callId = chunk.request_id || chunk.tool_name! + Date.now();
-          const tc = { callId, name: chunk.tool_name!, input: chunk.tool_input || "", time: new Date().toLocaleTimeString() };
-          turnToolCalls.push({ name: tc.name, input: tc.input });
-          setToolCalls((prev) => [...prev, { callId: tc.callId, name: tc.name, input: tc.input }]);
-          onToolCall?.(tc);
-          onSseEvent?.("tool_call", chunk.tool_name);
-        } else if (chunk.type === "tool_result" && chunk.tool_call_id) {
-          onToolResult?.(chunk.tool_call_id, chunk.content || "");
-          onSseEvent?.("tool_result", chunk.tool_call_id);
-        } else if (chunk.type === "permission_request" && chunk.request_id) {
-          setPendingApproval({
-            requestId: chunk.request_id!,
-            title: chunk.title || chunk.tool_name || "Permission",
-            toolInput: chunk.tool_input || "",
-          });
-          onSseEvent?.("permission_request", chunk.title);
-        } else if (chunk.type === "complete") {
-          if (chunk.context_pct) {
-            setContextPct(chunk.context_pct);
-            setEstimatedContext(false);
-          }
-          if (chunk.usage) turnUsage = chunk.usage;
-          if (messages.length === 0 && fullText && firstUserMsgRef.current) {
-            api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
-              if (t) { setTitle(t); onTitleChange?.(t); }
-            }).catch(() => {});
-          }
-          onSseEvent?.("complete");
-          break;
-        } else if (chunk.type === "error") {
-          setError(chunk.message ?? "Unknown error");
-          onSseEvent?.("error", chunk.message);
-          break;
-        }
-      }
-
-      if (fullText && !aborted) {
-        const assistantMsg: MessageRecord = {
-          role: "assistant",
-          text: fullText,
-          created_at: new Date().toISOString(),
-          tool_calls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
-          elapsed_ms: Date.now() - sendStart,
-          usage: turnUsage,
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-      }
+      await consumeStream(response, sendStart, abortFlag);
     } catch (e) {
-      if (!aborted) setError(e instanceof Error ? e.message : String(e));
+      if (!abortFlag.aborted) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStreaming(false);
+      setStreamBuffer("");
+      setPendingApproval(null);
+      abortRef.current = null;
+    }
+  };
+
+  // Re-attach to an in-flight turn — the LLM is running detached on the
+  // server, this just streams the buffered + live events into the UI.
+  const reattachStream = async () => {
+    setStreaming(true);
+    setStreamBuffer("");
+    setError(null);
+    setToolCalls([]);
+    setPendingApproval(null);
+    const abortFlag = { aborted: false };
+    abortRef.current = () => { abortFlag.aborted = true; setStreaming(false); setStreamBuffer(""); };
+    try {
+      const response = await api.reattachStream(sessionId);
+      if (!response.ok) {
+        throw new Error(`${response.status}: ${await response.text()}`);
+      }
+      await consumeStream(response, Date.now(), abortFlag);
+    } catch (e) {
+      if (!abortFlag.aborted) setError(e instanceof Error ? e.message : String(e));
     } finally {
       setStreaming(false);
       setStreamBuffer("");

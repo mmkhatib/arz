@@ -14,6 +14,7 @@ export interface SessionSummary {
   model?: string | null;
   agent?: string | null;
   approval_mode?: "normal" | "trust_reads" | "trust" | "yolo";
+  streaming?: boolean;
 }
 
 export interface UsageRecord {
@@ -256,6 +257,14 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message }),
     }),
+
+  /** Re-attach to an in-flight turn — replays buffered events then follows live. */
+  reattachStream: (sessionId: string, signal?: AbortSignal): Promise<Response> =>
+    fetch(`${BASE}/chat/${sessionId}/stream`, { method: "GET", signal }),
+
+  /** Cheap snapshot — is a turn currently in flight for this session? */
+  getStreamingStatus: (sessionId: string) =>
+    request<{ streaming: boolean; snapshot: any }>(`/chat/${sessionId}/streaming`),
 
   searchSessions: (q: string) => request<SessionSummary[]>(`/sessions/search?q=${encodeURIComponent(q)}`),
 

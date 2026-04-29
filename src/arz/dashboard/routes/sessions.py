@@ -23,6 +23,7 @@ def _get_manager(request: Request) -> SessionManager:
 
 def _session_to_dict(session: object) -> dict:
     from arz.session.session import Session
+    from arz.dashboard.stream_registry import get_stream_registry
     assert isinstance(session, Session)
     return {
         "id": session.id,
@@ -40,6 +41,7 @@ def _session_to_dict(session: object) -> dict:
         "model": session.model,
         "agent": session.agent,
         "approval_mode": session.approval_mode,
+        "streaming": get_stream_registry().is_streaming(session.id),
     }
 
 

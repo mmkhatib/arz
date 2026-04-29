@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from arz.acp.client import AcpError
 from arz.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
 from arz.dashboard.sse import sse_chunk, sse_complete, sse_error, sse_permission_request, sse_tool_call, sse_tool_result
+from arz.dashboard.stream_registry import get_stream_registry
 from arz.dashboard.token_auth import require_token
 from arz.hooks import get_hook_manager
 from arz.lessons import get_lesson_store
@@ -92,54 +93,62 @@ def _make_provider(
 READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "WebSearch", "WebFetch"}
 
 
-async def _stream_response(
+async def _run_turn(
     provider: LLMProvider,
     session_id: str,
-    original_message: str,
     augmented_message: str,
     mgr: SessionManager,
     pending_approvals: dict | None = None,
     yolo_sessions: set | None = None,
     session_modes: dict | None = None,
-) -> AsyncIterator[str]:
-    """Drive the provider, record history, yield SSE strings.
-
-    `original_message` is what the user actually typed — that's what we
-    persist to history. `augmented_message` is the LLM payload after
-    auto-recall/memory/lesson/subagent injection — that's what we send
-    to the provider but never save.
+) -> None:
+    """Background task: drive the provider, persist the assistant turn,
+    publish events to the StreamRegistry. NOT tied to any HTTP connection
+    — survives client disconnects, page navigations, refreshes.
     """
     import time as _time
-    session = mgr.get(session_id)
-    if session:
-        session.add_message("user", original_message)
+    registry = get_stream_registry()
+    state = registry._states.get(session_id)
+    if state is None:
+        return  # caller didn't allocate state
 
-    full_reply = ""
+    async def emit(chunk: str) -> None:
+        state.events.append(chunk)
+        for q in list(state.subscribers):
+            try: q.put_nowait(chunk)
+            except asyncio.QueueFull:
+                try: q.get_nowait()
+                except Exception: pass
+                try: q.put_nowait(chunk)
+                except Exception: pass
+
+    session = mgr.get(session_id)
     turn_started = _time.monotonic()
-    turn_tool_calls: list[dict] = []
     saved_assistant = False
+    final_status = "complete"
+    final_error: str | None = None
     try:
         async for event in provider.stream(augmented_message):
             if event.kind == EVENT_TEXT_CHUNK and event.text:
-                full_reply += event.text
-                yield sse_chunk(event.text)
+                state.full_reply += event.text
+                await emit(sse_chunk(event.text))
 
             elif event.kind == EVENT_TOOL_RESULT:
-                yield sse_tool_result(
+                await emit(sse_tool_result(
                     tool_call_id=event.tool_call_id or "",
                     content=event.tool_output or "",
-                )
+                ))
 
             elif event.kind == EVENT_TOOL_CALL:
                 tool_name = event.text or ""
                 tool_input_str = str(event.tool_input or "")
                 if tool_name:
-                    turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
-                yield sse_tool_call(
+                    state.turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
+                await emit(sse_tool_call(
                     tool_name=tool_name,
                     tool_input=tool_input_str,
                     request_id=event.request_id or "",
-                )
+                ))
 
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 request_id = str(event.request_id or "")
@@ -147,17 +156,13 @@ async def _stream_response(
                     mode = (session_modes or {}).get(session_id, "normal")
                     tool_name = str(event.text or "")
                     hooks = get_hook_manager()
-                    # Hard-deny: surface a destructive command before we even ask.
                     raw_input = str(event.tool_input or "")
                     if tool_name == "Bash":
                         rule = hooks.evaluate_command(raw_input)
                         if rule and rule.severity == "block":
                             await provider.reject_tool(request_id)
-                            yield sse_chunk(f"\n⚠️ blocked: {rule.reason}\n")
+                            await emit(sse_chunk(f"\n⚠️ blocked: {rule.reason}\n"))
                             continue
-                    # trust/yolo: auto-approve all
-                    # trust_reads: auto-approve read-only tools
-                    # hooks.auto_approve_tools: configured allowlist
                     if mode in ("trust", "yolo") or (yolo_sessions is not None and session_id in yolo_sessions):
                         await provider.approve_tool(request_id)
                     elif mode == "trust_reads" and tool_name in READ_ONLY_TOOLS:
@@ -168,11 +173,11 @@ async def _stream_response(
                         loop = asyncio.get_event_loop()
                         fut: asyncio.Future = loop.create_future()
                         pending_approvals[request_id] = fut
-                        yield sse_permission_request(
+                        await emit(sse_permission_request(
                             title=event.title or event.text or "",
                             tool_input=str(event.tool_input or ""),
                             request_id=request_id,
-                        )
+                        ))
                         try:
                             approved = await asyncio.wait_for(fut, timeout=7200.0)
                         except asyncio.TimeoutError:
@@ -187,41 +192,75 @@ async def _stream_response(
             elif event.kind == EVENT_COMPLETE:
                 usage_dict = event.usage.to_dict() if event.usage else None
                 elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
-                if session and full_reply:
-                    msg = session.add_message("assistant", full_reply)
+                if session and state.full_reply:
+                    msg = session.add_message("assistant", state.full_reply)
                     if usage_dict:
                         msg.usage = usage_dict
                     msg.model = provider.current_model
                     msg.elapsed_ms = elapsed_ms
-                    if turn_tool_calls:
-                        msg.tool_calls = turn_tool_calls
+                    if state.turn_tool_calls:
+                        msg.tool_calls = state.turn_tool_calls
                     mgr.save(session)
                     saved_assistant = True
-                yield sse_complete(
+                await emit(sse_complete(
                     event.stop_reason or "end_turn",
                     context_pct=event.context_usage_pct or 0.0,
                     usage=usage_dict,
-                )
-                return
+                ))
+                break
 
+    except asyncio.CancelledError:
+        final_status = "cancelled"
+        raise
     except Exception as e:
         log.exception("Error streaming session %s", session_id)
-        yield sse_error(str(e))
+        final_status = "failed"
+        final_error = str(e)
+        await emit(sse_error(str(e)))
     finally:
-        # Backstop: if we got partial output but never reached COMPLETE
-        # (client disconnected mid-stream, provider was deactivated by an
-        # agent/model/approval change, generator was cancelled, etc.),
-        # persist the partial reply so the user doesn't lose it on refresh.
-        if session and full_reply and not saved_assistant:
+        # Always persist the assistant message if we got any text. This
+        # covers all the failure modes: cancellation, provider crash,
+        # mid-stream provider eviction, etc.
+        if session and state.full_reply and not saved_assistant:
             try:
-                msg = session.add_message("assistant", full_reply)
+                msg = session.add_message("assistant", state.full_reply)
                 msg.model = provider.current_model
                 msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
-                if turn_tool_calls:
-                    msg.tool_calls = turn_tool_calls
+                if state.turn_tool_calls:
+                    msg.tool_calls = state.turn_tool_calls
                 mgr.save(session)
             except Exception:
                 log.exception("Failed to persist partial reply on stream end")
+        await registry.finish(session_id, status=final_status, error=final_error)
+        registry.discard(session_id, after_seconds=120.0)
+
+
+async def _sse_subscribe(session_id: str) -> AsyncIterator[str]:
+    """Subscribe an SSE client to an in-flight (or just-finished) turn.
+
+    Replays buffered events first so a late-joining client sees the full
+    transcript so far, then forwards live events until the registry
+    closes the queue with None.
+    """
+    registry = get_stream_registry()
+    state, queue = await registry.subscribe(session_id)
+    if state is None:
+        # No active turn to attach to; close immediately.
+        yield sse_error("no active turn for this session")
+        return
+    # Replay buffered events.
+    for ev in list(state.events):
+        yield ev
+    # If the run already finished while we were replaying, queue has the
+    # sentinel waiting. Drain until None.
+    try:
+        while True:
+            chunk = await queue.get()
+            if chunk is None:
+                return
+            yield chunk
+    finally:
+        await registry.unsubscribe(session_id, queue)
 
 
 @router.post("/api/chat/{session_id}")
@@ -364,8 +403,57 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     if provider.session_id:
         session_map.set(session_id, provider.session_id)
 
+    # Allocate a stream slot. If one's already running for this session,
+    # surface a clean 409 so the UI can attach to /stream instead.
+    registry = get_stream_registry()
+    try:
+        state = await registry.start(session_id)
+    except RuntimeError:
+        raise HTTPException(
+            status_code=409,
+            detail="A turn is already running for this session — attach to GET /api/chat/{id}/stream instead.",
+        )
+
+    # Save the user message NOW (synchronously, before the background task
+    # starts) so a fast reload still shows what was sent.
+    if session:
+        session.add_message("user", original_message)
+        mgr.save(session)
+
+    # Spawn the LLM run as a fire-and-forget task. It's anchored on the
+    # event loop, not on this HTTP request — so client disconnects don't
+    # cancel it.
+    state.task = asyncio.create_task(_run_turn(
+        provider, session_id, message, mgr,
+        request.app.state.pending_approvals,
+        request.app.state.yolo_sessions,
+        request.app.state.session_modes,
+    ))
+
+    # The returned SSE stream just observes the same registry. Disconnecting
+    # only drops the subscriber — the background task keeps running.
     return StreamingResponse(
-        _stream_response(provider, session_id, original_message, message, mgr, request.app.state.pending_approvals, request.app.state.yolo_sessions, request.app.state.session_modes),
+        _sse_subscribe(session_id),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@router.get("/api/chat/{session_id}/stream")
+async def chat_stream(session_id: str) -> StreamingResponse:
+    """Re-attach to an in-flight turn. Returns SSE that replays buffered
+    events and follows live ones, exactly like the response from the
+    original POST. Closes immediately if no turn is in flight.
+    """
+    return StreamingResponse(
+        _sse_subscribe(session_id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/api/chat/{session_id}/streaming")
+async def chat_streaming(session_id: str) -> dict:
+    """Cheap snapshot — is a turn currently running for this session?"""
+    snap = get_stream_registry().snapshot(session_id)
+    return {"streaming": bool(snap and snap.get("status") == "running"), "snapshot": snap}

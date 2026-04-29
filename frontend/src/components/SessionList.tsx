@@ -246,6 +246,13 @@ export default function SessionList({
                   {isPinned && (
                     <span className="text-[10px] text-[var(--accent)]">●</span>
                   )}
+                  {s.streaming && (
+                    <span
+                      title="Generating reply…"
+                      className="shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse"
+                      aria-label="streaming"
+                    />
+                  )}
                   <span className="truncate flex-1">{s.title}</span>
                   {hits && hits.length > 1 && (
                     <span className="shrink-0 text-[9px] text-[var(--accent)] font-mono">
