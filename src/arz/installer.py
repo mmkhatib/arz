@@ -167,6 +167,73 @@ async def list_installed_ollama_models() -> list[dict]:
     return rows
 
 
+async def list_loaded_ollama_models() -> list[dict]:
+    """Models currently held in VRAM/RAM by Ollama (`ollama ps`)."""
+    if not shutil.which("ollama"):
+        return []
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ollama", "ps",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+        )
+        out, _ = await proc.communicate()
+    except Exception:
+        return []
+    if proc.returncode != 0:
+        return []
+    rows: list[dict] = []
+    for i, line in enumerate(out.decode(errors="replace").splitlines()):
+        if i == 0 or not line.strip():
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        rows.append({
+            "name": parts[0],
+            "id": parts[1] if len(parts) > 1 else "",
+            "size": parts[2] if len(parts) > 2 else "",
+            "processor": parts[3] if len(parts) > 3 else "",
+            "until": " ".join(parts[5:]) if len(parts) > 5 else "",
+        })
+    return rows
+
+
+async def _ollama_chat(model: str, *, keep_alive: int | str) -> tuple[bool, str]:
+    """Hit Ollama's /api/chat with an empty message — used for load/unload.
+
+    keep_alive=-1     → keep loaded indefinitely
+    keep_alive=0      → eject from memory now
+    keep_alive="5m"   → keep loaded for 5 minutes
+    """
+    import json as _json
+    import urllib.request
+    body = _json.dumps({
+        "model": model,
+        "messages": [],
+        "keep_alive": keep_alive,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "http://127.0.0.1:11434/api/chat",
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            text = resp.read().decode("utf-8", errors="replace")
+            return resp.status < 400, text
+    except Exception as e:
+        return False, str(e)
+
+
+async def load_ollama_model(model: str) -> tuple[bool, str]:
+    return await _ollama_chat(model, keep_alive=-1)
+
+
+async def eject_ollama_model(model: str) -> tuple[bool, str]:
+    return await _ollama_chat(model, keep_alive=0)
+
+
 def _install_argv(target: CliTarget) -> list[str] | None:
     sysname = platform.system().lower()
     if "darwin" in sysname or sysname == "darwin":

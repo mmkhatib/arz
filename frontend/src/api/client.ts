@@ -383,7 +383,17 @@ export const api = {
     clis: { name: string; binary: string; description: string; installed: boolean; path?: string | null; docs_url: string; installable_here: boolean }[];
     model_catalog: { id: string; runtime: string; name: string; label: string; description: string; size_gb: number }[];
     ollama_installed_models: { name: string; id: string; size: string }[];
+    ollama_loaded_models: { name: string; id: string; size: string; processor?: string; until?: string }[];
   }>("/installer/status"),
+
+  loadOllamaModel: (model: string) =>
+    request<{ model: string; loaded: boolean }>("/installer/ollama/load", {
+      method: "POST", body: JSON.stringify({ model }),
+    }),
+  ejectOllamaModel: (model: string) =>
+    request<{ model: string; loaded: boolean }>("/installer/ollama/eject", {
+      method: "POST", body: JSON.stringify({ model }),
+    }),
 
   installTarget: (target: string, signal?: AbortSignal): Promise<Response> =>
     fetch(`${BASE}/installer/install`, {

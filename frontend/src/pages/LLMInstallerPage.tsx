@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Cpu, Download, Check, ExternalLink, Loader2, X } from "lucide-react";
+import { Cpu, Download, Check, ExternalLink, Loader2, X, Power, PowerOff, MemoryStick } from "lucide-react";
 import { api } from "@/api/client";
 
 interface CliRow {
@@ -27,12 +27,22 @@ interface InstalledModel {
   size: string;
 }
 
+interface LoadedModel {
+  name: string;
+  id: string;
+  size: string;
+  processor?: string;
+  until?: string;
+}
+
 export default function LLMInstallerPage() {
   const [clis, setClis] = useState<CliRow[]>([]);
   const [catalog, setCatalog] = useState<ModelRow[]>([]);
   const [installed, setInstalled] = useState<InstalledModel[]>([]);
+  const [loaded, setLoaded] = useState<LoadedModel[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
+  const [busyMemory, setBusyMemory] = useState<string | null>(null);
   const [log, setLog] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
 
@@ -42,10 +52,29 @@ export default function LLMInstallerPage() {
       setClis(s.clis);
       setCatalog(s.model_catalog);
       setInstalled(s.ollama_installed_models);
+      setLoaded(s.ollama_loaded_models || []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   };
+
+  const loadModel = async (model: string) => {
+    setBusyMemory(model);
+    setError(null);
+    try { await api.loadOllamaModel(model); await refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyMemory(null); }
+  };
+
+  const ejectModel = async (model: string) => {
+    setBusyMemory(model);
+    setError(null);
+    try { await api.ejectOllamaModel(model); await refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusyMemory(null); }
+  };
+
+  const isLoaded = (name: string) => loaded.some((l) => l.name === name);
 
   useEffect(() => {
     refresh();
@@ -155,6 +184,40 @@ export default function LLMInstallerPage() {
           </div>
         </section>
 
+        {/* Memory: currently loaded Ollama models */}
+        {clis.find((c) => c.name === "ollama")?.installed && (
+          <section>
+            <h3 className="text-[12px] uppercase tracking-wider text-[var(--muted)] mb-2 flex items-center gap-2">
+              <MemoryStick size={12} /> Loaded in memory ({loaded.length})
+            </h3>
+            {loaded.length === 0 ? (
+              <div className="text-[12px] text-[var(--muted)]/60 border border-dashed border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
+                No Ollama models currently held in RAM/VRAM. Use the <strong>Load</strong> button below to keep one warm; <strong>Eject</strong> evicts it.
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {loaded.map((m) => (
+                  <div key={m.name} className="flex items-center gap-3 border border-[var(--border)] rounded-lg px-3 py-2 bg-[var(--surface)]">
+                    <span className="text-[13px] font-mono text-[var(--text)] truncate flex-1">{m.name}</span>
+                    {m.processor && <span className="text-[10px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded shrink-0">{m.processor}</span>}
+                    {m.size && <span className="text-[10px] font-mono text-[var(--muted)]/60 shrink-0">{m.size}</span>}
+                    {m.until && <span className="text-[10px] text-[var(--muted)]/60 shrink-0">until {m.until}</span>}
+                    <button
+                      onClick={() => ejectModel(m.name)}
+                      disabled={busyMemory === m.name}
+                      title="Unload from memory now"
+                      className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md text-red-400 hover:bg-red-400/10 disabled:opacity-40 shrink-0"
+                    >
+                      {busyMemory === m.name ? <Loader2 size={11} className="animate-spin" /> : <PowerOff size={11} />}
+                      Eject
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         {/* Local models */}
         <section>
           <h3 className="text-[12px] uppercase tracking-wider text-[var(--muted)] mb-2">Local Models (via Ollama)</h3>
@@ -166,6 +229,7 @@ export default function LLMInstallerPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {catalog.map((m) => {
               const isInstalled = isModelInstalled(m);
+              const inMem = isLoaded(m.name);
               return (
                 <div key={m.id} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1">
                   <div className="flex items-center gap-2">
@@ -175,11 +239,16 @@ export default function LLMInstallerPage() {
                         <Check size={9} /> pulled
                       </span>
                     )}
+                    {inMem && (
+                      <span className="text-[10px] uppercase tracking-wider text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                        <Power size={9} /> loaded
+                      </span>
+                    )}
                     <span className="ml-auto text-[10px] font-mono text-[var(--muted)]/60">{m.size_gb} GB</span>
                   </div>
                   <div className="text-[12px] text-[var(--muted)]">{m.description}</div>
                   <div className="text-[10px] font-mono text-[var(--muted)]/60">{m.name}</div>
-                  <div className="mt-1">
+                  <div className="mt-1 flex items-center gap-2">
                     {!isInstalled && (
                       <button
                         onClick={() => install(m.id, m.label)}
@@ -188,6 +257,28 @@ export default function LLMInstallerPage() {
                       >
                         {installing === m.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
                         Pull
+                      </button>
+                    )}
+                    {isInstalled && !inMem && (
+                      <button
+                        onClick={() => loadModel(m.name)}
+                        disabled={busyMemory === m.name}
+                        title="Preload into memory (keep_alive=-1)"
+                        className="text-[12px] px-3 py-1 rounded-md bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] hover:border-[var(--cedar)]/50 disabled:opacity-40 flex items-center gap-1"
+                      >
+                        {busyMemory === m.name ? <Loader2 size={11} className="animate-spin" /> : <Power size={11} />}
+                        Load
+                      </button>
+                    )}
+                    {isInstalled && inMem && (
+                      <button
+                        onClick={() => ejectModel(m.name)}
+                        disabled={busyMemory === m.name}
+                        title="Unload from memory now"
+                        className="text-[12px] px-3 py-1 rounded-md bg-[var(--bg)] border border-[var(--border)] text-red-400 hover:bg-red-400/10 disabled:opacity-40 flex items-center gap-1"
+                      >
+                        {busyMemory === m.name ? <Loader2 size={11} className="animate-spin" /> : <PowerOff size={11} />}
+                        Eject
                       </button>
                     )}
                   </div>

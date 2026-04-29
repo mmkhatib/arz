@@ -8,9 +8,12 @@ from fastapi.responses import StreamingResponse
 from arz.dashboard.token_auth import require_token
 from arz.installer import (
     detect_clis,
+    eject_ollama_model,
     install_argv_for,
     list_installed_ollama_models,
+    list_loaded_ollama_models,
     list_model_targets,
+    load_ollama_model,
     stream_install,
 )
 
@@ -23,7 +26,32 @@ async def status() -> dict:
         "clis": detect_clis(),
         "model_catalog": list_model_targets(),
         "ollama_installed_models": await list_installed_ollama_models(),
+        "ollama_loaded_models": await list_loaded_ollama_models(),
     }
+
+
+@router.post("/api/installer/ollama/load")
+async def ollama_load(request: Request) -> dict:
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=422, detail="model required")
+    ok, detail = await load_ollama_model(model)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"load failed: {detail}")
+    return {"model": model, "loaded": True}
+
+
+@router.post("/api/installer/ollama/eject")
+async def ollama_eject(request: Request) -> dict:
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=422, detail="model required")
+    ok, detail = await eject_ollama_model(model)
+    if not ok:
+        raise HTTPException(status_code=502, detail=f"eject failed: {detail}")
+    return {"model": model, "loaded": False}
 
 
 @router.post("/api/installer/install")
