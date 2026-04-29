@@ -32,6 +32,7 @@ from arz.dashboard.routes.cron import router as cron_router
 from arz.dashboard.routes.health import router as health_router
 from arz.dashboard.routes.heartbeat import router as heartbeat_router
 from arz.dashboard.routes.hooks import router as hooks_router
+from arz.dashboard.routes.consolidator import router as consolidator_router
 from arz.dashboard.routes.installer import router as installer_router
 from arz.dashboard.routes.lessons import router as lessons_router
 from arz.dashboard.routes.memory import router as memory_router
@@ -60,7 +61,16 @@ def _spawn_cron_run(app: FastAPI, entry: CronEntry) -> None:
 
 
 async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
-    """Execute a cron entry: create a session, stream the prompt, persist results."""
+    """Execute a cron entry: create a session, stream the prompt, persist results.
+
+    A few special prompts are intercepted and routed to internal handlers
+    instead of being treated as user prompts:
+
+        arz:consolidate           — run the memory consolidator
+        arz:consolidate --force   — same, ignoring the recency window
+
+    Anything else falls through to the normal "spin up a session" path.
+    """
     from arz.providers.claude_code import ClaudeCodeProvider
     from arz.providers.codex import CodexProvider
     from arz.providers.kiro_cli import KiroCliProvider
@@ -68,6 +78,25 @@ async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
     cfg: ArzConfig = app.state.config
     mgr: SessionManager = app.state.session_manager
     registry: CronRegistry = app.state.cron_registry
+
+    # ── special: built-in arz: handlers ──
+    raw = (entry.prompt or "").strip()
+    if raw.startswith("arz:consolidate"):
+        try:
+            from arz.consolidator import get_consolidator
+            force = "--force" in raw
+            report = await get_consolidator().consolidate_all(force=force)
+            summary = (
+                f"sessions={report.get('candidates', 0)} "
+                f"prefs+={report.get('preferences_added', 0)} "
+                f"projects+={report.get('projects_added', 0)} "
+                f"lessons+={report.get('lessons_added', 0)}"
+            )
+            registry.record_run(entry.id, f"success: {summary}", session_id=None)
+        except Exception as e:
+            log.exception("Cron consolidation failed", cron_id=entry.id)
+            registry.record_run(entry.id, f"error: {e}", session_id=None)
+        return
 
     log.info("Cron run started", cron_id=entry.id, name=entry.name)
     session = mgr.create(surface="cron", chat_id=f"cron-{entry.id}")
@@ -128,6 +157,19 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Search index ready", sessions=indexed)
     app.state.cron_registry.start()
     log.info("Cron scheduler started")
+    # Seed the memory-consolidator cron if missing. Runs nightly at 03:00.
+    try:
+        existing = {c.name for c in app.state.cron_registry.list()}
+        if "memory-consolidator" not in existing:
+            app.state.cron_registry.create(
+                name="memory-consolidator",
+                prompt="arz:consolidate",
+                schedule="0 3 * * *",
+                enabled=True,
+            )
+            log.info("Seeded memory-consolidator cron (03:00 daily)")
+    except Exception:
+        log.warning("Could not seed memory-consolidator cron", exc_info=True)
     await app.state.surface_manager.start()
     if getattr(app.state, "heartbeat_service", None) is not None:
         app.state.heartbeat_service.start()
@@ -179,7 +221,13 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
 
         agent = agent_registry.get(agent_name)
         provider_name = (agent.provider if agent else None) or config.provider.name
-        model = (agent.model if agent and agent.model else "") or config.provider.model
+        # Use the agent's preferred model if set; otherwise leave empty and
+        # let the provider pick its own default. We deliberately do NOT
+        # inherit the global config.provider.model — it's frequently
+        # mismatched (e.g. provider=claude-code but model=gpt-5.4 left over
+        # from a previous codex experiment), and the wrong model id makes
+        # the underlying CLI hard-fail.
+        model = agent.model if (agent and agent.model) else ""
         sys_prompt = resolve_system_prompt(agent.system_prompt if agent else None)
 
         if provider_name == "claude-code":
@@ -218,6 +266,11 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     # Task runner shares the same single-turn runner.
     from arz.taskrunner import get_task_runner
     get_task_runner().set_runner(_run_subagent)
+
+    # Memory consolidator ("dream"): nightly LLM-driven rollup of recent
+    # sessions into preferences/projects/lessons + daily summaries.
+    from arz.consolidator import init_consolidator
+    init_consolidator(app.state.session_manager, runner=_run_subagent)
 
     # Mirror every router event into the audit log.
     def _audit_handler(event):
@@ -269,6 +322,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(heartbeat_router)
     app.include_router(taskrunner_router)
     app.include_router(installer_router)
+    app.include_router(consolidator_router)
 
     if _STATIC_DIR.exists():
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")

@@ -411,6 +411,19 @@ export const api = {
       { method: "POST", body: JSON.stringify({ pinned }) },
     ),
 
+  // ── Memory consolidator ──
+  consolidateNow: (force = false) =>
+    request<{
+      ok: boolean;
+      candidates: number;
+      preferences_added: number;
+      projects_added: number;
+      lessons_added: number;
+      sessions: { session_id: string; title: string; ok: boolean; error?: string }[];
+    }>("/consolidate", { method: "POST", body: JSON.stringify({ force }) }),
+  consolidateStatus: () =>
+    request<{ state: { last_run_ts?: number; consolidated_session_ids?: string[] } }>("/consolidate/status"),
+
   // ── Memory files (preferences.md / projects.md / history) ──
   listMemoryFiles: () =>
     request<{ preferences: string; projects: string; history: string[] }>("/memory/files"),

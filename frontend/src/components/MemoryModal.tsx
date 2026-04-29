@@ -238,6 +238,24 @@ function MemoryFilesTab() {
   };
 
   const justSaved = Date.now() - savedFlag < 1500;
+  const [consolidating, setConsolidating] = useState(false);
+  const [consolidateMsg, setConsolidateMsg] = useState<string | null>(null);
+
+  const consolidate = async (force: boolean) => {
+    setConsolidating(true);
+    setConsolidateMsg(null);
+    try {
+      const r = await api.consolidateNow(force);
+      setConsolidateMsg(
+        `consolidated ${r.candidates} session(s): +${r.preferences_added} prefs, +${r.projects_added} projects, +${r.lessons_added} lessons`
+      );
+      refresh();
+    } catch (e) {
+      setConsolidateMsg(`error: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setConsolidating(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -246,6 +264,37 @@ function MemoryFilesTab() {
         <code className="text-[var(--cedar)] ml-1">preferences.md</code> (cap 1k chars) +
         <code className="text-[var(--cedar)] ml-1">projects.md</code> (cap 2k chars).
       </div>
+
+      <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex items-center gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="text-[12px] font-semibold text-[var(--text)]">Memory consolidation</div>
+          <div className="text-[11px] text-[var(--muted)]">
+            Runs nightly at 03:00 (cron <code>memory-consolidator</code>). Walks recent
+            sessions and asks the LLM to extract durable preferences, project context, and
+            lessons — appends to the files below + writes a daily summary to <code>history/</code>.
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => consolidate(false)}
+            disabled={consolidating}
+            className="px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]"
+          >
+            {consolidating ? "running…" : "Run now"}
+          </button>
+          <button
+            onClick={() => consolidate(true)}
+            disabled={consolidating}
+            title="Force a pass even on sessions older than 24h"
+            className="px-3 py-1 rounded-md bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] text-[12px] disabled:opacity-40"
+          >
+            Force
+          </button>
+        </div>
+      </div>
+      {consolidateMsg && (
+        <div className="text-[11px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded px-2 py-1">{consolidateMsg}</div>
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-1">
