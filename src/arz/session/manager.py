@@ -4,10 +4,41 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Callable
 
 from arz.session.session import Session
+
+# Wrappers we historically prepended to the user message before saving:
+# <preferences>…</preferences>, <projects>…</projects>, <lessons>…</lessons>,
+# <memory>…</memory>, plus subagent completion lines starting with [subagent:…].
+_INJECT_BLOCK_RE = re.compile(
+    r"<(preferences|projects|lessons|memory)\b[^>]*>[\s\S]*?</\1>\s*",
+    re.IGNORECASE,
+)
+_SUBAGENT_LINE_RE = re.compile(r"^\[subagent:[^\]]+\][^\n]*(?:\n[^\n]*)*?\n\n", re.MULTILINE)
+
+
+def _strip_injection(text: str) -> str:
+    if not text:
+        return text
+    cleaned = _INJECT_BLOCK_RE.sub("", text)
+    cleaned = _SUBAGENT_LINE_RE.sub("", cleaned)
+    return cleaned.strip()
+
+
+def _migrate_strip_injection(session: Session) -> bool:
+    """Returns True if any user message was rewritten."""
+    changed = False
+    for m in session.messages:
+        if m.role != "user":
+            continue
+        cleaned = _strip_injection(m.text)
+        if cleaned and cleaned != m.text:
+            m.text = cleaned
+            changed = True
+    return changed
 
 log = logging.getLogger(__name__)
 
@@ -106,12 +137,21 @@ class SessionManager:
             self._surface_index.pop(key, None)
 
     def load_all(self) -> int:
-        """Load all persisted sessions from disk. Returns count loaded."""
+        """Load all persisted sessions from disk. Returns count loaded.
+
+        Also runs a one-shot migration that strips auto-injected
+        <preferences> / <projects> / <lessons> / <memory> / [subagent:…]
+        wrapper text from saved user messages — a previous bug saved the
+        augmented LLM payload as the user's history entry, polluting the
+        chat panel.
+        """
         loaded = 0
         for path in self._dir.glob("*.json"):
             try:
                 data = json.loads(path.read_text())
                 session = Session.from_dict(data)
+                if _migrate_strip_injection(session):
+                    self.save(session)
                 self._sessions[session.id] = session
                 if session.active:
                     key = (session.surface, session.chat_id, session.thread_id)

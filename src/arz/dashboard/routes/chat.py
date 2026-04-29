@@ -95,23 +95,30 @@ READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "WebSearch", "WebFetch"}
 async def _stream_response(
     provider: LLMProvider,
     session_id: str,
-    message: str,
+    original_message: str,
+    augmented_message: str,
     mgr: SessionManager,
     pending_approvals: dict | None = None,
     yolo_sessions: set | None = None,
     session_modes: dict | None = None,
 ) -> AsyncIterator[str]:
-    """Drive the provider, record history, yield SSE strings."""
+    """Drive the provider, record history, yield SSE strings.
+
+    `original_message` is what the user actually typed — that's what we
+    persist to history. `augmented_message` is the LLM payload after
+    auto-recall/memory/lesson/subagent injection — that's what we send
+    to the provider but never save.
+    """
     import time as _time
     session = mgr.get(session_id)
     if session:
-        session.add_message("user", message)
+        session.add_message("user", original_message)
 
     full_reply = ""
     turn_started = _time.monotonic()
     turn_tool_calls: list[dict] = []
     try:
-        async for event in provider.stream(message):
+        async for event in provider.stream(augmented_message):
             if event.kind == EVENT_TEXT_CHUNK and event.text:
                 full_reply += event.text
                 yield sse_chunk(event.text)
@@ -213,9 +220,13 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="Session not found")
 
     body = await request.json()
-    message: str = body.get("message", "").strip()
-    if not message:
+    original_message: str = body.get("message", "").strip()
+    if not original_message:
         raise HTTPException(status_code=422, detail="message is required")
+
+    # Build a separate augmented copy for the LLM. The injection blocks
+    # below mutate `message`; the original is preserved for history.
+    message = original_message
 
     cfg = request.app.state.config
 
@@ -340,7 +351,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         session_map.set(session_id, provider.session_id)
 
     return StreamingResponse(
-        _stream_response(provider, session_id, message, mgr, request.app.state.pending_approvals, request.app.state.yolo_sessions, request.app.state.session_modes),
+        _stream_response(provider, session_id, original_message, message, mgr, request.app.state.pending_approvals, request.app.state.yolo_sessions, request.app.state.session_modes),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
