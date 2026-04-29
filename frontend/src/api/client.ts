@@ -118,6 +118,11 @@ export interface OverviewCounts {
   crons: number;
   memory_notes: number;
   memory_lessons: number;
+  agents?: number;
+  subagents?: number;
+  channels?: number;
+  tasks?: number;
+  mcp_servers?: number;
 }
 
 export interface AuditEntryPub {

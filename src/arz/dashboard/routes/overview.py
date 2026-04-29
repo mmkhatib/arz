@@ -34,6 +34,11 @@ class OverviewCounts(BaseModel):
     crons: int
     memory_notes: int
     memory_lessons: int
+    agents: int = 0
+    subagents: int = 0
+    channels: int = 0
+    tasks: int = 0
+    mcp_servers: int = 0
 
 
 class AuditEntryPub(BaseModel):
@@ -120,8 +125,48 @@ async def overview(
         notes = len(md_store.list())
     except Exception:
         pass
+    # Prefer the new auto-inject lessons store; fall back to legacy SQLite store.
     try:
-        lessons = len(lesson_store.list())
+        from arz.lessons import get_lesson_store
+        lessons = len(get_lesson_store().list())
+    except Exception:
+        try:
+            lessons = len(lesson_store.list())
+        except Exception:
+            pass
+
+    # Counts for the new autonomy features.
+    agents_count = 0
+    subagents_count = 0
+    channels_count = 0
+    tasks_count = 0
+    mcp_count = 0
+    try:
+        from arz.agents import AgentRegistry
+        agents_count = len(AgentRegistry().list())
+    except Exception:
+        pass
+    try:
+        from arz.subagents import get_subagent_manager
+        subagents_count = len(get_subagent_manager().list_recent(limit=200))
+    except Exception:
+        pass
+    try:
+        from arz.channels import get_channel_store
+        channels_count = len(get_channel_store().list())
+    except Exception:
+        pass
+    try:
+        from arz.taskrunner import get_task_runner
+        tasks_count = len(get_task_runner().list())
+    except Exception:
+        pass
+    try:
+        from pathlib import Path as _P
+        import json as _json
+        reg_path = _P.home() / ".arz" / "mcp_registry.json"
+        if reg_path.exists():
+            mcp_count = len((_json.loads(reg_path.read_text()).get("servers") or {}))
     except Exception:
         pass
 
@@ -138,7 +183,8 @@ async def overview(
             is_active=(name == cfg.provider.name),
         ))
 
-    # Recent activity from the audit log
+    # Recent activity from the audit log; if empty, fall back to recent
+    # messages across sessions so the panel is useful from day one.
     audit_log = getattr(state, "audit_log", None)
     if audit_log is None:
         from arz.dashboard.audit import AuditLog
@@ -154,6 +200,18 @@ async def overview(
         )
         for e in audit_log.query(limit=activity_limit)
     ]
+    if not recent:
+        # Fallback: harvest the most recent assistant/user messages.
+        events: list[tuple[float, str, str, str]] = []  # ts, kind, summary, session_id
+        for s in mgr._sessions.values():  # noqa: SLF001
+            for m in s.messages[-20:]:
+                ts = m.created_at.timestamp()
+                kind = "message" if m.role in ("user", "assistant") else m.role
+                summary = (m.text or "").replace("\n", " ")[:120]
+                events.append((ts, kind, f"[{s.title[:40]}] {m.role}: {summary}", s.id))
+        events.sort(key=lambda e: e[0], reverse=True)
+        for i, (ts, kind, summary, sid) in enumerate(events[:activity_limit]):
+            recent.append(AuditEntryPub(id=-(i + 1), ts=ts, kind=kind, summary=summary, session_id=sid))
 
     return OverviewResponse(
         counts=OverviewCounts(
@@ -162,6 +220,11 @@ async def overview(
             crons=len(cron_entries),
             memory_notes=notes,
             memory_lessons=lessons,
+            agents=agents_count,
+            subagents=subagents_count,
+            channels=channels_count,
+            tasks=tasks_count,
+            mcp_servers=mcp_count,
         ),
         providers=providers,
         cron_health=CronHealth(

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import type { OverviewResponse } from "@/api/client";
 import { LayoutDashboard, CheckCircle, XCircle, Circle } from "lucide-react";
@@ -26,6 +27,7 @@ const KIND_COLORS: Record<string, string> = {
 
 export default function OverviewModal({ onClose, variant = "modal" }: Props) {
   const handleClose = onClose ?? (() => {});
+  const navigate = useNavigate();
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,19 +63,28 @@ export default function OverviewModal({ onClose, variant = "modal" }: Props) {
     </div>
   ) : (
     <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-5">
-      {/* Count cards */}
+      {/* Count cards — click to jump to that section */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         {[
-          { label: "Active Sessions", value: data.counts.sessions_active },
-          { label: "History", value: data.counts.sessions_history },
-          { label: "Scheduled Tasks", value: data.counts.crons },
-          { label: "Memory Notes", value: data.counts.memory_notes },
-          { label: "Lessons", value: data.counts.memory_lessons },
+          { label: "Active Sessions", value: data.counts.sessions_active, to: "/" },
+          { label: "History", value: data.counts.sessions_history, to: "/" },
+          { label: "Schedule", value: data.counts.crons, to: "/schedule" },
+          { label: "Agents", value: data.counts.agents ?? 0, to: "/agents" },
+          { label: "Lessons", value: data.counts.memory_lessons, to: "/memory" },
+          { label: "Memory Notes", value: data.counts.memory_notes, to: "/memory" },
+          { label: "Subagents", value: data.counts.subagents ?? 0, to: "/autonomy" },
+          { label: "Channels", value: data.counts.channels ?? 0, to: "/autonomy" },
+          { label: "Tasks", value: data.counts.tasks ?? 0, to: "/autonomy" },
+          { label: "MCP Servers", value: data.counts.mcp_servers ?? 0, to: "/capabilities" },
         ].map((c) => (
-          <div key={c.label} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1">
+          <button
+            key={c.label}
+            onClick={() => { if (c.to) { variant === "modal" ? handleClose() : null; navigate(c.to); } }}
+            className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1 text-left hover:border-[var(--cedar)]/40 hover:bg-[var(--cedar)]/5 transition-colors"
+          >
             <div className="text-[10px] uppercase tracking-wider text-[var(--muted)]">{c.label}</div>
             <div className="text-[24px] font-semibold text-[var(--text)] font-mono leading-none">{c.value}</div>
-          </div>
+          </button>
         ))}
       </div>
 
