@@ -40,15 +40,23 @@ export const ANTHROPIC_MODELS: ModelEntry[] = [
   { id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5" },
 ];
 
+export const GEMINI_MODELS: ModelEntry[] = [
+  { id: "gemini-2.5-pro",        label: "Gemini 2.5 Pro" },
+  { id: "gemini-2.5-flash",      label: "Gemini 2.5 Flash" },
+  { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
+];
+
 export const CLAUDE_DEFAULT = "claude-opus-4-7";
 export const CODEX_DEFAULT = "gpt-5.4";
 export const KIRO_DEFAULT = "auto";
+export const GEMINI_DEFAULT = "gemini-2.5-pro";
 
 export function modelsForProvider(provider: string | undefined): ModelEntry[] {
   switch (provider) {
     case "codex": return CODEX_MODELS;
     case "kiro-cli": return KIRO_MODELS;
     case "anthropic": return ANTHROPIC_MODELS;
+    case "gemini": return GEMINI_MODELS;
     default: return CLAUDE_MODELS; // claude-code or unknown
   }
 }
@@ -58,6 +66,7 @@ export function defaultModelForProvider(provider: string | undefined): string {
     case "codex": return CODEX_DEFAULT;
     case "kiro-cli": return KIRO_DEFAULT;
     case "anthropic": return CLAUDE_DEFAULT;
+    case "gemini": return GEMINI_DEFAULT;
     default: return CLAUDE_DEFAULT;
   }
 }
@@ -73,5 +82,6 @@ export const PROVIDER_LABELS: Record<string, string> = {
   "kiro-cli": "Kiro CLI",
   "codex": "OpenAI Codex",
   "anthropic": "Anthropic API",
+  "gemini": "Gemini CLI",
   "ollama": "Ollama",
 };

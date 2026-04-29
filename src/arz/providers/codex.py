@@ -146,18 +146,13 @@ class CodexProvider(LLMProvider):
 
         # Build the prompt. Strategy:
         #   - Always inject the system prompt.
-        #   - Always inject a SHORT transcript of recent turns alongside the
-        #     thread_id resume. Codex's exec resume is documented as
-        #     occasionally flaky (drops history, starts a clean thread); the
-        #     inline transcript is a defensive safety net so the model still
-        #     has context even when resume fails.
-        #   - On the very first turn (no thread_id yet), the transcript is
-        #     the only source of context — keep it longer.
+        #   - Always inject a transcript of recent turns alongside the
+        #     thread_id resume (codex's resume is documented as flaky).
+        #   - On the FIRST turn (no thread_id yet), the transcript is the
+        #     only source of context — keep it longer.
         parts: list[str] = []
         if self._system_prompt:
             parts.append(f"<system>\n{self._system_prompt}\n</system>")
-        # First turn: longer transcript to bootstrap. Resume turns: shorter
-        # safety net (the thread should already have full history).
         if thread_id:
             transcript = self._format_history(max_messages=4, max_chars=2000)
         else:
@@ -166,18 +161,33 @@ class CodexProvider(LLMProvider):
             parts.append(f"<recent-context>\n{transcript}\n</recent-context>")
         parts.append(message)
         prompt = "\n\n".join(parts)
-        argv.append(prompt)
+        # Pass the prompt via STDIN, not argv. Windows caps a single
+        # command-line argument around 8KB (CreateProcess ARG_MAX); our
+        # prompt routinely exceeds that with the bundled system prompt +
+        # memory + lessons + transcript, and codex would silently see a
+        # truncated prefix and reply "I only received <system>".
+        # `codex exec -` reads the prompt from stdin instead.
+        argv.append("-")
 
         env = {**os.environ, **self._env_extra}
         process = await asyncio.create_subprocess_exec(
             *argv,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=_STDOUT_LIMIT,
             env=env,
         )
         self._process = process
+
+        # Write the prompt to stdin and close — codex reads to EOF.
+        if process.stdin:
+            try:
+                process.stdin.write(prompt.encode("utf-8"))
+                await process.stdin.drain()
+                process.stdin.close()
+            except Exception:
+                pass
 
         assert process.stderr
         asyncio.ensure_future(_drain_stderr(process.stderr))

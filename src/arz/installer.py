@@ -58,6 +58,14 @@ CLI_TARGETS: list[CliTarget] = [
         docs_url="https://github.com/openai/codex",
     ),
     CliTarget(
+        name="gemini",
+        binaries=("gemini",),
+        description="Google Gemini CLI — coding agent with stream-json + ACP support.",
+        install_macos=["npm", "install", "-g", "@google/gemini-cli"],
+        install_linux=["npm", "install", "-g", "@google/gemini-cli"],
+        docs_url="https://github.com/google-gemini/gemini-cli",
+    ),
+    CliTarget(
         name="claude",
         binaries=("claude",),
         description="Anthropic Claude Code CLI.",

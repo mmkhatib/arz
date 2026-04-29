@@ -92,6 +92,16 @@ def _make_provider(
             history_messages=history,
         )
 
+    if provider_name == "gemini":
+        from arz.providers.gemini import GeminiProvider
+        return GeminiProvider(
+            model=model,
+            work_dir=work_dir,
+            system_prompt=system_prompt or None,
+            history_messages=history,
+            approval_mode=approval_mode,
+        )
+
     raise ValueError(f"Unknown provider: {provider_name!r}")
 
 

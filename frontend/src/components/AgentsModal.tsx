@@ -155,6 +155,7 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
             <option value="claude-code">claude-code</option>
             <option value="kiro-cli">kiro-cli</option>
             <option value="codex">codex</option>
+            <option value="gemini">gemini</option>
             <option value="anthropic">anthropic</option>
           </select>
         </Field>
