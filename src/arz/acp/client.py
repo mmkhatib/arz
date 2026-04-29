@@ -135,7 +135,15 @@ class AcpClient:
         await self._initialize()
 
     async def shutdown(self) -> None:
-        """Send SIGTERM, then SIGKILL if the process doesn't exit."""
+        """Send SIGTERM, then SIGKILL if the process doesn't exit.
+
+        Cross-platform — uses asyncio's process methods (terminate/kill)
+        rather than POSIX-only killpg/getpgid which crash on Windows.
+        On POSIX we additionally signal the whole process group when we
+        spawned with start_new_session=True, which is the behavior we
+        actually want (kills any kiro/codex subprocesses spawned by the
+        CLI). On Windows we fall back to plain terminate.
+        """
         if self._stderr_task:
             self._stderr_task.cancel()
         if not self._process or self._process.returncode is not None:
@@ -147,12 +155,28 @@ class AcpClient:
                     pipe.close()  # type: ignore[union-attr]
             except Exception:
                 pass
+        # POSIX: try to take down the whole process group (better cleanup
+        # for CLIs that fork helpers). Windows doesn't have process groups
+        # in the same way; fall back to terminate.
+        is_posix = hasattr(os, "killpg") and hasattr(os, "getpgid")
         try:
-            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            if is_posix:
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except (ProcessLookupError, OSError):
+                    self._process.terminate()
+            else:
+                self._process.terminate()
             await asyncio.wait_for(self._process.wait(), timeout=3.0)
         except (asyncio.TimeoutError, ProcessLookupError, OSError):
             try:
-                os.killpg(os.getpgid(pid), signal.SIGKILL)
+                if is_posix:
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except (ProcessLookupError, OSError):
+                        self._process.kill()
+                else:
+                    self._process.kill()
             except (ProcessLookupError, OSError):
                 pass
 
@@ -211,16 +235,27 @@ class AcpClient:
         env = {**os.environ, **self._env_extra}
         self._work_dir.mkdir(parents=True, exist_ok=True)
 
-        self._process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self._work_dir),
-            limit=_STDOUT_LIMIT,
-            start_new_session=True,
-            env=env,
-        )
+        # start_new_session is POSIX-only (it calls setsid). On Windows
+        # we need a different mechanism — CREATE_NEW_PROCESS_GROUP via
+        # creationflags — to detach the child so it doesn't inherit
+        # Ctrl-C from the parent.
+        spawn_kwargs: dict = {
+            "stdin": asyncio.subprocess.PIPE,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": str(self._work_dir),
+            "limit": _STDOUT_LIMIT,
+            "env": env,
+        }
+        if hasattr(os, "setsid"):
+            spawn_kwargs["start_new_session"] = True
+        else:
+            try:
+                import subprocess as _sp
+                spawn_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+            except (ImportError, AttributeError):
+                pass
+        self._process = await asyncio.create_subprocess_exec(*argv, **spawn_kwargs)
         logger.info("Spawned %s (PID %d)", " ".join(argv), self._process.pid)
 
         if self._process.stderr:

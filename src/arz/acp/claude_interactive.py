@@ -111,16 +111,25 @@ class ClaudeInteractiveClient:
             logger.info("Attempting Claude Code session resume: %s", resume_sid)
 
         env = {**os.environ, **self._env_extra}
-        self._process = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(self._work_dir),
-            limit=_STDOUT_LIMIT,
-            env=env,
-            start_new_session=True,
-        )
+        # start_new_session is POSIX-only. On Windows use
+        # CREATE_NEW_PROCESS_GROUP via creationflags.
+        spawn_kwargs: dict = {
+            "stdin": asyncio.subprocess.PIPE,
+            "stdout": asyncio.subprocess.PIPE,
+            "stderr": asyncio.subprocess.PIPE,
+            "cwd": str(self._work_dir),
+            "limit": _STDOUT_LIMIT,
+            "env": env,
+        }
+        if hasattr(os, "setsid"):
+            spawn_kwargs["start_new_session"] = True
+        else:
+            try:
+                import subprocess as _sp
+                spawn_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
+            except (ImportError, AttributeError):
+                pass
+        self._process = await asyncio.create_subprocess_exec(*argv, **spawn_kwargs)
         logger.info("Claude interactive process started (PID %d)", self._process.pid)
 
         await self._drain_startup()
@@ -138,8 +147,15 @@ class ClaudeInteractiveClient:
         self._process = None
         if p.returncode is not None:
             return
+        is_posix = hasattr(os, "killpg") and hasattr(os, "getpgid")
         try:
-            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            if is_posix:
+                try:
+                    os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                except (ProcessLookupError, OSError):
+                    p.terminate()
+            else:
+                p.terminate()
             await asyncio.wait_for(p.wait(), timeout=3.0)
         except Exception:
             try:
