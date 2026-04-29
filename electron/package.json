@@ -1,0 +1,33 @@
+{
+  "name": "arz-desktop",
+  "version": "0.1.0",
+  "description": "Arz desktop wrapper — thin Electron shell around the gateway",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "package": "electron-builder --mac --x64 --arm64",
+    "package:dmg": "electron-builder --mac dmg"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.arz.desktop",
+    "productName": "Arz",
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg", "zip"]
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}
