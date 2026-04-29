@@ -37,6 +37,10 @@ class DashboardConfig(BaseModel):
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
     auto_recall: bool = False
     recall_k: int = 3
+    # Embedder spec: "hash" (no deps) | "ollama[:model][@url]"
+    # Picking "ollama" without a model defaults to qwen3-embedding:0.6b.
+    embedding_model: str = "hash"
+    heartbeat_interval_s: int = 300
 
 
 class SlackConfig(BaseModel):

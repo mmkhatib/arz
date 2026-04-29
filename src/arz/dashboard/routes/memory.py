@@ -151,22 +151,48 @@ class MemoryHit(BaseModel):
 async def search_memory(
     request: Request,
     q: Annotated[str, Query(min_length=1)],
-    k: int = Query(default=5, ge=1, le=50),
+    k: int = Query(default=10, ge=1, le=50),
+    source: str | None = Query(default=None),
 ) -> list[MemoryHit]:
-    """Search both stores. VectorStore currently uses keyword fallback;
-    once sqlite-vec ANN is wired in (Phase 4 per the file's comment) the
-    same endpoint will return semantic hits without API changes."""
+    """Ranked search over all memory sources via SQLite FTS5.
+
+    The FTS index covers preferences/projects/history/lessons/notes. We
+    augment with vector hits when available — vector adds semantic matches
+    that pure FTS misses.
+    """
+    from arz.memory.fts import get_memory_fts
+    fts = get_memory_fts()
+    try:
+        fts.reindex()  # cheap mtime scan
+    except Exception:
+        pass
+
     hits: list[MemoryHit] = []
-    for key, content, score in _vector_store(request).search(q, k=k):
-        hits.append(MemoryHit(key=key, content=content, score=score, source="vector"))
+    for row in fts.search(q, source=source, k=k):
+        hits.append(MemoryHit(
+            key=f"{row['source']}:{row['key']}",
+            content=row["snippet"],
+            score=-row["rank"],  # bm25 returns negative-better; flip for "higher = better"
+            source=row["source"],
+        ))
+    # Backfill with vector hits for semantic recall.
     if len(hits) < k:
-        remaining = k - len(hits)
         seen = {h.key for h in hits}
-        for key, content in _markdown_store(request).search(q, k=remaining):
-            if key in seen:
+        remaining = k - len(hits)
+        for key, content, score in _vector_store(request).search(q, k=remaining):
+            full = f"vector:{key}"
+            if full in seen:
                 continue
-            hits.append(MemoryHit(key=key, content=content, score=0.0, source="markdown"))
+            hits.append(MemoryHit(key=full, content=content, score=score, source="vector"))
     return hits[:k]
+
+
+@router.post("/api/memory/reindex")
+async def reindex_memory() -> dict:
+    """Force a full FTS rebuild — used after big edits or first-run setup."""
+    from arz.memory.fts import get_memory_fts
+    counts = get_memory_fts().reindex(force=True)
+    return {"counts": counts}
 
 
 # ── Memory files (preferences.md / projects.md / history) ───────────────────

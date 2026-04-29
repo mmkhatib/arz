@@ -85,6 +85,10 @@ CLI_TARGETS: list[CliTarget] = [
 ]
 
 MODEL_TARGETS: list[ModelTarget] = [
+    # Embedding models — for semantic memory recall, not chat.
+    ModelTarget("ollama:qwen3-embedding:0.6b", "ollama", "qwen3-embedding:0.6b", "Qwen3 Embedding (0.6B)", "Embedding model — powers semantic memory recall. Recommended.", 0.6),
+    ModelTarget("ollama:nomic-embed-text:latest", "ollama", "nomic-embed-text:latest", "Nomic Embed Text", "Alternative embedding model — good general-purpose semantic vectors.", 0.3),
+    # Chat models below.
     ModelTarget("ollama:gemma3:4b",        "ollama", "gemma3:4b",        "Gemma 3 (4B)",        "Google's lightweight general-purpose model. Good default.", 3.3),
     ModelTarget("ollama:gemma3:12b",       "ollama", "gemma3:12b",       "Gemma 3 (12B)",       "Larger Gemma — needs ~12 GB RAM.", 8.1),
     ModelTarget("ollama:llama3.2:3b",      "ollama", "llama3.2:3b",      "Llama 3.2 (3B)",      "Meta's small Llama — fast on any laptop.", 2.0),
