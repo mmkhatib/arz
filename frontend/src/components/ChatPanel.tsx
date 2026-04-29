@@ -527,6 +527,9 @@ export default function ChatPanel({
             provider={sessionProvider ?? undefined}
             workDir={workDir}
             onWorkDirChange={handleWorkDirChange}
+            agent={sessionAgent}
+            agents={agents}
+            onAgentChange={handleAgentChange}
           />
         )}
 
