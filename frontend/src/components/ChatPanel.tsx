@@ -324,13 +324,13 @@ export default function ChatPanel({
   };
 
   const handleAgentChange = (agent: string | null) => {
+    // Switching agent on an active session changes role only — system
+    // prompt + approval mode + tool allowlist. The current LLM (provider +
+    // model) stays put. Don't re-sync sessionProvider/sessionModel.
     setSessionAgent(agent);
     api.setSessionAgent(sessionId, agent)
       .then(() => api.getSession(sessionId))
       .then((s) => {
-        // Picking an agent may change provider/model/approval — re-sync.
-        setSessionProvider(s.provider ?? null);
-        setSessionModel(s.model ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
       })
       .catch(() => {});

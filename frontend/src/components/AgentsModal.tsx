@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import type { AgentConfig } from "@/api/client";
-import { Bot, Plus, Trash2, Edit2, Star, StarOff, X, Check } from "lucide-react";
+import { Bot, Plus, Trash2, Edit2, Star, StarOff, X, Check, Play } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 interface Props {
   onClose?: () => void;
@@ -28,6 +29,7 @@ const APPROVAL_MODES = [
 
 export default function AgentsModal({ onClose, variant = "modal" }: Props) {
   const handleClose = onClose ?? (() => {});
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -99,6 +101,18 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
     }
   };
 
+  const startSession = async (agent: AgentConfig) => {
+    try {
+      const s = await api.createSessionFromAgent(agent.name);
+      // Hop to the chat page with this session selected.
+      sessionStorage.setItem("arz:next-session", s.id);
+      if (variant === "modal") handleClose();
+      navigate("/");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const header = (
     <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
       <div className="flex items-center gap-2">
@@ -136,18 +150,19 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
           />
         </Field>
-        <Field label="Provider">
+        <Field label="Preferred provider (default for new sessions only)">
           <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} className="input">
             <option value="claude-code">claude-code</option>
             <option value="kiro-cli">kiro-cli</option>
+            <option value="codex">codex</option>
             <option value="anthropic">anthropic</option>
           </select>
         </Field>
-        <Field label="Model">
+        <Field label="Preferred model (default for new sessions only)">
           <input
             value={form.model}
             onChange={(e) => setForm({ ...form, model: e.target.value })}
-            placeholder="e.g. claude-opus-4-5 (leave blank for default)"
+            placeholder="e.g. claude-opus-4-7 (leave blank for default)"
             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
           />
         </Field>
@@ -246,6 +261,9 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
               </div>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              <button onClick={() => startSession(a)} title="Start a fresh session with this agent" className="px-2 py-1 rounded-md bg-[var(--cedar)]/10 text-[var(--cedar)] hover:bg-[var(--cedar)]/20 text-[11px] flex items-center gap-1">
+                <Play size={11} fill="currentColor" /> Start
+              </button>
               <button onClick={() => setDefault(a)} title={a.is_default ? "Unset default" : "Set as default"} className="p-1 rounded text-[var(--muted)] hover:text-amber-400 hover:bg-[var(--bg)]">
                 {a.is_default ? <Star size={13} fill="currentColor" /> : <StarOff size={13} />}
               </button>

@@ -46,6 +46,7 @@ def _make_provider(
     provider_name_override: str | None = None,
     model_override: str | None = None,
     approval_mode: str = "normal",
+    agent_name: str | None = None,
 ) -> LLMProvider:
     """Factory: build the right provider for this session."""
     from arz.config.schema import ArzConfig
@@ -54,8 +55,18 @@ def _make_provider(
     provider_name = provider_name_override or config.provider.name
     model = model_override or config.provider.model
     work_dir = Path(session_work_dir) if session_work_dir else (_WORKSPACE_ROOT / session_id)
-    # Resolve the steered prompt: per-config override falls back to bundled.
-    system_prompt = resolve_system_prompt(config.dashboard.system_prompt or None)
+    # Resolve the steered prompt: agent's system_prompt (if set) → per-config
+    # override → bundled.
+    agent_prompt = ""
+    if agent_name:
+        try:
+            from arz.agents import AgentRegistry
+            agent = AgentRegistry().get(agent_name)
+            if agent and agent.system_prompt:
+                agent_prompt = agent.system_prompt
+        except Exception:
+            pass
+    system_prompt = resolve_system_prompt(agent_prompt or config.dashboard.system_prompt or None)
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
@@ -266,12 +277,13 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     effective_provider_name = getattr(session, "provider", None) or cfg.provider.name
     effective_model = getattr(session, "model", None) or cfg.provider.model
     effective_approval = getattr(session, "approval_mode", "normal") or "normal"
+    effective_agent = getattr(session, "agent", None)
 
     # Look up any prior provider session ID for native resume
     provider_sid = session_map.get(session_id)
 
     def _factory() -> LLMProvider:
-        p = _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval)
+        p = _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval, effective_agent)
         if provider_sid:
             p.set_resume_session_id(provider_sid)
         return p
@@ -303,7 +315,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         try:
             provider = await pool.activate(
                 session_id,
-                lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval),
+                lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval, effective_agent),
             )
         except (AcpError, FileNotFoundError, ValueError) as e:
             raise HTTPException(

@@ -52,6 +52,12 @@ export default function ChatPage() {
       // subsequent polls (this is what was making the chat flip back to the
       // top of the list every refresh cycle).
       setActiveId((prev) => {
+        // One-shot hint from another page (e.g. AgentsModal "Start session").
+        const hinted = sessionStorage.getItem("arz:next-session");
+        if (hinted && data.find((s) => s.id === hinted)) {
+          sessionStorage.removeItem("arz:next-session");
+          return hinted;
+        }
         if (prev) return prev;
         if (data.length === 0) return null;
         const hash = window.location.hash;

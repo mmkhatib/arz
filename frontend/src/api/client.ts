@@ -221,6 +221,12 @@ export const api = {
 
   fetchHistory: () => request<SessionSummary[]>("/sessions/history"),
 
+  createSessionFromAgent: (agent: string, surface = "dashboard", chat_id = "web") =>
+    request<SessionSummary>("/sessions/from-agent", {
+      method: "POST",
+      body: JSON.stringify({ agent, surface, chat_id }),
+    }),
+
   reactivateSession: (id: string) =>
     request<SessionSummary>(`/sessions/${id}/reactivate`, { method: "POST" }),
 

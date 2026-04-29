@@ -240,6 +240,15 @@ async def set_session_color(session_id: str, request: Request) -> None:
 
 @router.patch("/api/sessions/{session_id}/agent", status_code=status.HTTP_204_NO_CONTENT)
 async def set_session_agent(session_id: str, request: Request) -> None:
+    """Switch the agent (role) on an existing session.
+
+    An agent is a role: system prompt + approval mode + tool allowlist. It
+    does NOT change which LLM is running. The session's existing provider
+    and model are preserved — picking 'writer' on a Kiro session keeps you
+    on Kiro. The agent's `provider`/`model` fields are treated as preferred
+    defaults used only when starting a brand-new session from the agent
+    (handled elsewhere), never as overrides on an active session.
+    """
     mgr = _get_manager(request)
     session = mgr.get(session_id)
     if not session:
@@ -249,8 +258,6 @@ async def set_session_agent(session_id: str, request: Request) -> None:
     from arz.session.session import Session
     assert isinstance(session, Session)
 
-    # When picking an agent, copy its provider/model/approval/system_prompt
-    # onto the session unless those fields were explicitly already set.
     if agent_name:
         registry = getattr(request.app.state, "agent_registry", None)
         if registry is None:
@@ -258,22 +265,57 @@ async def set_session_agent(session_id: str, request: Request) -> None:
             registry = AgentRegistry()
             request.app.state.agent_registry = registry
         agent = registry.get(agent_name)
-        if agent is not None:
-            session.agent = agent_name
-            if agent.provider:
-                session.provider = agent.provider
-            if agent.model:
-                session.model = agent.model
-            if agent.approval_mode:
-                session.approval_mode = agent.approval_mode
-        else:
-            session.agent = agent_name  # set anyway, for visibility
+        session.agent = agent_name
+        if agent is not None and agent.approval_mode:
+            session.approval_mode = agent.approval_mode
     else:
         session.agent = None
     mgr.save(session)
     pool = getattr(request.app.state, "provider_pool", None)
     if pool is not None:
         await pool.deactivate(session_id)
+
+
+@router.post("/api/sessions/from-agent", status_code=status.HTTP_201_CREATED)
+async def create_session_from_agent(request: Request) -> dict:
+    """Create a fresh session pre-filled from an agent's full config.
+
+    This is the one place where an agent's preferred provider/model DO
+    apply — because there's no active session yet, "preferred" effectively
+    becomes the default.
+    """
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    agent_name = (body.get("agent") or "").strip()
+    if not agent_name:
+        raise HTTPException(status_code=422, detail="agent required")
+    registry = getattr(request.app.state, "agent_registry", None)
+    if registry is None:
+        from arz.agents import AgentRegistry
+        registry = AgentRegistry()
+        request.app.state.agent_registry = registry
+    agent = registry.get(agent_name)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"Agent '{agent_name}' not found")
+
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.create(
+        surface=body.get("surface", "dashboard"),
+        chat_id=body.get("chat_id", "web"),
+        thread_id=body.get("thread_id"),
+    )
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    session.agent = agent_name
+    if agent.provider:
+        session.provider = agent.provider
+    if agent.model:
+        session.model = agent.model
+    if agent.approval_mode:
+        session.approval_mode = agent.approval_mode
+    if agent.work_dir:
+        session.work_dir = agent.work_dir
+    mgr.save(session)
+    return _session_to_dict(session)
 
 
 @router.patch("/api/sessions/{session_id}/model", status_code=status.HTTP_204_NO_CONTENT)
