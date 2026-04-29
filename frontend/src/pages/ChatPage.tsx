@@ -82,18 +82,20 @@ export default function ChatPage() {
 
   useEffect(() => {
     loadSessions();
+    // Single steady-state poll. We poll relatively often (5s) so the
+    // streaming indicator dot updates promptly when a turn starts or
+    // finishes — but with NO deps on `sessions`, otherwise updating
+    // sessions would re-fire this effect, kick off another loadSessions,
+    // and tight-loop.
     const tick = () => { if (!document.hidden) loadSessions(); };
-    // Faster poll while any session is streaming so the indicator dot
-    // updates promptly when a turn finishes (or starts).
-    const anyStreaming = sessions.some((s) => s.streaming);
-    const interval = setInterval(tick, anyStreaming ? 3_000 : 60_000);
+    const interval = setInterval(tick, 5_000);
     const onVisible = () => { if (!document.hidden) loadSessions(); };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [sessions]);
+  }, []);
 
   // On session switch: load persisted activity from localStorage instead of clearing
   useEffect(() => {
