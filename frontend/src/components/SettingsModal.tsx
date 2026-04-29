@@ -17,8 +17,8 @@ interface Props {
   variant?: "modal" | "page";
 }
 
-const PROVIDER_OPTIONS = ["claude-code", "kiro-cli", "codex", "gemini", "anthropic"];
-const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "OpenAI Codex CLI", "Google Gemini CLI", "Anthropic API (direct)"];
+const PROVIDER_OPTIONS = ["claude-code", "kiro-cli", "codex", "gemini", "ollama", "anthropic"];
+const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "OpenAI Codex CLI", "Google Gemini CLI", "Ollama (local)", "Anthropic API (direct)"];
 const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 export default function SettingsModal({ onClose, variant = "modal" }: Props) {

@@ -102,6 +102,15 @@ def _make_provider(
             approval_mode=approval_mode,
         )
 
+    if provider_name == "ollama":
+        from arz.providers.ollama import OllamaProvider
+        return OllamaProvider(
+            model=model,
+            work_dir=work_dir,
+            system_prompt=system_prompt or None,
+            history_messages=history,
+        )
+
     raise ValueError(f"Unknown provider: {provider_name!r}")
 
 

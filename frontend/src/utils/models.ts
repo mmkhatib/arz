@@ -46,10 +46,30 @@ export const GEMINI_MODELS: ModelEntry[] = [
   { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
 ];
 
+// Ollama default catalog. Mirrors the LLM installer page so users can
+// pick anything they pulled. Replaced at runtime with `ollama list` if
+// `setOllamaModels` is called.
+export let OLLAMA_MODELS: ModelEntry[] = [
+  { id: "gemma3:4b",              label: "Gemma 3 (4B)" },
+  { id: "gemma3:12b",             label: "Gemma 3 (12B)" },
+  { id: "llama3.2:3b",            label: "Llama 3.2 (3B)" },
+  { id: "llama3.1:8b",            label: "Llama 3.1 (8B)" },
+  { id: "qwen2.5-coder:7b",       label: "Qwen 2.5 Coder (7B)" },
+  { id: "qwen2.5:14b",            label: "Qwen 2.5 (14B)" },
+  { id: "deepseek-coder-v2:16b",  label: "DeepSeek Coder v2 (16B)" },
+  { id: "phi3:mini",              label: "Phi-3 Mini" },
+  { id: "mistral:7b",             label: "Mistral (7B)" },
+];
+
+export function setOllamaModels(models: ModelEntry[]): void {
+  OLLAMA_MODELS = models;
+}
+
 export const CLAUDE_DEFAULT = "claude-opus-4-7";
 export const CODEX_DEFAULT = "gpt-5.4";
 export const KIRO_DEFAULT = "auto";
 export const GEMINI_DEFAULT = "gemini-2.5-pro";
+export const OLLAMA_DEFAULT = "gemma3:4b";
 
 export function modelsForProvider(provider: string | undefined): ModelEntry[] {
   switch (provider) {
@@ -57,6 +77,7 @@ export function modelsForProvider(provider: string | undefined): ModelEntry[] {
     case "kiro-cli": return KIRO_MODELS;
     case "anthropic": return ANTHROPIC_MODELS;
     case "gemini": return GEMINI_MODELS;
+    case "ollama": return OLLAMA_MODELS;
     default: return CLAUDE_MODELS; // claude-code or unknown
   }
 }
@@ -67,6 +88,7 @@ export function defaultModelForProvider(provider: string | undefined): string {
     case "kiro-cli": return KIRO_DEFAULT;
     case "anthropic": return CLAUDE_DEFAULT;
     case "gemini": return GEMINI_DEFAULT;
+    case "ollama": return OLLAMA_DEFAULT;
     default: return CLAUDE_DEFAULT;
   }
 }

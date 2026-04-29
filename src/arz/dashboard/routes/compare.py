@@ -44,6 +44,9 @@ async def _stream(prompt: str, provider_name: str, model: str) -> AsyncIterator[
     elif provider_name == "gemini":
         from arz.providers.gemini import GeminiProvider
         provider = GeminiProvider(model=model)
+    elif provider_name == "ollama":
+        from arz.providers.ollama import OllamaProvider
+        provider = OllamaProvider(model=model)
     else:
         yield sse_error(f"Unsupported provider: {provider_name}")
         return
