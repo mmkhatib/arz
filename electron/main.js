@@ -1,26 +1,36 @@
-// Arz desktop wrapper — thin Electron shell.
+// Arz desktop wrapper — thin Electron shell that fully owns the gateway
+// lifecycle.
 //
-// This file does NOT bundle the UI. It loads http://127.0.0.1:7777, which
-// the gateway serves. So:
-//   - UI changes → just `vite build` (or run dev server). No Electron rebuild.
-//   - This file changes → `npm run package` to repackage the app.
+// Lifecycle rules:
+//   - On launch, if the gateway isn't already running on 127.0.0.1:7777,
+//     we spawn it. We track whether we spawned it (vs found it pre-running).
+//   - We DO NOT kill a gateway someone else started (could be the user's
+//     dev server, another tab/instance). We only kill what we own.
+//   - On full app exit, we kill the spawned gateway with SIGTERM, give it
+//     5s to exit cleanly, then SIGKILL if it's still alive.
+//   - On macOS, "all windows closed" doesn't quit by default — but for
+//     this app we DO want to quit (so the gateway dies). The user can
+//     still relaunch from the dock.
 //
-// The wrapper auto-starts the gateway in the background (best-effort) so
-// users only need to launch the desktop app.
+// UI lives at the gateway, so:
+//   - Frontend changes → vite build, reload window. No Electron rebuild.
+//   - Wrapper changes (this file) → npm run package.
 
 const { app, BrowserWindow, Menu, shell, dialog } = require("electron");
-const path = require("path");
-const { spawn } = require("child_process");
-const http = require("http");
+const path = require("node:path");
+const { spawn } = require("node:child_process");
+const http = require("node:http");
 
 const GATEWAY_URL = process.env.ARZ_GATEWAY_URL || "http://127.0.0.1:7777";
 const GATEWAY_HOST = "127.0.0.1";
 const GATEWAY_PORT = 7777;
 const STARTUP_TIMEOUT_MS = 30_000;
 const POLL_INTERVAL_MS = 300;
+const SHUTDOWN_GRACE_MS = 5_000;
 
 let mainWindow = null;
-let gatewayProc = null;
+let gatewayProc = null;          // Process handle if WE spawned it
+let gatewaySpawnedByUs = false;  // Don't kill what we didn't start
 
 function probeGateway() {
   return new Promise((resolve) => {
@@ -43,29 +53,68 @@ async function waitForGateway() {
   return false;
 }
 
-function spawnGateway() {
-  // Try `arz gateway` (installed via uv/pip), then `uv run arz gateway` from
-  // the project dir if we're running from source.
+function tryStartGateway() {
+  // Try `arz gateway` (installed via uv/pip), then `uv run arz gateway`
+  // from the project root if we're running from source.
+  const projectRoot = path.resolve(__dirname, "..");
   const candidates = [
-    { cmd: "arz", args: ["gateway"] },
-    { cmd: "uv", args: ["run", "arz", "gateway"], cwd: path.resolve(__dirname, "..") },
+    { cmd: "arz", args: ["gateway"], cwd: projectRoot },
+    { cmd: "uv", args: ["run", "arz", "gateway"], cwd: projectRoot },
   ];
   for (const c of candidates) {
     try {
       const proc = spawn(c.cmd, c.args, {
         cwd: c.cwd,
         stdio: "ignore",
+        // Don't detach — we want the OS to clean it up if Electron crashes,
+        // and we want to be able to kill it on graceful exit.
         detached: false,
         env: { ...process.env },
       });
-      proc.on("error", () => { /* will fall through to next candidate */ });
-      gatewayProc = proc;
-      return proc;
+      // If `spawn` succeeds but the binary doesn't exist, we'll get an
+      // 'error' event. Wait briefly to detect that.
+      let errored = false;
+      proc.once("error", () => { errored = true; });
+      // Synchronous-ish bail: if PID is undefined or the process dies
+      // immediately, try the next candidate.
+      if (proc.pid && !errored) {
+        gatewayProc = proc;
+        gatewaySpawnedByUs = true;
+        proc.once("exit", () => {
+          // If the gateway dies on its own, drop our handle so we don't
+          // try to kill an already-gone PID later.
+          gatewayProc = null;
+          gatewaySpawnedByUs = false;
+        });
+        return proc;
+      }
     } catch (_) {
       // try next
     }
   }
   return null;
+}
+
+function killGatewayIfOurs() {
+  if (!gatewaySpawnedByUs || !gatewayProc) return Promise.resolve();
+  if (gatewayProc.killed || gatewayProc.exitCode != null) return Promise.resolve();
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = () => { if (!resolved) { resolved = true; resolve(); } };
+    gatewayProc.once("exit", finish);
+    try {
+      gatewayProc.kill("SIGTERM");
+    } catch (_) {
+      finish();
+      return;
+    }
+    setTimeout(() => {
+      if (!resolved && gatewayProc && !gatewayProc.killed) {
+        try { gatewayProc.kill("SIGKILL"); } catch (_) {}
+      }
+    }, SHUTDOWN_GRACE_MS);
+    setTimeout(finish, SHUTDOWN_GRACE_MS + 500);
+  });
 }
 
 function buildMenu() {
@@ -140,7 +189,6 @@ async function createWindow() {
 
   mainWindow.once("ready-to-show", () => mainWindow.show());
 
-  // External links open in the system browser, not in the Electron window.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (!url.startsWith(GATEWAY_URL)) {
       shell.openExternal(url);
@@ -149,12 +197,11 @@ async function createWindow() {
     return { action: "allow" };
   });
 
-  // If gateway isn't up, start it. Show a loading screen meanwhile.
   await mainWindow.loadFile(path.join(__dirname, "loading.html")).catch(() => {});
 
   let up = await probeGateway();
   if (!up) {
-    spawnGateway();
+    tryStartGateway();
     up = await waitForGateway();
   }
   if (!up) {
@@ -163,6 +210,7 @@ async function createWindow() {
       `Could not start or reach the gateway at ${GATEWAY_URL}.\n\n` +
       `Try starting it manually:\n  arz gateway\n\nThen reopen this app.`,
     );
+    app.quit();
     return;
   }
 
@@ -178,15 +226,28 @@ app.whenReady().then(() => {
   });
 });
 
+// On every platform, when the user closes all windows we want the wrapper
+// to fully exit so the gateway dies with it. Without this, on macOS the
+// app stays in the dock and the gateway keeps running silently.
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  app.quit();
 });
 
-app.on("before-quit", () => {
-  // We didn't take ownership of the gateway aggressively (it might be a
-  // long-running install someone else wants to keep). Only kill if we
-  // actually spawned it.
-  if (gatewayProc && !gatewayProc.killed) {
-    try { gatewayProc.kill(); } catch (_) {}
+// before-quit fires before the app actually exits, while async work can
+// still complete. We use it to take down the gateway cleanly.
+app.on("before-quit", async (e) => {
+  if (gatewaySpawnedByUs && gatewayProc && !gatewayProc.killed) {
+    e.preventDefault();
+    await killGatewayIfOurs();
+    app.exit(0);
   }
 });
+
+// Last-resort cleanup if we somehow exit without going through before-quit.
+process.on("exit", () => {
+  if (gatewaySpawnedByUs && gatewayProc && !gatewayProc.killed) {
+    try { gatewayProc.kill("SIGKILL"); } catch (_) {}
+  }
+});
+process.on("SIGINT", () => { app.quit(); });
+process.on("SIGTERM", () => { app.quit(); });
