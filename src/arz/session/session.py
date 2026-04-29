@@ -17,6 +17,8 @@ class Message:
     created_at: datetime = field(default_factory=datetime.utcnow)
     usage: dict[str, int] | None = None
     model: str | None = None
+    elapsed_ms: int | None = None
+    tool_calls: list[dict] | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -28,6 +30,10 @@ class Message:
             d["usage"] = self.usage
         if self.model is not None:
             d["model"] = self.model
+        if self.elapsed_ms is not None:
+            d["elapsed_ms"] = self.elapsed_ms
+        if self.tool_calls:
+            d["tool_calls"] = self.tool_calls
         return d
 
     @classmethod
@@ -38,6 +44,8 @@ class Message:
             created_at=datetime.fromisoformat(d["created_at"]),
             usage=d.get("usage"),
             model=d.get("model"),
+            elapsed_ms=d.get("elapsed_ms"),
+            tool_calls=d.get("tool_calls"),
         )
 
 

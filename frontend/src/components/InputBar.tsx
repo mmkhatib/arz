@@ -349,28 +349,28 @@ export default function InputBar({
                   <span className="truncate max-w-[120px]">{agent ?? "no agent"}</span>
                 </button>
                 <Popover open={agentOpen} onClose={() => setAgentOpen(false)}>
-                  <div className="px-1 py-0.5 min-w-[200px] max-h-[400px] overflow-y-auto">
-                    <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Agent (preset)</div>
-                    <button
-                      onClick={() => { onAgentChange(null); setAgentOpen(false); }}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
-                    >
-                      <span className="w-3 shrink-0">{!agent && <Check size={12} className="text-[var(--cedar)]" />}</span>
-                      <span className={!agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)] italic"}>(none)</span>
-                    </button>
-                    {agents.map((a) => (
+                  <div className="min-w-[220px] max-w-[280px]">
+                    <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium border-b border-[var(--border)]">Agent (preset)</div>
+                    <div className="max-h-[260px] overflow-y-auto px-1 py-0.5">
                       <button
-                        key={a.name}
-                        onClick={() => { onAgentChange(a.name); setAgentOpen(false); }}
-                        className="w-full flex items-start gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                        onClick={() => { onAgentChange(null); setAgentOpen(false); }}
+                        className="w-full flex items-center gap-2 px-2 py-1 rounded-md text-[12px] hover:bg-[var(--bg)] transition-colors text-left"
                       >
-                        <span className="w-3 shrink-0 mt-0.5">{a.name === agent && <Check size={12} className="text-[var(--cedar)]" />}</span>
-                        <span className="flex-1 min-w-0">
-                          <span className={a.name === agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>{a.name}</span>
-                          {a.description && <span className="block text-[10px] text-[var(--muted)]/60 truncate">{a.description}</span>}
-                        </span>
+                        <span className="w-3 shrink-0">{!agent && <Check size={11} className="text-[var(--cedar)]" />}</span>
+                        <span className={!agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)] italic"}>(none)</span>
                       </button>
-                    ))}
+                      {agents.map((a) => (
+                        <button
+                          key={a.name}
+                          onClick={() => { onAgentChange(a.name); setAgentOpen(false); }}
+                          title={a.description || a.name}
+                          className="w-full flex items-center gap-2 px-2 py-1 rounded-md text-[12px] hover:bg-[var(--bg)] transition-colors text-left"
+                        >
+                          <span className="w-3 shrink-0">{a.name === agent && <Check size={11} className="text-[var(--cedar)]" />}</span>
+                          <span className={["truncate", a.name === agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"].join(" ")}>{a.name}</span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </Popover>
               </div>

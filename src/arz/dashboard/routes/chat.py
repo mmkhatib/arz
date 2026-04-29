@@ -91,11 +91,14 @@ async def _stream_response(
     session_modes: dict | None = None,
 ) -> AsyncIterator[str]:
     """Drive the provider, record history, yield SSE strings."""
+    import time as _time
     session = mgr.get(session_id)
     if session:
         session.add_message("user", message)
 
     full_reply = ""
+    turn_started = _time.monotonic()
+    turn_tool_calls: list[dict] = []
     try:
         async for event in provider.stream(message):
             if event.kind == EVENT_TEXT_CHUNK and event.text:
@@ -109,9 +112,13 @@ async def _stream_response(
                 )
 
             elif event.kind == EVENT_TOOL_CALL:
+                tool_name = event.text or ""
+                tool_input_str = str(event.tool_input or "")
+                if tool_name:
+                    turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
                 yield sse_tool_call(
-                    tool_name=event.text or "",
-                    tool_input=str(event.tool_input or ""),
+                    tool_name=tool_name,
+                    tool_input=tool_input_str,
                     request_id=event.request_id or "",
                 )
 
@@ -160,11 +167,15 @@ async def _stream_response(
 
             elif event.kind == EVENT_COMPLETE:
                 usage_dict = event.usage.to_dict() if event.usage else None
+                elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
                 if session and full_reply:
                     msg = session.add_message("assistant", full_reply)
                     if usage_dict:
                         msg.usage = usage_dict
                     msg.model = provider.current_model
+                    msg.elapsed_ms = elapsed_ms
+                    if turn_tool_calls:
+                        msg.tool_calls = turn_tool_calls
                     mgr.save(session)
                 yield sse_complete(
                     event.stop_reason or "end_turn",
