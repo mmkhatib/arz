@@ -50,6 +50,10 @@ export const GEMINI_MODELS: ModelEntry[] = [
 // pick anything they pulled. Replaced at runtime with `ollama list` if
 // `setOllamaModels` is called.
 export let OLLAMA_MODELS: ModelEntry[] = [
+  { id: "gemma4:1b",              label: "Gemma 4 (1B)" },
+  { id: "gemma4:4b",              label: "Gemma 4 (4B)" },
+  { id: "gemma4:12b",             label: "Gemma 4 (12B)" },
+  { id: "gemma4:27b",             label: "Gemma 4 (27B)" },
   { id: "gemma3:1b",              label: "Gemma 3 (1B)" },
   { id: "gemma3:4b",              label: "Gemma 3 (4B)" },
   { id: "gemma3:12b",             label: "Gemma 3 (12B)" },

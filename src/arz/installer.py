@@ -109,10 +109,32 @@ MODEL_TARGETS: list[ModelTarget] = [
         size_gb=0.3, ram_gb=1.5, context=2048, license="Apache-2.0", gpu="optional",
     ),
 
-    # ── Gemma 3 family ──
+    # ── Gemma 4 family (latest) ──
+    ModelTarget(
+        "ollama:gemma4:1b", "ollama", "gemma4:1b", "Gemma 4 (1B)",
+        "Latest Gemma — tiny tier. Runs anywhere; great for autocomplete and draft tasks.",
+        size_gb=0.9, ram_gb=4.0, context=128_000, license="Gemma", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:gemma4:4b", "ollama", "gemma4:4b", "Gemma 4 (4B)",
+        "Latest Gemma — light general-purpose. Strong default for laptop-class hardware.",
+        size_gb=3.4, ram_gb=8.0, context=128_000, license="Gemma", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:gemma4:12b", "ollama", "gemma4:12b", "Gemma 4 (12B)",
+        "Latest Gemma — mid-size. Strong general assistant; sharp at code and reasoning.",
+        size_gb=8.3, ram_gb=16.0, context=128_000, license="Gemma", gpu="recommended",
+    ),
+    ModelTarget(
+        "ollama:gemma4:27b", "ollama", "gemma4:27b", "Gemma 4 (27B)",
+        "Latest Gemma — frontier-quality reasoning at the open-weight scale.",
+        size_gb=17.5, ram_gb=32.0, context=128_000, license="Gemma", gpu="recommended",
+    ),
+
+    # ── Gemma 3 family (previous generation) ──
     ModelTarget(
         "ollama:gemma3:1b", "ollama", "gemma3:1b", "Gemma 3 (1B)",
-        "Tiny Gemma — runs anywhere; quick draft / autocomplete model.",
+        "Previous-gen Gemma — runs anywhere; quick draft / autocomplete model.",
         size_gb=0.8, ram_gb=4.0, context=32_768, license="Gemma", gpu="optional",
     ),
     ModelTarget(
