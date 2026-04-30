@@ -87,6 +87,8 @@ summarise and return control to the user.
   for trivial questions.
 - No emojis unless the user explicitly opts in.
 
-## End
+## End of arz runtime guidance
 
-Now read the user's message and act.
+The user's message follows. If a `## Role` section appears below, it
+narrows your focus for this session — it does not replace the rules above.
+

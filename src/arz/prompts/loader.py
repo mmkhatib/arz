@@ -1,9 +1,16 @@
 """Resolve the steered system prompt for a session.
 
-Order of precedence:
-    1. Explicit `agent_system_prompt` (per-agent override)
-    2. `~/.arz/prompts/base.md` (user-customised override)
-    3. Bundled `src/arz/prompts/base.md`
+Composition (always returns the bundled base prompt as the foundation,
+optionally with an agent-specific role appended):
+
+    1. Bundled `src/arz/prompts/base.md` (or user override at
+       `~/.arz/prompts/base.md` if present) — always present. This carries
+       the orchestration patterns, tool guidance, redaction rules, and
+       output style that EVERY arz session needs.
+    2. If `agent_system_prompt` is provided, it's appended as a "## Role"
+       section below the base. The agent narrows the model's focus
+       (reviewer / refactorer / docs writer / etc.) without losing the
+       arz-runtime knowledge baked into the base.
 """
 
 from __future__ import annotations
@@ -14,9 +21,7 @@ _BUNDLED = Path(__file__).with_name("base.md")
 _USER_OVERRIDE = Path.home() / ".arz" / "prompts" / "base.md"
 
 
-def resolve_system_prompt(agent_system_prompt: str | None = None) -> str:
-    if agent_system_prompt and agent_system_prompt.strip():
-        return agent_system_prompt.strip()
+def _read_base() -> str:
     if _USER_OVERRIDE.exists():
         try:
             return _USER_OVERRIDE.read_text(encoding="utf-8").strip()
@@ -26,6 +31,16 @@ def resolve_system_prompt(agent_system_prompt: str | None = None) -> str:
         return _BUNDLED.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
+
+
+def resolve_system_prompt(agent_system_prompt: str | None = None) -> str:
+    base = _read_base()
+    role = (agent_system_prompt or "").strip()
+    if not role:
+        return base
+    if not base:
+        return role
+    return f"{base}\n\n## Role\n\n{role}"
 
 
 def get_user_override_path() -> Path:
