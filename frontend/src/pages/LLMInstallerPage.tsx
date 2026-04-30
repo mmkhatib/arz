@@ -19,6 +19,16 @@ interface ModelRow {
   label: string;
   description: string;
   size_gb: number;
+  ram_gb?: number;
+  context?: number;
+  license?: string;
+  gpu?: "optional" | "recommended" | "required";
+}
+
+function formatContext(n?: number): string {
+  if (!n) return "—";
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
 }
 
 interface InstalledModel {
@@ -231,7 +241,7 @@ export default function LLMInstallerPage() {
               const isInstalled = isModelInstalled(m);
               const inMem = isLoaded(m.name);
               return (
-                <div key={m.id} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1">
+                <div key={m.id} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1.5">
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] font-semibold text-[var(--text)]">{m.label}</span>
                     {isInstalled && (
@@ -244,9 +254,21 @@ export default function LLMInstallerPage() {
                         <Power size={9} /> loaded
                       </span>
                     )}
-                    <span className="ml-auto text-[10px] font-mono text-[var(--muted)]/60">{m.size_gb} GB</span>
+                    {m.gpu === "required" && (
+                      <span className="text-[10px] uppercase tracking-wider text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded">GPU required</span>
+                    )}
+                    {m.gpu === "recommended" && (
+                      <span className="text-[10px] uppercase tracking-wider text-amber-300/80 bg-amber-900/15 px-1.5 py-0.5 rounded">GPU rec.</span>
+                    )}
                   </div>
                   <div className="text-[12px] text-[var(--muted)]">{m.description}</div>
+                  {/* Requirements row — disk · RAM · context · license */}
+                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono text-[var(--muted)]/70">
+                    <span><span className="text-[var(--muted)]/50">disk </span>{m.size_gb} GB</span>
+                    <span><span className="text-[var(--muted)]/50">RAM  </span>{m.ram_gb ? `${m.ram_gb} GB` : "—"}</span>
+                    <span><span className="text-[var(--muted)]/50">ctx  </span>{formatContext(m.context)}</span>
+                    <span><span className="text-[var(--muted)]/50">lic  </span>{m.license || "—"}</span>
+                  </div>
                   <div className="text-[10px] font-mono text-[var(--muted)]/60">{m.name}</div>
                   <div className="mt-1 flex items-center gap-2">
                     {!isInstalled && (

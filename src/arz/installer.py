@@ -37,7 +37,11 @@ class ModelTarget:
     name: str            # tag passed to `ollama pull`
     label: str
     description: str
-    size_gb: float
+    size_gb: float       # download size on disk (default Q4_0 quant)
+    ram_gb: float = 0.0  # typical RAM/VRAM headroom needed at runtime
+    context: int = 0     # max context window in tokens
+    license: str = ""    # short license tag, e.g. "Gemma", "Apache-2.0"
+    gpu: str = "optional"  # "optional" | "recommended" | "required"
 
 
 CLI_TARGETS: list[CliTarget] = [
@@ -93,20 +97,92 @@ CLI_TARGETS: list[CliTarget] = [
 ]
 
 MODEL_TARGETS: list[ModelTarget] = [
-    # Embedding models — for semantic memory recall, not chat.
-    ModelTarget("ollama:qwen3-embedding:0.6b", "ollama", "qwen3-embedding:0.6b", "Qwen3 Embedding (0.6B)", "Embedding model — powers semantic memory recall. Recommended.", 0.6),
-    ModelTarget("ollama:nomic-embed-text:latest", "ollama", "nomic-embed-text:latest", "Nomic Embed Text", "Alternative embedding model — good general-purpose semantic vectors.", 0.3),
-    # Chat models below.
-    ModelTarget("ollama:gemma3:4b",        "ollama", "gemma3:4b",        "Gemma 3 (4B)",        "Google's lightweight general-purpose model. Good default.", 3.3),
-    ModelTarget("ollama:gemma3:12b",       "ollama", "gemma3:12b",       "Gemma 3 (12B)",       "Larger Gemma — needs ~12 GB RAM.", 8.1),
-    ModelTarget("ollama:llama3.2:3b",      "ollama", "llama3.2:3b",      "Llama 3.2 (3B)",      "Meta's small Llama — fast on any laptop.", 2.0),
-    ModelTarget("ollama:llama3.1:8b",      "ollama", "llama3.1:8b",      "Llama 3.1 (8B)",      "Meta's mid-size Llama; broadly capable.", 4.7),
-    ModelTarget("ollama:qwen2.5-coder:7b", "ollama", "qwen2.5-coder:7b", "Qwen 2.5 Coder (7B)", "Alibaba's coding-tuned Qwen.", 4.7),
-    ModelTarget("ollama:qwen2.5:14b",      "ollama", "qwen2.5:14b",      "Qwen 2.5 (14B)",      "Larger Qwen for richer reasoning. ~16 GB RAM.", 9.0),
-    ModelTarget("ollama:deepseek-coder-v2:16b", "ollama", "deepseek-coder-v2:16b", "DeepSeek Coder v2 (16B)", "Strong open coding model.", 9.0),
-    ModelTarget("ollama:phi3:mini",        "ollama", "phi3:mini",        "Phi-3 Mini (3.8B)",   "Microsoft's compact reasoning model.", 2.3),
-    ModelTarget("ollama:mistral:7b",       "ollama", "mistral:7b",       "Mistral (7B)",        "Mistral's classic open base model.", 4.1),
-    ModelTarget("ollama:mixtral:8x7b",     "ollama", "mixtral:8x7b",     "Mixtral (8x7B)",      "Mixture-of-experts; higher quality, ~30 GB RAM.", 26.0),
+    # ── Embedding models — for semantic memory recall, not chat ──
+    ModelTarget(
+        "ollama:qwen3-embedding:0.6b", "ollama", "qwen3-embedding:0.6b", "Qwen3 Embedding (0.6B)",
+        "Embedding model — powers semantic memory recall. Recommended.",
+        size_gb=0.6, ram_gb=2.0, context=8192, license="Apache-2.0", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:nomic-embed-text:latest", "ollama", "nomic-embed-text:latest", "Nomic Embed Text",
+        "Alternative embedding model — good general-purpose semantic vectors.",
+        size_gb=0.3, ram_gb=1.5, context=2048, license="Apache-2.0", gpu="optional",
+    ),
+
+    # ── Gemma 3 family ──
+    ModelTarget(
+        "ollama:gemma3:1b", "ollama", "gemma3:1b", "Gemma 3 (1B)",
+        "Tiny Gemma — runs anywhere; quick draft / autocomplete model.",
+        size_gb=0.8, ram_gb=4.0, context=32_768, license="Gemma", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:gemma3:4b", "ollama", "gemma3:4b", "Gemma 3 (4B)",
+        "Google's lightweight general-purpose model. Good default.",
+        size_gb=3.3, ram_gb=8.0, context=128_000, license="Gemma", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:gemma3:12b", "ollama", "gemma3:12b", "Gemma 3 (12B)",
+        "Mid-size Gemma — strong general assistant.",
+        size_gb=8.1, ram_gb=16.0, context=128_000, license="Gemma", gpu="recommended",
+    ),
+    ModelTarget(
+        "ollama:gemma3:27b", "ollama", "gemma3:27b", "Gemma 3 (27B)",
+        "Largest Gemma — frontier-quality reasoning.",
+        size_gb=17.0, ram_gb=32.0, context=128_000, license="Gemma", gpu="recommended",
+    ),
+
+    # ── Llama family ──
+    ModelTarget(
+        "ollama:llama3.2:3b", "ollama", "llama3.2:3b", "Llama 3.2 (3B)",
+        "Meta's small Llama — fast on any laptop.",
+        size_gb=2.0, ram_gb=6.0, context=128_000, license="Llama 3", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:llama3.1:8b", "ollama", "llama3.1:8b", "Llama 3.1 (8B)",
+        "Meta's mid-size Llama; broadly capable.",
+        size_gb=4.7, ram_gb=12.0, context=128_000, license="Llama 3.1", gpu="recommended",
+    ),
+
+    # ── Qwen family ──
+    ModelTarget(
+        "ollama:qwen2.5-coder:7b", "ollama", "qwen2.5-coder:7b", "Qwen 2.5 Coder (7B)",
+        "Alibaba's coding-tuned Qwen — great for codegen.",
+        size_gb=4.7, ram_gb=12.0, context=131_072, license="Apache-2.0", gpu="recommended",
+    ),
+    ModelTarget(
+        "ollama:qwen2.5:14b", "ollama", "qwen2.5:14b", "Qwen 2.5 (14B)",
+        "Larger Qwen for richer reasoning.",
+        size_gb=9.0, ram_gb=20.0, context=131_072, license="Apache-2.0", gpu="recommended",
+    ),
+    ModelTarget(
+        "ollama:qwen2.5:32b", "ollama", "qwen2.5:32b", "Qwen 2.5 (32B)",
+        "Top-tier open Qwen — frontier reasoning. Needs serious hardware.",
+        size_gb=20.0, ram_gb=40.0, context=131_072, license="Apache-2.0", gpu="recommended",
+    ),
+
+    # ── Coding-specialised ──
+    ModelTarget(
+        "ollama:deepseek-coder-v2:16b", "ollama", "deepseek-coder-v2:16b", "DeepSeek Coder v2 (16B)",
+        "Strong open coding model — MoE; lower active-param cost.",
+        size_gb=9.0, ram_gb=18.0, context=128_000, license="DeepSeek", gpu="recommended",
+    ),
+
+    # ── Microsoft Phi / Mistral / Mixtral ──
+    ModelTarget(
+        "ollama:phi3:mini", "ollama", "phi3:mini", "Phi-3 Mini (3.8B)",
+        "Microsoft's compact reasoning model.",
+        size_gb=2.3, ram_gb=6.0, context=128_000, license="MIT", gpu="optional",
+    ),
+    ModelTarget(
+        "ollama:mistral:7b", "ollama", "mistral:7b", "Mistral (7B)",
+        "Mistral's classic open base model.",
+        size_gb=4.1, ram_gb=10.0, context=32_768, license="Apache-2.0", gpu="recommended",
+    ),
+    ModelTarget(
+        "ollama:mixtral:8x7b", "ollama", "mixtral:8x7b", "Mixtral (8x7B)",
+        "Mixture-of-experts; higher quality. Needs serious hardware.",
+        size_gb=26.0, ram_gb=48.0, context=32_768, license="Apache-2.0", gpu="required",
+    ),
 ]
 
 
@@ -146,6 +222,10 @@ def list_model_targets() -> list[dict]:
             "label": m.label,
             "description": m.description,
             "size_gb": m.size_gb,
+            "ram_gb": m.ram_gb,
+            "context": m.context,
+            "license": m.license,
+            "gpu": m.gpu,
         }
         for m in MODEL_TARGETS
     ]

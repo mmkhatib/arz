@@ -390,7 +390,14 @@ export const api = {
   // ── LLM Installer ──
   getInstallerStatus: () => request<{
     clis: { name: string; binary: string; description: string; installed: boolean; path?: string | null; docs_url: string; installable_here: boolean }[];
-    model_catalog: { id: string; runtime: string; name: string; label: string; description: string; size_gb: number }[];
+    model_catalog: {
+      id: string; runtime: string; name: string; label: string; description: string;
+      size_gb: number;
+      ram_gb?: number;
+      context?: number;
+      license?: string;
+      gpu?: "optional" | "recommended" | "required";
+    }[];
     ollama_installed_models: { name: string; id: string; size: string }[];
     ollama_loaded_models: { name: string; id: string; size: string; processor?: string; until?: string }[];
   }>("/installer/status"),
