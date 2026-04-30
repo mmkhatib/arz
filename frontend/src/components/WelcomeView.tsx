@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Bot } from "lucide-react";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
+import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
 
 interface AgentOpt { name: string; description?: string; provider?: string }
 
@@ -23,6 +24,8 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
   const [dirDraft, setDirDraft] = useState(workDir);
   const modelBtnRef = useRef<HTMLButtonElement>(null);
 
+  // Hydrate the dynamic Ollama list (no-op if already cached).
+  useOllamaInstalledModels();
   const providerModels = modelsForProvider(provider);
   const effectiveModel = isModelValid(provider, model) ? (model as string) : defaultModelForProvider(provider);
   const activeModel = providerModels.find((m) => m.id === effectiveModel);
@@ -77,20 +80,34 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
                     Model
                   </div>
                   <div className="max-h-[260px] overflow-y-auto px-1 py-0.5">
-                    {providerModels.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => { onModelChange?.(m.id); setModelOpen(false); }}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] hover:bg-[var(--bg)] transition-colors text-left"
-                      >
-                        <span className="w-3 shrink-0">
-                          {m.id === effectiveModel && <Check size={11} className="text-[var(--cedar)]" />}
-                        </span>
-                        <span className={["truncate", m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"].join(" ")}>
-                          {m.label}
-                        </span>
-                      </button>
-                    ))}
+                    {providerModels.length === 0 && provider === "ollama" ? (
+                      <div className="px-2 py-3 text-[12px] text-[var(--muted)]">
+                        No Ollama models installed locally.{" "}
+                        <a
+                          href="/models"
+                          onClick={(e) => { e.preventDefault(); window.location.assign("/models"); }}
+                          className="text-[var(--cedar)] hover:underline"
+                        >
+                          Pull one
+                        </a>{" "}
+                        first.
+                      </div>
+                    ) : (
+                      providerModels.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => { onModelChange?.(m.id); setModelOpen(false); }}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-[12px] hover:bg-[var(--bg)] transition-colors text-left"
+                        >
+                          <span className="w-3 shrink-0">
+                            {m.id === effectiveModel && <Check size={11} className="text-[var(--cedar)]" />}
+                          </span>
+                          <span className={["truncate", m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"].join(" ")}>
+                            {m.label}
+                          </span>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </div>
               </Popover>

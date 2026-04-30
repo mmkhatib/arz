@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Cpu, Download, Check, ExternalLink, Loader2, X, Power, PowerOff, MemoryStick } from "lucide-react";
 import { api } from "@/api/client";
+import { setOllamaInstalledModels } from "@/utils/models";
 
 interface CliRow {
   name: string;
@@ -63,6 +64,11 @@ export default function LLMInstallerPage() {
       setCatalog(s.model_catalog);
       setInstalled(s.ollama_installed_models);
       setLoaded(s.ollama_loaded_models || []);
+      // Keep the global Ollama-models cache in sync so the chat picker
+      // reflects pulls/removes immediately, no full reload needed.
+      setOllamaInstalledModels(
+        (s.ollama_installed_models || []).map((m) => ({ id: m.name, label: m.name })),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

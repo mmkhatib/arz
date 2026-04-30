@@ -46,29 +46,29 @@ export const GEMINI_MODELS: ModelEntry[] = [
   { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite" },
 ];
 
-// Ollama default catalog. Mirrors the LLM installer page so users can
-// pick anything they pulled. Replaced at runtime with `ollama list` if
-// `setOllamaModels` is called.
-export let OLLAMA_MODELS: ModelEntry[] = [
-  { id: "gemma4:1b",              label: "Gemma 4 (1B)" },
-  { id: "gemma4:4b",              label: "Gemma 4 (4B)" },
-  { id: "gemma4:12b",             label: "Gemma 4 (12B)" },
-  { id: "gemma4:27b",             label: "Gemma 4 (27B)" },
-  { id: "gemma3:1b",              label: "Gemma 3 (1B)" },
-  { id: "gemma3:4b",              label: "Gemma 3 (4B)" },
-  { id: "gemma3:12b",             label: "Gemma 3 (12B)" },
-  { id: "gemma3:27b",             label: "Gemma 3 (27B)" },
-  { id: "llama3.2:3b",            label: "Llama 3.2 (3B)" },
-  { id: "llama3.1:8b",            label: "Llama 3.1 (8B)" },
-  { id: "qwen2.5-coder:7b",       label: "Qwen 2.5 Coder (7B)" },
-  { id: "qwen2.5:14b",            label: "Qwen 2.5 (14B)" },
-  { id: "deepseek-coder-v2:16b",  label: "DeepSeek Coder v2 (16B)" },
-  { id: "phi3:mini",              label: "Phi-3 Mini" },
-  { id: "mistral:7b",             label: "Mistral (7B)" },
-];
+// Ollama is *dynamic* — only models the user has actually pulled should
+// appear in pickers. The cache is populated by useOllamaInstalledModels()
+// (see hooks/useOllamaInstalledModels.ts) which queries /installer/status.
+// `OLLAMA_MODELS` is intentionally empty by default — pickers show
+// "no models pulled" until the hook fetches the real list.
+export let OLLAMA_MODELS: ModelEntry[] = [];
 
-export function setOllamaModels(models: ModelEntry[]): void {
-  OLLAMA_MODELS = models;
+let _ollamaInstalled: ModelEntry[] | null = null;
+const _ollamaSubs: Set<() => void> = new Set();
+
+export function setOllamaInstalledModels(models: ModelEntry[] | null): void {
+  _ollamaInstalled = models;
+  OLLAMA_MODELS = models ?? [];
+  _ollamaSubs.forEach((cb) => cb());
+}
+
+export function getOllamaInstalledModels(): ModelEntry[] | null {
+  return _ollamaInstalled;
+}
+
+export function subscribeOllamaInstalled(cb: () => void): () => void {
+  _ollamaSubs.add(cb);
+  return () => { _ollamaSubs.delete(cb); };
 }
 
 export const CLAUDE_DEFAULT = "claude-opus-4-7";
@@ -83,7 +83,7 @@ export function modelsForProvider(provider: string | undefined): ModelEntry[] {
     case "kiro-cli": return KIRO_MODELS;
     case "anthropic": return ANTHROPIC_MODELS;
     case "gemini": return GEMINI_MODELS;
-    case "ollama": return OLLAMA_MODELS;
+    case "ollama": return _ollamaInstalled ?? OLLAMA_MODELS;
     default: return CLAUDE_MODELS; // claude-code or unknown
   }
 }
@@ -94,7 +94,10 @@ export function defaultModelForProvider(provider: string | undefined): string {
     case "kiro-cli": return KIRO_DEFAULT;
     case "anthropic": return CLAUDE_DEFAULT;
     case "gemini": return GEMINI_DEFAULT;
-    case "ollama": return OLLAMA_DEFAULT;
+    case "ollama":
+      // First installed model wins. If nothing is pulled yet, fall back
+      // to the well-known default; user will see "Pull a model" prompts.
+      return (_ollamaInstalled && _ollamaInstalled[0]?.id) || OLLAMA_DEFAULT;
     default: return CLAUDE_DEFAULT;
   }
 }

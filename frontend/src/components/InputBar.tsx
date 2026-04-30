@@ -4,6 +4,7 @@ import type { UploadedFile } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
+import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
 
 export type ApprovalMode = "normal" | "trust_reads" | "trust" | "yolo";
 
@@ -212,6 +213,9 @@ export default function InputBar({
   };
 
   const activeApproval = APPROVAL_OPTIONS.find((o) => o.mode === approvalMode) ?? APPROVAL_OPTIONS[0];
+  // Hydrate the dynamic Ollama list (no-op for non-ollama sessions; the
+  // hook short-circuits on subsequent mounts).
+  useOllamaInstalledModels();
   const providerModels = modelsForProvider(provider);
   const effectiveModel = isModelValid(provider, model) ? (model as string) : defaultModelForProvider(provider);
   const activeModel = providerModels.find((m) => m.id === effectiveModel);
@@ -330,25 +334,39 @@ export default function InputBar({
                   </span>
                 </button>
                 <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
-                  <div className="px-1 py-0.5">
+                  <div className="px-1 py-0.5 min-w-[220px]">
                     <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">{PROVIDER_LABELS[provider ?? ""] ?? "Model"}</div>
-                    {providerModels.map((m) => (
-                      <button
-                        key={m.id}
-                        onClick={() => {
-                          onModelChange?.(m.id);
-                          setModelOpen(false);
-                        }}
-                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
-                      >
-                        <span className="w-3 shrink-0">
-                          {m.id === effectiveModel && <Check size={12} className="text-[var(--cedar)]" />}
-                        </span>
-                        <span className={m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
-                          {m.label}
-                        </span>
-                      </button>
-                    ))}
+                    {providerModels.length === 0 && provider === "ollama" ? (
+                      <div className="px-2 py-2 text-[12px] text-[var(--muted)]">
+                        No Ollama models installed locally.{" "}
+                        <a
+                          href="/models"
+                          onClick={(e) => { e.preventDefault(); window.location.assign("/models"); }}
+                          className="text-[var(--cedar)] hover:underline"
+                        >
+                          Pull one
+                        </a>{" "}
+                        to use this provider.
+                      </div>
+                    ) : (
+                      providerModels.map((m) => (
+                        <button
+                          key={m.id}
+                          onClick={() => {
+                            onModelChange?.(m.id);
+                            setModelOpen(false);
+                          }}
+                          className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                        >
+                          <span className="w-3 shrink-0">
+                            {m.id === effectiveModel && <Check size={12} className="text-[var(--cedar)]" />}
+                          </span>
+                          <span className={m.id === effectiveModel ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
+                            {m.label}
+                          </span>
+                        </button>
+                      ))
+                    )}
                   </div>
                 </Popover>
               </div>
