@@ -87,8 +87,8 @@ function SessionTitle({
       <button
         onClick={regenerate}
         disabled={regenerating || messageCount < 2}
-        title={messageCount < 2 ? "Send a message first" : "Regenerate with AI"}
-        className="opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-[var(--muted)] hover:text-[var(--cedar)] disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
+        title={messageCount < 2 ? "Send a message first" : "Rename this chat using the current model"}
+        className="text-[11px] text-[var(--muted)] hover:text-[var(--cedar)] disabled:opacity-30 disabled:cursor-not-allowed shrink-0 transition-colors"
       >
         {regenerating ? "…" : "✨"}
       </button>
@@ -304,6 +304,35 @@ export default function ChatPanel({
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
+
+  // While a turn is in flight (locally OR detached on the server), poll
+  // the session every 3s to pull in messages saved by _run_turn's
+  // background task. This is a defensive backstop to the SSE reattach —
+  // if the SSE connection has any trouble, the user still sees the reply
+  // get added once the server persists it.
+  useEffect(() => {
+    if (!streaming) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      try {
+        const s = await api.getSession(sessionId);
+        if (cancelled) return;
+        // Replace messages if the server has more than we do. Conservative:
+        // only update if the server count is strictly greater, so we don't
+        // wipe in-flight optimistic state.
+        setMessages((prev) => (s.messages.length > prev.length ? s.messages : prev));
+        if (!s.streaming) {
+          // Server says the turn finished — let our local "streaming" flag
+          // catch up so the UI clears the "..." indicator.
+          setStreaming(false);
+          setStreamBuffer("");
+        }
+      } catch {}
+    };
+    const id = setInterval(tick, 3000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [streaming, sessionId]);
 
   // Client-side context estimate when the provider doesn't report it.
   // Approximation: ~4 chars/token, default 200k token window.

@@ -81,7 +81,11 @@ def _make_provider(
 
     if provider_name == "kiro-cli":
         from arz.providers.kiro_cli import KiroCliProvider
-        return KiroCliProvider(model=model, work_dir=work_dir)
+        return KiroCliProvider(
+            model=model,
+            work_dir=work_dir,
+            system_prompt=system_prompt or None,
+        )
 
     if provider_name == "codex":
         from arz.providers.codex import CodexProvider

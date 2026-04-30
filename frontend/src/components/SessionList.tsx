@@ -10,12 +10,20 @@ interface ProviderBadge {
   className: string;
 }
 
+// Single source of truth for per-provider badges. To add a new provider,
+// add one row here — every consumer (SessionList, etc.) inherits it.
+const PROVIDER_BADGES: Record<string, ProviderBadge> = {
+  "claude-code": { label: "Claude", className: "bg-orange-900/40 text-orange-300" },
+  "kiro-cli":    { label: "Kiro",   className: "bg-blue-900/30 text-blue-400" },
+  "codex":       { label: "Codex",  className: "bg-green-900/30 text-green-400" },
+  "gemini":      { label: "Gemini", className: "bg-cyan-900/30 text-cyan-300" },
+  "ollama":      { label: "Ollama", className: "bg-fuchsia-900/30 text-fuchsia-300" },
+  "anthropic":   { label: "API",    className: "bg-purple-900/30 text-purple-400" },
+};
+
 function providerBadge(provider: string | null | undefined, globalProvider: string): ProviderBadge {
-  const p = provider || globalProvider;
-  if (p === "kiro-cli") return { label: "Kiro", className: "bg-blue-900/30 text-blue-400" };
-  if (p === "anthropic") return { label: "API", className: "bg-purple-900/30 text-purple-400" };
-  if (p === "codex") return { label: "Codex", className: "bg-green-900/30 text-green-400" };
-  return { label: "Claude", className: "bg-orange-900/40 text-orange-300" };
+  const p = provider || globalProvider || "";
+  return PROVIDER_BADGES[p] ?? { label: p || "—", className: "bg-[var(--border)] text-[var(--muted)]" };
 }
 
 /** Render an FTS snippet as React nodes, with <mark> tokens highlighted.
@@ -165,6 +173,44 @@ export default function SessionList({
     return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
   });
 
+  // Resizable width — desktop only. Persists to localStorage.
+  const MIN_WIDTH = 180;
+  const MAX_WIDTH = 520;
+  const DEFAULT_WIDTH = 224;
+  const [width, setWidth] = useState<number>(() => {
+    try {
+      const raw = localStorage.getItem("arz:session-list-width");
+      const n = raw ? Number(raw) : NaN;
+      return Number.isFinite(n) && n >= MIN_WIDTH && n <= MAX_WIDTH ? n : DEFAULT_WIDTH;
+    } catch { return DEFAULT_WIDTH; }
+  });
+  const draggingRef = useRef(false);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      const next = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, e.clientX));
+      setWidth(next);
+    };
+    const onUp = () => {
+      if (!draggingRef.current) return;
+      draggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try { localStorage.setItem("arz:session-list-width", String(width)); } catch {}
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [width]);
+  const startDrag = () => {
+    draggingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  };
+
   return (
     <>
       {/* Backdrop on mobile when drawer is open */}
@@ -177,11 +223,12 @@ export default function SessionList({
       )}
       <aside
         className={[
-          "flex flex-col bg-[var(--surface)] border-r border-[var(--border)]",
-          "md:static md:flex md:w-56 md:shrink-0",
-          "fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200",
+          "relative flex flex-col bg-[var(--surface)] border-r border-[var(--border)]",
+          "md:static md:flex md:shrink-0",
+          "fixed inset-y-0 left-0 z-40 w-64 transform transition-transform duration-200 md:transition-none",
           mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0",
         ].join(" ")}
+        style={{ width: `${width}px` }}
       >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
@@ -421,6 +468,14 @@ export default function SessionList({
 
       {/* Footer kept intentionally minimal — Memory/Schedule/Analytics/Settings
           live in the global NavBar to the left. */}
+
+      {/* Drag handle on the right edge — desktop only */}
+      <div
+        onMouseDown={(e) => { e.preventDefault(); startDrag(); }}
+        onDoubleClick={() => { setWidth(DEFAULT_WIDTH); try { localStorage.setItem("arz:session-list-width", String(DEFAULT_WIDTH)); } catch {} }}
+        title="Drag to resize · double-click to reset"
+        className="hidden md:block absolute top-0 right-0 h-full w-1.5 -mr-0.5 cursor-col-resize z-10 hover:bg-[var(--cedar)]/30 active:bg-[var(--cedar)]/50 transition-colors"
+      />
       </aside>
     </>
   );

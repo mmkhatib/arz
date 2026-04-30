@@ -46,6 +46,7 @@ class KiroCliProvider(LLMProvider):
         work_dir: str | Path | None = None,
         agent: str = "arz",
         env_extra: dict[str, str] | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._client = AcpClient(
             binary=_resolve_binary(),
@@ -55,6 +56,12 @@ class KiroCliProvider(LLMProvider):
             agent=agent,
             env_extra=env_extra,
         )
+        # ACP doesn't define a clean way to push a system prompt mid-session,
+        # so we prepend it to the very first user message of this provider's
+        # lifetime as a `<system>...</system>` wrapper. After that, kiro
+        # carries its own context, so we don't repeat it.
+        self._system_prompt = (system_prompt or "").strip()
+        self._injected_system = False
 
     async def start(self) -> None:
         await self._client.start()
@@ -67,6 +74,10 @@ class KiroCliProvider(LLMProvider):
         return self._forward(message)
 
     async def _forward(self, message: str) -> AsyncIterator[LLMEvent]:
+        # Inject system prompt on the first turn of this provider's life.
+        if self._system_prompt and not self._injected_system:
+            message = f"<system>\n{self._system_prompt}\n</system>\n\n{message}"
+            self._injected_system = True
         async for acp_event in self._client.stream_events(message):
             yield LLMEvent(
                 kind=acp_event.kind,

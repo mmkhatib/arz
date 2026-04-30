@@ -400,31 +400,91 @@ async def generate_title(session_id: str, request: Request) -> dict:
     if not user_msg:
         raise HTTPException(status_code=422, detail="session has no user messages to title from")
 
-    claude_bin = shutil.which("claude")
-    if not claude_bin:
-        raise HTTPException(status_code=503, detail="claude CLI not found")
-
     prompt = (
         f"Generate a concise 3-5 word title for this conversation. "
-        f"Reply with ONLY the title, no punctuation, no quotes.\n\n"
+        f"Reply with ONLY the title, no punctuation, no quotes, no markdown.\n\n"
         f"User: {user_msg}\nAssistant: {assistant_msg[:200]}"
     )
+
+    # Use the session's actual provider + model. Falls back to global config.
+    cfg = request.app.state.config
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    provider_name = session.provider or cfg.provider.name
+    model_name = session.model or ""
+
+    title = ""
     try:
-        proc = await asyncio.create_subprocess_exec(
-            claude_bin, "-p", prompt, "--no-markdown",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
-        raw = stdout.decode(errors="replace").strip()
-        title = raw.strip('"\'').replace("\n", " ").strip()[:80]
-    except Exception:
-        raise HTTPException(status_code=500, detail="Title generation failed")
+        title = await _generate_title_via_provider(provider_name, model_name, prompt)
+    except Exception as e:
+        # Last-ditch fallback: if claude is on PATH and the configured
+        # provider failed, try claude. Title generation shouldn't be a
+        # blocker.
+        claude_bin = shutil.which("claude")
+        if claude_bin:
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    claude_bin, "-p", prompt, "--no-markdown",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
+                title = stdout.decode(errors="replace").strip().strip('"\'').replace("\n", " ").strip()[:80]
+            except Exception:
+                pass
+        if not title:
+            raise HTTPException(status_code=500, detail=f"Title generation failed: {e}")
 
     if title:
-        from arz.session.session import Session
-        assert isinstance(session, Session)
         session.title = title
         mgr.save(session)
-
     return {"title": session.title}
+
+
+async def _generate_title_via_provider(provider_name: str, model: str, prompt: str) -> str:
+    """One-shot run against the session's actual provider. Uses the same
+    provider classes as the chat runtime so 'rename with current model'
+    actually means the model the user picked."""
+    from arz.acp.types import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from arz.providers.base import LLMProvider
+
+    provider: LLMProvider
+    if provider_name == "claude-code":
+        from arz.providers.claude_code import ClaudeCodeProvider
+        provider = ClaudeCodeProvider(model=model or None)
+    elif provider_name == "kiro-cli":
+        from arz.providers.kiro_cli import KiroCliProvider
+        provider = KiroCliProvider(model=model or "auto")
+    elif provider_name == "codex":
+        from arz.providers.codex import CodexProvider
+        provider = CodexProvider(model=model or None)
+    elif provider_name == "gemini":
+        from arz.providers.gemini import GeminiProvider
+        provider = GeminiProvider(model=model or None)
+    elif provider_name == "ollama":
+        from arz.providers.ollama import OllamaProvider
+        provider = OllamaProvider(model=model or None)
+    else:
+        raise RuntimeError(f"unsupported provider for title gen: {provider_name!r}")
+
+    text = ""
+    try:
+        await provider.start()
+        async for event in provider.stream(prompt):
+            if event.kind == EVENT_TEXT_CHUNK and event.text:
+                text += event.text
+            elif event.kind == EVENT_COMPLETE:
+                break
+    finally:
+        try:
+            await provider.shutdown()
+        except Exception:
+            pass
+
+    # Tighten the model's output into a clean title.
+    title = text.strip().strip('"\'').replace("\n", " ").strip()
+    # Strip any markdown / code fences the model may have added
+    title = title.strip("`").strip()
+    if title.lower().startswith(("title:", "answer:")):
+        title = title.split(":", 1)[1].strip()
+    return title[:80]
