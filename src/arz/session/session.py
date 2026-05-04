@@ -19,6 +19,12 @@ class Message:
     model: str | None = None
     elapsed_ms: int | None = None
     tool_calls: list[dict] | None = None
+    # Regenerate support: archive of alternate texts for assistant messages.
+    # When the user clicks ↻, the prior text is appended to ``versions`` and
+    # ``text`` is updated to the new generation. ``version_index`` points at
+    # whichever entry is currently displayed.
+    versions: list[str] | None = None
+    version_index: int = 0
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -34,6 +40,9 @@ class Message:
             d["elapsed_ms"] = self.elapsed_ms
         if self.tool_calls:
             d["tool_calls"] = self.tool_calls
+        if self.versions:
+            d["versions"] = self.versions
+            d["version_index"] = self.version_index
         return d
 
     @classmethod
@@ -46,6 +55,8 @@ class Message:
             model=d.get("model"),
             elapsed_ms=d.get("elapsed_ms"),
             tool_calls=d.get("tool_calls"),
+            versions=d.get("versions"),
+            version_index=d.get("version_index", 0),
         )
 
 

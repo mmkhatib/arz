@@ -124,3 +124,6 @@ class KiroCliProvider(LLMProvider):
 
     def is_alive(self) -> bool:
         return self._client.is_alive()
+
+    async def cancel(self) -> None:
+        await self._client.cancel()

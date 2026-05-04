@@ -93,6 +93,14 @@ class CodexProvider(LLMProvider):
     def is_alive(self) -> bool:
         return True
 
+    async def cancel(self) -> None:
+        # codex is one-shot per turn — terminate the running subprocess.
+        if self._process and self._process.returncode is None:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
     @property
     def pid(self) -> int | None:
         return self._process.pid if self._process else None

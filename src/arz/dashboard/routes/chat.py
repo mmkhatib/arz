@@ -228,6 +228,11 @@ async def _run_turn(
                     msg.elapsed_ms = elapsed_ms
                     if state.turn_tool_calls:
                         msg.tool_calls = state.turn_tool_calls
+                    if state.archive_versions:
+                        # Regenerate path: keep the prior assistant text(s)
+                        # accessible via ◀▶ in the UI.
+                        msg.versions = list(state.archive_versions) + [state.full_reply]
+                        msg.version_index = len(msg.versions) - 1
                     mgr.save(session)
                     saved_assistant = True
                 await emit(sse_complete(
@@ -256,6 +261,9 @@ async def _run_turn(
                 msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
                 if state.turn_tool_calls:
                     msg.tool_calls = state.turn_tool_calls
+                if state.archive_versions:
+                    msg.versions = list(state.archive_versions) + [state.full_reply]
+                    msg.version_index = len(msg.versions) - 1
                 mgr.save(session)
             except Exception:
                 log.exception("Failed to persist partial reply on stream end")
@@ -304,6 +312,32 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     original_message: str = body.get("message", "").strip()
     if not original_message:
         raise HTTPException(status_code=422, detail="message is required")
+
+    # Edit & resend: when set, drop trailing assistant + replace last user
+    # text before treating *original_message* as the user's resend. The
+    # save-user-message branch below will skip re-adding when the last
+    # message is already a matching user.
+    replace_last_user: bool = bool(body.get("replace_last_user", False))
+    # Regenerate: like replace_last_user, but the dropped assistant text(s)
+    # are stashed so they're surfaced as ◀▶ history on the new message.
+    regenerate: bool = bool(body.get("regenerate", False))
+    archived_versions: list[str] = []
+    if (replace_last_user or regenerate) and session:
+        # Drop trailing assistant replies after the last user msg.
+        msgs = session.messages
+        while msgs and msgs[-1].role == "assistant":
+            popped = msgs.pop()
+            if regenerate:
+                # Preserve any earlier versions accumulated from prior regens
+                # so the count keeps growing instead of resetting on each ↻.
+                if popped.versions:
+                    archived_versions = list(popped.versions)
+                else:
+                    archived_versions = [popped.text]
+        # Edit the trailing user msg if present.
+        if msgs and msgs[-1].role == "user" and replace_last_user:
+            msgs[-1].text = original_message
+        mgr.save(session)
 
     # Build a separate augmented copy for the LLM. The injection blocks
     # below mutate `message`; the original is preserved for history.
@@ -441,10 +475,19 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             status_code=409,
             detail="A turn is already running for this session — attach to GET /api/chat/{id}/stream instead.",
         )
+    if archived_versions:
+        # Cap archive at 20 entries to bound disk usage on aggressive ↻ users.
+        state.archive_versions = archived_versions[-19:]
 
     # Save the user message NOW (synchronously, before the background task
-    # starts) so a fast reload still shows what was sent.
-    if session:
+    # starts) so a fast reload still shows what was sent. Skip if we
+    # already wrote it as part of an edit-and-resend.
+    if session and not (
+        replace_last_user
+        and session.messages
+        and session.messages[-1].role == "user"
+        and session.messages[-1].text == original_message
+    ):
         session.add_message("user", original_message)
         mgr.save(session)
 
@@ -485,3 +528,54 @@ async def chat_streaming(session_id: str) -> dict:
     """Cheap snapshot — is a turn currently running for this session?"""
     snap = get_stream_registry().snapshot(session_id)
     return {"streaming": bool(snap and snap.get("status") == "running"), "snapshot": snap}
+
+
+# Cooperative-stop budget. Provider gets this long to honor a graceful
+# cancel; if the background task hasn't drained by then we deactivate
+# the pool entry (hard kill).
+_COOP_STOP_BUDGET_S = 10.0
+
+
+@router.post("/api/chat/{session_id}/stop")
+async def chat_stop(session_id: str, request: Request) -> dict:
+    """Stop the in-flight turn, cooperatively first then forcefully.
+
+    Flow:
+      1. provider.cancel() — sends ACP `session/cancel` for kiro/claude;
+         flips a flag for ollama; SIGTERMs subprocess for codex/gemini.
+      2. Wait up to _COOP_STOP_BUDGET_S for the registry task to finish.
+      3. If still running, hard-kill: pool.deactivate() + task.cancel().
+
+    Returns ``{"stopped": True, "mode": "cooperative"|"forced"|"noop"}``.
+    """
+    registry = get_stream_registry()
+    state = registry._states.get(session_id)  # noqa: SLF001
+    if state is None or state.status != "running":
+        return {"stopped": False, "mode": "noop"}
+
+    pool: ProviderPool = request.app.state.provider_pool
+    provider = pool._pool.get(session_id)  # noqa: SLF001
+    if provider is not None:
+        try:
+            await provider.cancel()
+        except Exception:
+            log.warning("provider.cancel() raised", exc_info=True)
+
+    # Give cooperative cancel a budget to drain.
+    deadline = asyncio.get_event_loop().time() + _COOP_STOP_BUDGET_S
+    while state.status == "running" and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.1)
+
+    if state.status != "running":
+        return {"stopped": True, "mode": "cooperative"}
+
+    # Forced path — kill the subprocess and cancel the asyncio task.
+    log.info("Cooperative stop did not drain in %ss — forcing", _COOP_STOP_BUDGET_S)
+    try:
+        await pool.deactivate(session_id)
+    except Exception:
+        log.warning("pool.deactivate failed during forced stop", exc_info=True)
+    if state.task is not None and not state.task.done():
+        state.task.cancel()
+    await registry.finish(session_id, status="cancelled")
+    return {"stopped": True, "mode": "forced"}

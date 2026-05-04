@@ -40,6 +40,9 @@ export interface MessageRecord {
   usage?: UsageRecord;
   /** Model that produced this assistant message (recorded at completion time) */
   model?: string;
+  /** Regenerate archive — alternate texts the user can browse with ◀▶. */
+  versions?: string[];
+  version_index?: number;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -232,6 +235,27 @@ export const api = {
   reactivateSession: (id: string) =>
     request<SessionSummary>(`/sessions/${id}/reactivate`, { method: "POST" }),
 
+  /** Switch the displayed text of an assistant message that has multiple
+   *  regenerated versions. */
+  selectMessageVersion: async (sessionId: string, index: number, version: number): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/messages/${index}/version`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  /** Duplicate a session into a new one with optional truncation + seed prompt. */
+  forkSession: (
+    id: string,
+    opts: { up_to_index?: number; initial_prompt?: string } = {},
+  ) =>
+    request<SessionSummary>(`/sessions/${id}/fork`, {
+      method: "POST",
+      body: JSON.stringify(opts),
+    }),
+
   getSession: (id: string) => request<SessionDetail>(`/sessions/${id}`),
 
   deleteSession: (id: string) =>
@@ -251,12 +275,24 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   },
 
-  /** Send a message; returns the raw Response for SSE streaming. */
-  sendMessage: (sessionId: string, message: string): Promise<Response> =>
+  /** Send a message; returns the raw Response for SSE streaming.
+   *  ``replace_last_user`` drops the trailing assistant reply and
+   *  overwrites the last user message text — used by Edit & Resend.
+   *  ``regenerate`` drops trailing assistant + archives its text(s) so
+   *  the new reply is added as the next ◀▶ version. */
+  sendMessage: (
+    sessionId: string,
+    message: string,
+    opts: { replaceLastUser?: boolean; regenerate?: boolean } = {},
+  ): Promise<Response> =>
     fetch(`${BASE}/chat/${sessionId}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        message,
+        replace_last_user: !!opts.replaceLastUser,
+        regenerate: !!opts.regenerate,
+      }),
     }),
 
   /** Re-attach to an in-flight turn — replays buffered events then follows live. */
@@ -266,6 +302,13 @@ export const api = {
   /** Cheap snapshot — is a turn currently in flight for this session? */
   getStreamingStatus: (sessionId: string) =>
     request<{ streaming: boolean; snapshot: any }>(`/chat/${sessionId}/streaming`),
+
+  /** Cooperative stop. Backend tries graceful cancel first, then hard kills. */
+  stopChat: (sessionId: string) =>
+    request<{ stopped: boolean; mode: "cooperative" | "forced" | "noop" }>(
+      `/chat/${sessionId}/stop`,
+      { method: "POST" },
+    ),
 
   searchSessions: (q: string) => request<SessionSummary[]>(`/sessions/search?q=${encodeURIComponent(q)}`),
 

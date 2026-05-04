@@ -218,6 +218,26 @@ class AcpClient:
             {"jsonrpc": "2.0", "id": request_id, "result": {"outcome": {"outcome": "cancelled"}}}
         )
 
+    async def cancel(self) -> None:
+        """Send ACP `session/cancel` notification.
+
+        Best-effort cooperative stop. Caller should still wait briefly
+        for the in-flight `session/prompt` to drain a final event, and
+        fall back to hard kill if it doesn't.
+        """
+        from arz.acp.types import METHOD_CANCEL
+
+        if not self._process or self._session_id is None:
+            return
+        try:
+            await self._send_raw({
+                "jsonrpc": "2.0",
+                "method": METHOD_CANCEL,
+                "params": {"sessionId": self._session_id},
+            })
+        except Exception:
+            logger.warning("ACP cancel failed", exc_info=True)
+
     def is_alive(self) -> bool:
         return self._process is not None and self._process.returncode is None
 

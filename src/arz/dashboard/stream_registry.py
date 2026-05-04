@@ -46,6 +46,9 @@ class StreamState:
     full_reply: str = ""
     turn_tool_calls: list[dict] = field(default_factory=list)
     error: str | None = None
+    # Regenerate: alternate assistant texts to merge into the new
+    # assistant message at completion time. Empty for normal turns.
+    archive_versions: list[str] = field(default_factory=list)
 
 
 class StreamRegistry:

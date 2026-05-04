@@ -7,6 +7,7 @@ import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
 import ThemeDropdown from "./ThemeDropdown";
+import { GitBranch } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
 
 function ThinkingDots() {
@@ -205,6 +206,8 @@ interface Props {
   onOpenSidebar?: () => void;
   /** Counter from parent — when it changes, the input bar refocuses. */
   focusSignal?: number;
+  /** Switch the parent to display the newly-forked session. */
+  onSessionForked?: (newSessionId: string) => void;
 }
 
 export default function ChatPanel({
@@ -219,6 +222,7 @@ export default function ChatPanel({
   onFileOpen,
   onOpenSidebar,
   focusSignal,
+  onSessionForked,
 }: Props) {
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
@@ -376,8 +380,24 @@ export default function ChatPanel({
     api.setWorkDir(sessionId, path).catch(() => {});
   };
 
-  const handleStop = () => {
+  // Double-tap (within 1.5s) forces an immediate hard-kill instead of
+  // waiting out the cooperative cancel budget.
+  const lastStopAtRef = useRef<number>(0);
+  const handleStop = async () => {
+    const now = Date.now();
+    const isDoubleTap = now - lastStopAtRef.current < 1500;
+    lastStopAtRef.current = now;
     abortRef.current?.();
+    try {
+      await api.stopChat(sessionId);
+      if (isDoubleTap) {
+        // Already aborted client-side; backend got a second stop signal
+        // which short-circuits the 10s budget.
+        await api.stopChat(sessionId);
+      }
+    } catch {
+      // Best-effort — if the server is gone the local abort is enough.
+    }
   };
 
   const handleSend = async (message: string, files?: import("@/api/client").UploadedFile[]) => {
@@ -460,7 +480,7 @@ export default function ChatPanel({
     }
   };
 
-  const doSend = async (message: string) => {
+  const doSend = async (message: string, opts: { replaceLastUser?: boolean; regenerate?: boolean } = {}) => {
     const userMsg: MessageRecord = {
       role: "user",
       text: message,
@@ -470,7 +490,21 @@ export default function ChatPanel({
       setTitle(message.slice(0, 60));
       firstUserMsgRef.current = message;
     }
-    setMessages((prev) => [...prev, userMsg]);
+    if (opts.replaceLastUser || opts.regenerate) {
+      // Optimistic: drop the trailing assistant + (for replace) edit user text.
+      setMessages((prev) => {
+        const next = [...prev];
+        while (next.length && next[next.length - 1].role === "assistant") next.pop();
+        if (opts.replaceLastUser && next.length && next[next.length - 1].role === "user") {
+          next[next.length - 1] = { ...next[next.length - 1], text: message };
+        } else if (!opts.regenerate) {
+          next.push(userMsg);
+        }
+        return next;
+      });
+    } else {
+      setMessages((prev) => [...prev, userMsg]);
+    }
     setStreaming(true);
     setStreamBuffer("");
     setError(null);
@@ -482,7 +516,10 @@ export default function ChatPanel({
     abortRef.current = () => { abortFlag.aborted = true; setStreaming(false); setStreamBuffer(""); };
 
     try {
-      const response = await api.sendMessage(sessionId, message);
+      const response = await api.sendMessage(sessionId, message, {
+        replaceLastUser: opts.replaceLastUser,
+        regenerate: opts.regenerate,
+      });
       if (!response.ok) {
         throw new Error(`${response.status}: ${await response.text()}`);
       }
@@ -569,6 +606,20 @@ export default function ChatPanel({
         <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
           <ThemeDropdown />
+          <button
+            onClick={async () => {
+              try {
+                const fork = await api.forkSession(sessionId);
+                onSessionForked?.(fork.id);
+              } catch (e) {
+                console.error("fork failed", e);
+              }
+            }}
+            title="Fork this session — clones full history into a new tab"
+            className="text-[12px] px-2 py-1 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)] flex items-center gap-1"
+          >
+            <GitBranch size={12} /> Fork
+          </button>
           <ExportMenu sessionId={sessionId} />
           {onToggleActivity && (
             <button
@@ -606,11 +657,39 @@ export default function ChatPanel({
           const prevUser = msg.role === "assistant"
             ? [...messages.slice(0, i)].reverse().find((m) => m.role === "user")
             : null;
+          // "Last user/assistant" = the trailing message of its role in the
+          // visible list. Used to show edit & regenerate affordances.
+          const lastUserIdx = messages.map((m, idx) => m.role === "user" ? idx : -1).filter((x) => x >= 0).pop() ?? -1;
+          const lastAsstIdx = messages.map((m, idx) => m.role === "assistant" ? idx : -1).filter((x) => x >= 0).pop() ?? -1;
+          const isLastUser = i === lastUserIdx && !streaming;
+          const isLastAssistant = i === lastAsstIdx && !streaming;
           return (
             <MessageBubble
               key={i}
               message={msg}
               onFileOpen={onFileOpen}
+              isLastUser={isLastUser}
+              isLastAssistant={isLastAssistant}
+              onEditResend={isLastUser ? (text) => doSend(text, { replaceLastUser: true }) : undefined}
+              onRegenerate={
+                isLastAssistant && prevUser
+                  ? () => doSend(prevUser.text, { regenerate: true })
+                  : undefined
+              }
+              onCycleVersion={
+                msg.role === "assistant" && msg.versions && msg.versions.length > 1
+                  ? async (next) => {
+                      try {
+                        await api.selectMessageVersion(sessionId, i, next);
+                        setMessages((prev) => prev.map((m, idx) => idx === i
+                          ? { ...m, text: m.versions![next], version_index: next }
+                          : m));
+                      } catch (e) {
+                        console.error("version select failed", e);
+                      }
+                    }
+                  : undefined
+              }
               onCompare={
                 msg.role === "assistant" && prevUser
                   ? () => setCompareTarget({

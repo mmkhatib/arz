@@ -99,6 +99,13 @@ class GeminiProvider(LLMProvider):
     def is_alive(self) -> bool:
         return True
 
+    async def cancel(self) -> None:
+        if self._process and self._process.returncode is None:
+            try:
+                self._process.terminate()
+            except Exception:
+                pass
+
     @property
     def pid(self) -> int | None:
         return self._process.pid if self._process else None

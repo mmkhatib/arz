@@ -74,6 +74,81 @@ async def create_session(request: Request) -> dict:
     return _session_to_dict(session)
 
 
+@router.patch("/api/sessions/{session_id}/messages/{index}/version", status_code=status.HTTP_204_NO_CONTENT)
+async def select_message_version(session_id: str, index: int, request: Request) -> None:
+    """Switch the visible text on an assistant message that has multiple
+    regenerated versions. ``index`` is the position in ``session.messages``;
+    body is ``{"version": N}`` (0-based into msg.versions)."""
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    v = body.get("version")
+    if not isinstance(v, int):
+        raise HTTPException(status_code=422, detail="version must be int")
+    if index < 0 or index >= len(session.messages):
+        raise HTTPException(status_code=404, detail="message index out of range")
+    msg = session.messages[index]
+    if not msg.versions:
+        raise HTTPException(status_code=400, detail="message has no versions")
+    if v < 0 or v >= len(msg.versions):
+        raise HTTPException(status_code=422, detail="version index out of range")
+    msg.text = msg.versions[v]
+    msg.version_index = v
+    mgr.save(session)
+
+
+@router.post("/api/sessions/{session_id}/fork", status_code=status.HTTP_201_CREATED)
+async def fork_session(session_id: str, request: Request) -> dict:
+    """Duplicate a session into a new one.
+
+    Body:
+      ``up_to_index`` (int, optional) — keep only the first N messages of
+      the source. Default is the full history.
+      ``initial_prompt`` (str, optional) — append this as a fresh user
+      message to the new fork.
+    """
+    mgr: SessionManager = _get_manager(request)
+    src = mgr.get(session_id)
+    if not src:
+        raise HTTPException(status_code=404, detail="Source session not found")
+
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    up_to = body.get("up_to_index")
+    initial_prompt = (body.get("initial_prompt") or "").strip() or None
+
+    from arz.session.session import Message, Session
+    assert isinstance(src, Session)
+
+    fork = mgr.create(
+        surface=src.surface,
+        chat_id=src.chat_id,
+        thread_id=None,
+    )
+    fork.title = f"{src.title} (fork)"
+    fork.provider = src.provider
+    fork.model = src.model
+    fork.agent = src.agent
+    fork.approval_mode = src.approval_mode
+    fork.work_dir = src.work_dir
+    fork.color = src.color
+
+    msgs = list(src.messages)
+    if isinstance(up_to, int) and 0 <= up_to <= len(msgs):
+        msgs = msgs[:up_to]
+    # Deep-copy each message so edits to the fork don't mutate the source.
+    fork.messages = [Message(**m.to_dict_for_clone()) if hasattr(m, "to_dict_for_clone")
+                     else Message(role=m.role, text=m.text, created_at=m.created_at,
+                                  usage=m.usage, model=m.model, elapsed_ms=m.elapsed_ms,
+                                  tool_calls=list(m.tool_calls) if m.tool_calls else None)
+                     for m in msgs]
+    if initial_prompt:
+        fork.add_message("user", initial_prompt)
+    mgr.save(fork)
+    return _session_to_dict(fork)
+
+
 @router.get("/api/sessions/history")
 async def list_history(request: Request) -> list[dict]:
     mgr: SessionManager = _get_manager(request)

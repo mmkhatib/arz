@@ -15,6 +15,14 @@ interface Props {
   message: MessageRecord;
   onFileOpen?: (path: string) => void;
   onCompare?: () => void;
+  /** Last-user-message gets a pencil for in-place edit + resend. */
+  isLastUser?: boolean;
+  /** Last-assistant-message gets a ↻ for regenerate (re-runs prior user turn). */
+  isLastAssistant?: boolean;
+  onEditResend?: (text: string) => void;
+  onRegenerate?: () => void;
+  /** When this assistant message has multiple versions, ◀▶ buttons call this. */
+  onCycleVersion?: (next: number) => void;
 }
 
 function formatTime(iso: string): string {
@@ -91,8 +99,23 @@ function CodeBlock({ children, className }: { children?: React.ReactNode; classN
   );
 }
 
-export default function MessageBubble({ message, onFileOpen, onCompare }: Props) {
+export default function MessageBubble({
+  message,
+  onFileOpen,
+  onCompare,
+  isLastUser,
+  isLastAssistant,
+  onEditResend,
+  onRegenerate,
+  onCycleVersion,
+}: Props) {
   const isUser = message.role === "user";
+  const [editing, setEditing] = useState(false);
+  const [editDraft, setEditDraft] = useState(message.text);
+
+  const versions = message.versions;
+  const versionIndex = message.version_index ?? 0;
+  const totalVersions = versions && versions.length > 0 ? versions.length : 1;
 
   return (
     <div className={`group flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>
@@ -112,7 +135,51 @@ export default function MessageBubble({ message, onFileOpen, onCompare }: Props)
           ].join(" ")}
         >
           {isUser ? (
-            message.text
+            editing ? (
+              <div className="flex flex-col gap-2 min-w-[260px]">
+                <textarea
+                  value={editDraft}
+                  onChange={(e) => setEditDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      const t = editDraft.trim();
+                      if (t && t !== message.text) {
+                        onEditResend?.(t);
+                      }
+                      setEditing(false);
+                    } else if (e.key === "Escape") {
+                      setEditing(false);
+                      setEditDraft(message.text);
+                    }
+                  }}
+                  rows={Math.min(8, Math.max(2, editDraft.split("\n").length))}
+                  className="bg-[var(--bg)] border border-[var(--border)] rounded-md p-2 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y w-full"
+                  autoFocus
+                />
+                <div className="flex items-center justify-end gap-2 text-[11px]">
+                  <span className="text-[var(--muted)]">⌘+Enter to resend · Esc to cancel</span>
+                  <button
+                    onClick={() => { setEditing(false); setEditDraft(message.text); }}
+                    className="px-2 py-0.5 rounded text-[var(--muted)] hover:text-[var(--text)]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => {
+                      const t = editDraft.trim();
+                      if (t && t !== message.text) onEditResend?.(t);
+                      setEditing(false);
+                    }}
+                    className="px-2 py-0.5 rounded bg-[var(--cedar)] text-white"
+                  >
+                    Resend
+                  </button>
+                </div>
+              </div>
+            ) : (
+              message.text
+            )
           ) : (
             <ReactMarkdown
               components={{
@@ -222,6 +289,39 @@ export default function MessageBubble({ message, onFileOpen, onCompare }: Props)
             >
               ↔ compare
             </button>
+          )}
+          {isUser && isLastUser && onEditResend && !editing && (
+            <button
+              onClick={() => { setEditDraft(message.text); setEditing(true); }}
+              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
+              title="Edit & resend"
+            >
+              ✎ edit
+            </button>
+          )}
+          {!isUser && isLastAssistant && onRegenerate && (
+            <button
+              onClick={onRegenerate}
+              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
+              title="Regenerate this reply"
+            >
+              ↻ regenerate
+            </button>
+          )}
+          {!isUser && totalVersions > 1 && onCycleVersion && (
+            <span className="flex items-center gap-1 text-[var(--muted)]">
+              <button
+                onClick={() => onCycleVersion((versionIndex - 1 + totalVersions) % totalVersions)}
+                className="hover:text-[var(--text)]"
+                title="Previous version"
+              >◀</button>
+              <span className="font-mono">{versionIndex + 1}/{totalVersions}</span>
+              <button
+                onClick={() => onCycleVersion((versionIndex + 1) % totalVersions)}
+                className="hover:text-[var(--text)]"
+                title="Next version"
+              >▶</button>
+            </span>
           )}
         </div>
       </div>

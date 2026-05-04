@@ -61,6 +61,9 @@ class ClaudeCodeProvider(LLMProvider):
     async def shutdown(self) -> None:
         await self._client.shutdown()
 
+    async def cancel(self) -> None:
+        await self._client.cancel()
+
     def is_alive(self) -> bool:
         return self._client.is_alive()
 

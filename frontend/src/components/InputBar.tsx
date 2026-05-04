@@ -496,9 +496,9 @@ export default function InputBar({
                 </button>
               ) : (
                 <button
-                  className="w-8 h-8 rounded-lg text-red-400 hover:bg-red-400/10 flex items-center justify-center transition-all"
+                  className="w-8 h-8 rounded-lg text-red-400 hover:bg-red-400/10 flex items-center justify-center transition-all animate-pulse"
                   onClick={onStop}
-                  title="Stop generation"
+                  title="Stop generation (double-click to force-kill)"
                 >
                   <Square size={16} fill="currentColor" />
                 </button>

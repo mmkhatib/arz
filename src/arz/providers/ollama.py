@@ -49,6 +49,7 @@ class OllamaProvider(LLMProvider):
         self._system_prompt = (system_prompt or "").strip()
         self._history: list[dict] = history_messages or []
         self._base_url = (base_url or os.environ.get("OLLAMA_HOST") or _DEFAULT_URL).rstrip("/")
+        self._cancel_flag = False
 
     async def start(self) -> None:
         log.info("ollama provider ready", extra={"model": self._model, "url": self._base_url})
@@ -61,6 +62,12 @@ class OllamaProvider(LLMProvider):
 
     def is_alive(self) -> bool:
         return True
+
+    async def cancel(self) -> None:
+        # No native abort — set a flag the streaming loop checks between
+        # chunks. The active httpx response will be closed when the loop
+        # exits its async-with block.
+        self._cancel_flag = True
 
     @property
     def current_model(self) -> str | None:
@@ -98,6 +105,7 @@ class OllamaProvider(LLMProvider):
             "keep_alive": "30m",  # user can eject manually from Models page
         }
         timeout = httpx.Timeout(_TURN_TIMEOUT, connect=10.0, read=600.0)
+        self._cancel_flag = False
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 async with client.stream("POST", url, json=body) as resp:
@@ -111,6 +119,9 @@ class OllamaProvider(LLMProvider):
                         return
 
                     async for raw in resp.aiter_lines():
+                        if self._cancel_flag:
+                            yield LLMEvent(kind="complete", stop_reason="cancelled")
+                            return
                         line = (raw or "").strip()
                         if not line:
                             continue

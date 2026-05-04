@@ -281,6 +281,10 @@ export default function ChatPage() {
               onFileOpen={handleFileOpen}
               activityOpen={activityOpen}
               onToggleActivity={() => setActivityOpen((v) => !v)}
+              onSessionForked={async (newId) => {
+                await loadSessions();
+                setActiveId(newId);
+              }}
             />
           ) : (
             <div className="flex flex-col items-center justify-center h-full text-center">
