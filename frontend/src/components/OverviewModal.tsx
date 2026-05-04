@@ -117,6 +117,26 @@ export default function OverviewModal({ onClose, variant = "modal" }: Props) {
         </table>
       </div>
 
+      {/* Provider pool */}
+      {data.pool && (
+        <div className="border border-[var(--border)] rounded-lg bg-[var(--surface)]">
+          <div className="px-4 py-2 border-b border-[var(--border)] text-[10px] uppercase tracking-wider text-[var(--muted)]">Provider pool</div>
+          <div className="px-4 py-3 flex flex-wrap gap-6 text-[12px]">
+            <Stat label="Active" value={`${data.pool.active} / ${data.pool.max_size}`} />
+            <Stat
+              label="Warm"
+              value={`${data.pool.warm}${data.pool.warm_target > 0 ? ` / ${data.pool.warm_target}` : ""}`}
+              warn={data.pool.warm_target > 0 && data.pool.warm < data.pool.warm_target}
+            />
+            {data.pool.warm_target === 0 && (
+              <span className="text-[11px] text-[var(--muted)]/60 italic">
+                Warm pool disabled. Set <code className="font-mono">[dashboard] warm_pool_size</code> in config.toml to pre-spawn providers.
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Cron health */}
       <div className="border border-[var(--border)] rounded-lg bg-[var(--surface)]">
         <div className="px-4 py-2 border-b border-[var(--border)] text-[10px] uppercase tracking-wider text-[var(--muted)]">Cron health</div>

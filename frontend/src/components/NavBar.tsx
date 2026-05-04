@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ShortcutsOverlay from "./ShortcutsOverlay";
+import { api } from "@/api/client";
 import {
   MessageSquare,
   Brain,
@@ -126,6 +127,8 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
         })}
       </div>
 
+      <MemoryStatsRow collapsed={collapsed} />
+
       <div className="px-2 py-2 border-t border-[var(--border)] flex items-center justify-between gap-2">
         <button
           onClick={() => setShortcutsOpen(true)}
@@ -185,5 +188,45 @@ function NavItem({
         </span>
       )}
     </button>
+  );
+}
+
+function MemoryStatsRow({ collapsed }: { collapsed: boolean }) {
+  const [stats, setStats] = useState<{ markdown: number; lessons: number; vectors: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      api.memoryStats()
+        .then((s) => { if (!cancelled) setStats(s); })
+        .catch(() => {});
+    };
+    tick();
+    const id = window.setInterval(() => { if (!document.hidden) tick(); }, 30_000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, []);
+  if (!stats) return null;
+  const total = stats.markdown + stats.lessons + stats.vectors;
+  const tip = `Memory · ${stats.markdown} markdown · ${stats.lessons} lessons · ${stats.vectors} vectors`;
+  if (collapsed) {
+    return (
+      <div className="px-2 py-1 border-t border-[var(--border)]/50 flex justify-center" title={tip}>
+        <span className="text-[10px] font-mono text-[var(--muted)]">{total}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="px-2.5 py-1.5 border-t border-[var(--border)]/50 text-[10px] font-mono text-[var(--muted)]" title={tip}>
+      <div className="flex items-center justify-between">
+        <span className="uppercase tracking-wider">Memory</span>
+        <span>{total} items</span>
+      </div>
+      <div className="flex items-center gap-1.5 mt-0.5 text-[var(--muted)]/70">
+        <span>md {stats.markdown}</span>
+        <span>·</span>
+        <span>lessons {stats.lessons}</span>
+        <span>·</span>
+        <span>vec {stats.vectors}</span>
+      </div>
+    </div>
   );
 }

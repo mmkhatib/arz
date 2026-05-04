@@ -150,6 +150,34 @@ def _slugify(s: str) -> str:
     return out[:60] or "mcp"
 
 
+def _name_from_source(source: str) -> str:
+    """Derive a registry name from the source string, with no friendly-name override.
+
+    - ``npm:@scope/pkg`` → ``scope-pkg`` (preserves both halves)
+    - ``npm:pkg`` → ``pkg``
+    - ``https://host/owner/repo.git`` → ``repo``
+    - ``https://host/owner/repo`` → ``repo``
+    - ``/abs/path/to/dir`` → ``dir``
+    - anything else → slugified whole string
+    """
+    s = source.strip()
+    if s.startswith("npm:"):
+        pkg = s[4:].lstrip("/")
+        if pkg.startswith("@") and "/" in pkg:
+            scope, name = pkg.split("/", 1)
+            return _slugify(f"{scope.lstrip('@')}-{name}")
+        return _slugify(pkg)
+    if s.startswith(("http://", "https://")):
+        last = s.rsplit("/", 1)[-1]
+        if last.endswith(".git"):
+            last = last[:-4]
+        return _slugify(last) or "mcp"
+    if s.startswith(("/", "~")) or s.startswith("./"):
+        from pathlib import Path as _P
+        return _slugify(_P(s).expanduser().resolve().name)
+    return _slugify(s)
+
+
 def _load_registry() -> dict:
     if not _REGISTRY_PATH.exists():
         return {"servers": {}}
@@ -182,7 +210,9 @@ async def install_mcp(request: Request) -> StreamingResponse:
     source = (body.get("source") or "").strip()
     if not source:
         raise HTTPException(status_code=422, detail="source required")
-    name = _slugify(body.get("name") or source.rsplit("/", 1)[-1].rsplit(".", 1)[0])
+    # Always derive name from the source; the UI no longer offers a
+    # friendly-name override. Body field ``name`` is ignored.
+    name = _name_from_source(source)
     command = (body.get("command") or "").strip()
     args = body.get("args") or []
     env = body.get("env") or {}

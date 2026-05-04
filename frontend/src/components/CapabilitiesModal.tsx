@@ -94,7 +94,6 @@ function McpTab() {
   const [showInstall, setShowInstall] = useState(false);
   const [installing, setInstalling] = useState(false);
   const [installSource, setInstallSource] = useState("");
-  const [installName, setInstallName] = useState("");
   const [installLog, setInstallLog] = useState("");
 
   const refresh = () =>
@@ -126,7 +125,6 @@ function McpTab() {
     try {
       const res = await api.installMcp({
         source: installSource.trim(),
-        name: installName.trim() || undefined,
       });
       if (!res.ok) {
         const txt = await res.text();
@@ -143,7 +141,6 @@ function McpTab() {
       }
       await refresh();
       setInstallSource("");
-      setInstallName("");
     } catch (e) {
       setInstallLog((l) => l + `\nerror: ${e instanceof Error ? e.message : String(e)}\n`);
     } finally {
@@ -183,13 +180,9 @@ function McpTab() {
             disabled={installing}
             className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
           />
-          <input
-            value={installName}
-            onChange={(e) => setInstallName(e.target.value)}
-            placeholder="optional friendly name (slug)"
-            disabled={installing}
-            className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
-          />
+          <div className="text-[10px] text-[var(--muted)]">
+            Server name is taken from the source — the repo / package / directory name.
+          </div>
           <div className="flex gap-2">
             <button
               onClick={runInstall}

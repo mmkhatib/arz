@@ -49,11 +49,19 @@ class AuditEntryPub(BaseModel):
     session_id: str | None = None
 
 
+class PoolStatus(BaseModel):
+    active: int
+    max_size: int
+    warm: int
+    warm_target: int
+
+
 class OverviewResponse(BaseModel):
     counts: OverviewCounts
     providers: list[ProviderStatus]
     cron_health: CronHealth
     recent_activity: list[AuditEntryPub]
+    pool: PoolStatus | None = None
 
 
 def _detect_provider(name: str) -> tuple[bool, str | None]:
@@ -219,6 +227,19 @@ async def overview(
         for i, (ts, kind, summary, sid) in enumerate(events[:activity_limit]):
             recent.append(AuditEntryPub(id=-(i + 1), ts=ts, kind=kind, summary=summary, session_id=sid))
 
+    pool = getattr(state, "provider_pool", None)
+    pool_status: PoolStatus | None = None
+    if pool is not None:
+        try:
+            pool_status = PoolStatus(
+                active=pool.active_count(),
+                max_size=pool.max_size,
+                warm=pool.warm_count(),
+                warm_target=int(getattr(cfg.dashboard, "warm_pool_size", 0) or 0),
+            )
+        except Exception:
+            pool_status = None
+
     return OverviewResponse(
         counts=OverviewCounts(
             sessions_active=active,
@@ -240,4 +261,5 @@ async def overview(
             error_count_24h=error_count_24h,
         ),
         recent_activity=recent,
+        pool=pool_status,
     )

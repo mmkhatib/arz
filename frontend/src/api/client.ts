@@ -142,11 +142,19 @@ export interface AuditEntryPub {
   session_id: string | null;
 }
 
+export interface PoolStatus {
+  active: number;
+  max_size: number;
+  warm: number;
+  warm_target: number;
+}
+
 export interface OverviewResponse {
   counts: OverviewCounts;
   providers: ProviderStatus[];
   cron_health: CronHealth;
   recent_activity: AuditEntryPub[];
+  pool?: PoolStatus | null;
 }
 
 export interface AgentConfig {
