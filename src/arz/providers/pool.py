@@ -27,9 +27,14 @@ Factory = Callable[[], LLMProvider]
 class ProviderPool:
     """LRU pool capping concurrent active LLMProvider instances."""
 
+    # Sentinel session_id used for warm-pool entries waiting to be claimed.
+    # The key is unique per pre-spawn so multiple warm slots coexist.
+    WARM_PREFIX = "__warm__:"
+
     def __init__(self, max_size: int = 5) -> None:
         self.max_size = max_size
         self._pool: OrderedDict[str, LLMProvider] = OrderedDict()
+        self._warm: list[LLMProvider] = []  # ready-to-claim, no session yet
 
     # ── public ──────────────────────────────────────────────────────────────
 
@@ -100,10 +105,11 @@ class ProviderPool:
             log.info("Provider deactivated", session_id=session_id)
 
     async def shutdown_all(self) -> None:
-        """Shut down every active provider (called on gateway shutdown)."""
+        """Shut down every active + warm provider (called on gateway shutdown)."""
         ids = list(self._pool.keys())
-        pids = [self._pool[sid].pid for sid in ids]
-        await asyncio.gather(*(self._pool[sid].shutdown() for sid in ids), return_exceptions=True)
+        pids = [self._pool[sid].pid for sid in ids] + [p.pid for p in self._warm]
+        coros = [self._pool[sid].shutdown() for sid in ids] + [p.shutdown() for p in self._warm]
+        await asyncio.gather(*coros, return_exceptions=True)
         try:
             from arz.reaper import get_reaper
 
@@ -113,12 +119,65 @@ class ProviderPool:
         except Exception:
             pass
         self._pool.clear()
+        self._warm.clear()
 
     def active_count(self) -> int:
         return len(self._pool)
 
     def active_ids(self) -> list[str]:
         return list(self._pool.keys())
+
+    # ── warm pool ───────────────────────────────────────────────────────────
+
+    async def prewarm(self, n: int, factory: Factory) -> int:
+        """Pre-spawn up to *n* providers so first-message latency is near-zero.
+
+        Returns the count actually spawned (errors are logged + skipped).
+        Warm slots are kept in a separate list and consumed by ``claim_warm``;
+        they don't count against ``max_size`` until claimed.
+        """
+        spawned = 0
+        for _ in range(max(0, n)):
+            try:
+                provider = factory()
+                await provider.start()
+                self._warm.append(provider)
+                spawned += 1
+                try:
+                    from arz.reaper import get_reaper
+
+                    get_reaper().register(provider.pid, f"warm:{provider.name}")
+                except Exception:
+                    pass
+            except Exception:
+                log.warning("prewarm failed", exc_info=True)
+        log.info("Pool pre-warmed", spawned=spawned, total_warm=len(self._warm))
+        return spawned
+
+    def claim_warm(self, session_id: str) -> LLMProvider | None:
+        """Pop a warm provider and assign it to *session_id*.
+
+        Returns None if no warm provider is available. Caller must ensure
+        the warm provider is compatible with the session (same provider
+        type & model) — otherwise ``activate`` should ignore the warm pool.
+        """
+        if not self._warm:
+            return None
+        if len(self._pool) >= self.max_size:
+            return None
+        provider = self._warm.pop(0)
+        if not provider.is_alive():
+            return None
+        self._pool[session_id] = provider
+        log.info(
+            "Warm provider claimed",
+            session_id=session_id,
+            remaining_warm=len(self._warm),
+        )
+        return provider
+
+    def warm_count(self) -> int:
+        return len(self._warm)
 
     # ── private ─────────────────────────────────────────────────────────────
 

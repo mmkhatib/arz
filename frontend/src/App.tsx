@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import Layout from "@/pages/Layout";
 import ChatPage from "@/pages/ChatPage";
+import BoardPage from "@/pages/BoardPage";
 import OverviewPage from "@/pages/OverviewPage";
 import AgentsPage from "@/pages/AgentsPage";
 import MemoryPage from "@/pages/MemoryPage";
@@ -19,6 +20,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<ChatPage />} />
+          <Route path="/board" element={<BoardPage />} />
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/memory" element={<MemoryPage />} />

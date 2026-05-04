@@ -5,6 +5,7 @@ import { api } from "@/api/client";
 export interface ToolGroupEntry {
   name: string;
   input: string;
+  state?: "running" | "done" | "rejected" | "error";
 }
 
 interface Props {
@@ -164,7 +165,17 @@ const CollapsibleToolGroup = memo(function CollapsibleToolGroup({
         <div className="mt-1 ml-4 border-l border-[var(--border)] pl-3 flex flex-col gap-1">
           {toolCalls.map((tc, i) => (
             <div key={i} className="text-[12px] font-mono text-[var(--muted)] flex items-center gap-1.5 py-0.5">
-              <Wrench size={11} className="text-amber-400 shrink-0" />
+              {tc.state === "done" ? (
+                <CheckCircle size={11} className="text-green-500 shrink-0" />
+              ) : tc.state === "rejected" ? (
+                <Ban size={11} className="text-red-400 shrink-0" />
+              ) : tc.state === "error" ? (
+                <AlertTriangle size={11} className="text-red-400 shrink-0" />
+              ) : tc.state === "running" ? (
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse shrink-0" />
+              ) : (
+                <Wrench size={11} className="text-amber-400 shrink-0" />
+              )}
               <span className="text-[var(--text)]">{tc.name}</span>
               {tc.input && (
                 <span className="truncate max-w-[200px] text-[var(--muted)]/60">

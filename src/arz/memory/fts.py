@@ -100,7 +100,11 @@ class MemoryFTS:
         sql = (
             "SELECT source, key, title, "
             "snippet(memory_fts, 3, '<mark>', '</mark>', '…', 16) AS snippet, "
-            "bm25(memory_fts) AS rank "
+            # BM25 weights, one per FTS column. UNINDEXED columns get a
+            # placeholder weight that's ignored. We boost title 3x so a
+            # query word in the title outranks a body match at equal
+            # frequency. Length normalization is built into FTS5 BM25.
+            "bm25(memory_fts, 1.0, 1.0, 3.0, 1.0) AS rank "
             "FROM memory_fts "
             f"WHERE memory_fts MATCH ? {where} "
             "ORDER BY rank "

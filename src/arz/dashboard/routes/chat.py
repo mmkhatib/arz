@@ -426,6 +426,20 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             p.set_resume_session_id(provider_sid)
         return p
 
+    # Warm-pool fast path: if no provider is in the pool yet for this
+    # session AND the next warm slot matches the default provider, claim
+    # it instead of cold-starting. Saves 3-10s on first message.
+    if (
+        session_id not in pool._pool  # noqa: SLF001
+        and pool.warm_count() > 0
+        and effective_provider_name == cfg.provider.name
+        and effective_model == cfg.provider.model
+        and not provider_sid
+    ):
+        warm = pool.claim_warm(session_id)
+        if warm is not None and warm.name == effective_provider_name:
+            log.info("Used warm provider", extra={"session_id": session_id})
+
     try:
         provider = await pool.activate(session_id, _factory)
     except (AcpError, FileNotFoundError, ValueError) as e:

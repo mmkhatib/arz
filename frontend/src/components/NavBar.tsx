@@ -14,11 +14,12 @@ import {
   Puzzle,
   Cpu,
   Activity,
+  Columns3,
 } from "lucide-react";
 
 const STORAGE_KEY = "arz:nav-collapsed";
 
-export type NavSection = "overview" | "chat" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
+export type NavSection = "overview" | "chat" | "board" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
 
 interface Props {
   active: NavSection;
@@ -36,6 +37,7 @@ interface NavEntry {
 const ENTRIES: NavEntry[] = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={16} /> },
   { id: "chat", label: "Chat", icon: <MessageSquare size={16} /> },
+  { id: "board", label: "Board", icon: <Columns3 size={16} /> },
   { id: "agents", label: "Agents", icon: <Bot size={16} /> },
   { id: "memory", label: "Memory", icon: <Brain size={16} /> },
   {
@@ -83,7 +85,10 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
       className={[
         "shrink-0 flex flex-col bg-[var(--bg)] border-r border-[var(--border)]",
         "transition-[width] duration-200",
+        // On phones we collapse to icon-only regardless of preference; the
+        // chat hamburger handles drilling into the session list.
         collapsed ? "w-12" : "w-44",
+        "max-md:!w-12",
       ].join(" ")}
     >
       {/* Brand + collapse toggle */}

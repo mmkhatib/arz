@@ -172,6 +172,33 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("Orphan reaper started")
     except Exception:
         log.warning("Could not start orphan reaper", exc_info=True)
+    try:
+        await app.state.autonudge.start()
+        log.info("AutoNudge started")
+    except Exception:
+        log.warning("Could not start AutoNudge", exc_info=True)
+    # Pre-spawn N warm providers if configured.
+    warm_n = int(getattr(app.state.config.dashboard, "warm_pool_size", 0) or 0)
+    if warm_n > 0:
+        from arz.dashboard.routes.chat import _make_provider as _make_p
+
+        try:
+            spawned = await app.state.provider_pool.prewarm(
+                warm_n,
+                lambda: _make_p(
+                    app.state.config,
+                    "warm-slot",
+                    None,
+                    None,
+                    app.state.config.provider.name,
+                    app.state.config.provider.model,
+                    "normal",
+                    None,
+                ),
+            )
+            log.info("Warm pool ready", spawned=spawned)
+        except Exception:
+            log.warning("Pre-warm failed", exc_info=True)
     # Seed the memory-consolidator cron if missing. Runs nightly at 03:00.
     try:
         existing = {c.name for c in app.state.cron_registry.list()}
@@ -200,6 +227,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         from arz.reaper import get_reaper
 
         await get_reaper().stop()
+    except Exception:
+        pass
+    try:
+        if getattr(app.state, "autonudge", None) is not None:
+            await app.state.autonudge.stop()
     except Exception:
         pass
 
@@ -292,6 +324,33 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     # sessions into preferences/projects/lessons + daily summaries.
     from arz.consolidator import init_consolidator
     init_consolidator(app.state.session_manager, runner=_run_subagent)
+
+    # AutoNudge: keeps idle sessions moving toward a stated goal. Posts
+    # back to our own /api/chat endpoint so it reuses all the regular
+    # streaming / tool / approval plumbing.
+    import httpx as _httpx
+
+    async def _autonudge_runner(session_id: str, message: str) -> None:
+        port = config.dashboard.port
+        headers = {"Content-Type": "application/json"}
+        if app.state.token_auth_enabled and app.state.token:
+            headers["Authorization"] = f"Bearer {app.state.token}"
+        async with _httpx.AsyncClient(timeout=300.0) as client:
+            resp = await client.post(
+                f"http://127.0.0.1:{port}/api/chat/{session_id}",
+                json={"message": message},
+                headers=headers,
+            )
+            # Drain so the server treats the response as consumed; we don't
+            # care about the SSE chunks here.
+            try:
+                async for _ in resp.aiter_text():
+                    pass
+            except Exception:
+                pass
+
+    from arz.autonudge import init_autonudge
+    app.state.autonudge = init_autonudge(app.state.session_manager, runner=_autonudge_runner)
 
     # Mirror every router event into the audit log.
     def _audit_handler(event):

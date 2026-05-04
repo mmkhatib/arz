@@ -15,6 +15,10 @@ export interface SessionSummary {
   agent?: string | null;
   approval_mode?: "normal" | "trust_reads" | "trust" | "yolo";
   streaming?: boolean;
+  autonudge_goal?: string | null;
+  autonudge_idle_s?: number;
+  autonudge_iterations?: number;
+  autonudge_max_iterations?: number;
 }
 
 export interface UsageRecord {
@@ -235,6 +239,19 @@ export const api = {
   reactivateSession: (id: string) =>
     request<SessionSummary>(`/sessions/${id}/reactivate`, { method: "POST" }),
 
+  /** Configure AutoNudge — keeps a session moving toward goal when idle. */
+  setAutoNudge: async (
+    sessionId: string,
+    patch: { goal?: string | null; idle_s?: number; max_iterations?: number; reset_iterations?: boolean },
+  ): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/autonudge`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
   /** Switch the displayed text of an assistant message that has multiple
    *  regenerated versions. */
   selectMessageVersion: async (sessionId: string, index: number, version: number): Promise<void> => {
@@ -340,6 +357,8 @@ export const api = {
   },
   memorySearch: (q: string, k = 5) =>
     request<MemoryHit[]>(`/memory/search?q=${encodeURIComponent(q)}&k=${k}`),
+
+  memoryStats: () => request<{ markdown: number; lessons: number; vectors: number }>("/memory/stats"),
 
   // ── Cron ──
   listCrons: () => request<CronEntry[]>("/cron"),

@@ -42,6 +42,10 @@ def _session_to_dict(session: object) -> dict:
         "agent": session.agent,
         "approval_mode": session.approval_mode,
         "streaming": get_stream_registry().is_streaming(session.id),
+        "autonudge_goal": session.autonudge_goal,
+        "autonudge_idle_s": session.autonudge_idle_s,
+        "autonudge_iterations": session.autonudge_iterations,
+        "autonudge_max_iterations": session.autonudge_max_iterations,
     }
 
 
@@ -72,6 +76,41 @@ async def create_session(request: Request) -> dict:
     if dirty:
         mgr.save(session)
     return _session_to_dict(session)
+
+
+@router.patch("/api/sessions/{session_id}/autonudge", status_code=status.HTTP_204_NO_CONTENT)
+async def set_autonudge(session_id: str, request: Request) -> None:
+    """Configure AutoNudge for a session.
+
+    Body fields (all optional, only provided ones are updated):
+      goal: str | null   — set/clear the running goal
+      idle_s: int        — seconds of idleness before a nudge fires; 0 = off
+      max_iterations: int — safety cap; default 20
+      reset_iterations: bool — zero out the iteration counter
+    """
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    from arz.session.session import Session
+    assert isinstance(session, Session)
+    if "goal" in body:
+        g = body.get("goal")
+        session.autonudge_goal = (g or "").strip() or None
+    if "idle_s" in body:
+        try:
+            session.autonudge_idle_s = max(0, int(body.get("idle_s") or 0))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="idle_s must be int")
+    if "max_iterations" in body:
+        try:
+            session.autonudge_max_iterations = max(1, int(body.get("max_iterations") or 20))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail="max_iterations must be int")
+    if body.get("reset_iterations"):
+        session.autonudge_iterations = 0
+    mgr.save(session)
 
 
 @router.patch("/api/sessions/{session_id}/messages/{index}/version", status_code=status.HTTP_204_NO_CONTENT)

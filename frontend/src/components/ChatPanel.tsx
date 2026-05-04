@@ -7,7 +7,7 @@ import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
 import ThemeDropdown from "./ThemeDropdown";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Zap } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
 
 function ThinkingDots() {
@@ -231,7 +231,7 @@ export default function ChatPanel({
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
   const [estimatedContext, setEstimatedContext] = useState(false);
-  const [toolCalls, setToolCalls] = useState<{ callId: string; name: string; input: string }[]>([]);
+  const [toolCalls, setToolCalls] = useState<{ callId: string; name: string; input: string; state?: "running" | "done" | "rejected" | "error" }[]>([]);
   const [pendingApproval, setPendingApproval] = useState<{ requestId: string; title: string; toolInput: string } | null>(null);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
   const [settings, setSettings] = useState<{ model: string } | null>(null);
@@ -241,6 +241,8 @@ export default function ChatPanel({
   const [agents, setAgents] = useState<{ name: string; description?: string; provider?: string }[]>([]);
   const [workDir, setWorkDir] = useState("");
   const [compareTarget, setCompareTarget] = useState<{ prompt: string; baseline: string; baselineModel: string | null } | null>(null);
+  const [autonudgeGoal, setAutonudgeGoal] = useState<string | null>(null);
+  const [autonudgeIdleS, setAutonudgeIdleS] = useState<number>(0);
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
@@ -260,6 +262,8 @@ export default function ChatPanel({
         setSessionModel(s.model ?? null);
         setSessionAgent(s.agent ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
+        setAutonudgeGoal(s.autonudge_goal ?? null);
+        setAutonudgeIdleS(s.autonudge_idle_s ?? 0);
         // If a turn is currently running for this session (e.g. the user
         // navigated away and came back), attach to its detached stream and
         // start showing live updates again.
@@ -430,11 +434,14 @@ export default function ChatPanel({
         const callId = chunk.request_id || chunk.tool_name! + Date.now();
         const tc = { callId, name: chunk.tool_name!, input: chunk.tool_input || "", time: new Date().toLocaleTimeString() };
         turnToolCalls.push({ name: tc.name, input: tc.input });
-        setToolCalls((prev) => [...prev, { callId: tc.callId, name: tc.name, input: tc.input }]);
+        setToolCalls((prev) => [...prev, { callId: tc.callId, name: tc.name, input: tc.input, state: "running" }]);
         onToolCall?.(tc);
         onSseEvent?.("tool_call", chunk.tool_name);
       } else if (chunk.type === "tool_result" && chunk.tool_call_id) {
         onToolResult?.(chunk.tool_call_id, chunk.content || "");
+        setToolCalls((prev) => prev.map((t) =>
+          t.callId === chunk.tool_call_id ? { ...t, state: "done" } : t,
+        ));
         onSseEvent?.("tool_result", chunk.tool_call_id);
       } else if (chunk.type === "permission_request" && chunk.request_id) {
         setPendingApproval({
@@ -619,6 +626,38 @@ export default function ChatPanel({
             className="text-[12px] px-2 py-1 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)] flex items-center gap-1"
           >
             <GitBranch size={12} /> Fork
+          </button>
+          <button
+            onClick={async () => {
+              const isOn = !!(autonudgeGoal && autonudgeIdleS > 0);
+              if (isOn) {
+                await api.setAutoNudge(sessionId, { goal: null, idle_s: 0 });
+                setAutonudgeGoal(null);
+                setAutonudgeIdleS(0);
+                return;
+              }
+              const goal = window.prompt("AutoNudge goal — what should this session keep working on?", autonudgeGoal ?? "");
+              if (!goal) return;
+              const idleStr = window.prompt("Nudge after how many seconds of idle?", String(autonudgeIdleS || 120));
+              const idle_s = Math.max(30, parseInt(idleStr || "120", 10) || 120);
+              await api.setAutoNudge(sessionId, { goal, idle_s, reset_iterations: true });
+              setAutonudgeGoal(goal);
+              setAutonudgeIdleS(idle_s);
+            }}
+            title={
+              autonudgeGoal && autonudgeIdleS > 0
+                ? `AutoNudge ON · every ${autonudgeIdleS}s · "${autonudgeGoal}" — click to disable`
+                : "AutoNudge — keep this session working toward a goal when idle"
+            }
+            className={[
+              "text-[12px] px-2 py-1 rounded-lg flex items-center gap-1",
+              autonudgeGoal && autonudgeIdleS > 0
+                ? "text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
+                : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)]",
+            ].join(" ")}
+          >
+            <Zap size={12} />
+            {autonudgeGoal && autonudgeIdleS > 0 ? "Auto ON" : "Auto"}
           </button>
           <ExportMenu sessionId={sessionId} />
           {onToggleActivity && (

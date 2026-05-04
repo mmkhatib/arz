@@ -79,6 +79,13 @@ class Session:
     model: str | None = None
     agent: str | None = None
     approval_mode: str = "normal"  # "normal" | "trust_reads" | "trust" | "yolo"
+    # AutoNudge: when enabled, a background loop sends a "continue working
+    # toward your goal" prompt every ``autonudge_idle_s`` seconds of session
+    # idleness. Survives gateway restart because it lives on the Session.
+    autonudge_goal: str | None = None
+    autonudge_idle_s: int = 0  # 0 = disabled
+    autonudge_max_iterations: int = 20  # safety cap
+    autonudge_iterations: int = 0  # how many nudges have fired so far
 
     def add_message(self, role: Literal["user", "assistant", "system"], text: str) -> Message:
         msg = Message(role=role, text=text)
@@ -105,6 +112,10 @@ class Session:
             "model": self.model,
             "agent": self.agent,
             "approval_mode": self.approval_mode,
+            "autonudge_goal": self.autonudge_goal,
+            "autonudge_idle_s": self.autonudge_idle_s,
+            "autonudge_max_iterations": self.autonudge_max_iterations,
+            "autonudge_iterations": self.autonudge_iterations,
         }
 
     @classmethod
@@ -125,4 +136,8 @@ class Session:
             model=d.get("model"),
             agent=d.get("agent"),
             approval_mode=d.get("approval_mode", "normal"),
+            autonudge_goal=d.get("autonudge_goal"),
+            autonudge_idle_s=int(d.get("autonudge_idle_s") or 0),
+            autonudge_max_iterations=int(d.get("autonudge_max_iterations") or 20),
+            autonudge_iterations=int(d.get("autonudge_iterations") or 0),
         )

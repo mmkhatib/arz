@@ -59,6 +59,22 @@ async def list_markdown(request: Request) -> list[str]:
     return _markdown_store(request).list()
 
 
+@router.get("/api/memory/stats")
+async def memory_stats(request: Request) -> dict:
+    """Cheap counts for header indicator pills."""
+    md = _markdown_store(request).list()
+    try:
+        lessons = len(_lessons_store(request).list())
+    except Exception:
+        lessons = 0
+    try:
+        vec = _vector_store(request)
+        vec_count = vec.count() if hasattr(vec, "count") else 0
+    except Exception:
+        vec_count = 0
+    return {"markdown": len(md), "lessons": lessons, "vectors": vec_count}
+
+
 @router.get("/api/memory/markdown/{key}", response_model=MarkdownEntry)
 async def read_markdown(key: str, request: Request) -> MarkdownEntry:
     if not _KEY_RE.match(key):

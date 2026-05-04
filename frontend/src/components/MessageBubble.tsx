@@ -1,5 +1,8 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
 import type { MessageRecord } from "@/api/client";
 import MermaidBlock from "./MermaidBlock";
 import { formatTokens } from "@/utils/tokens";
@@ -182,6 +185,8 @@ export default function MessageBubble({
             )
           ) : (
             <ReactMarkdown
+              remarkPlugins={[remarkMath]}
+              rehypePlugins={[rehypeKatex]}
               components={{
                 p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
                 code: ({ children, className }) => {
@@ -288,6 +293,17 @@ export default function MessageBubble({
               title="Compare with another model"
             >
               ↔ compare
+            </button>
+          )}
+          {isUser && (
+            <button
+              onClick={async () => {
+                try { await navigator.clipboard.writeText(message.text); } catch {}
+              }}
+              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors opacity-0 group-hover:opacity-100"
+              title="Copy"
+            >
+              ⧉ copy
             </button>
           )}
           {isUser && isLastUser && onEditResend && !editing && (

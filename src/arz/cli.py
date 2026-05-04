@@ -182,5 +182,86 @@ bot_name = "Arzeh"
     typer.echo("Run `arz chat` to start.")
 
 
+@app.command()
+def snapshot(
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Output .tar.gz path")] = None,
+    include_sessions: Annotated[bool, typer.Option(help="Include session JSON files")] = True,
+) -> None:
+    """Bundle ~/.arz/ into a portable tar.gz archive."""
+    import tarfile
+    import time as _t
+
+    arz = Path.home() / ".arz"
+    if not arz.exists():
+        raise typer.BadParameter(f"{arz} does not exist — nothing to snapshot")
+    out = out or Path.cwd() / f"arz-snapshot-{_t.strftime('%Y%m%d-%H%M%S')}.tar.gz"
+    typer.echo(f"Snapshotting {arz} → {out}")
+    with tarfile.open(out, "w:gz") as tf:
+        for entry in arz.iterdir():
+            if entry.name == "sessions" and not include_sessions:
+                continue
+            # Skip transient + secret-like artifacts.
+            if entry.name in {"owned_pids.json", ".cache", "tmp"}:
+                continue
+            tf.add(entry, arcname=entry.name)
+    size_kb = out.stat().st_size / 1024
+    typer.echo(f"Wrote {size_kb:.1f} KiB")
+
+
+@app.command()
+def restore(
+    archive: Annotated[Path, typer.Argument(help="Snapshot .tar.gz to restore")],
+    mode: Annotated[str, typer.Option(help="merge | replace")] = "merge",
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Preview only")] = False,
+) -> None:
+    """Restore a snapshot. ``merge`` adds files (skipping conflicts);
+    ``replace`` overwrites existing files."""
+    import tarfile
+    import shutil
+
+    if not archive.exists():
+        raise typer.BadParameter(f"{archive} not found")
+    if mode not in ("merge", "replace"):
+        raise typer.BadParameter("--mode must be merge or replace")
+    arz = Path.home() / ".arz"
+    arz.mkdir(exist_ok=True)
+    typer.echo(f"Restoring {archive} → {arz} (mode={mode}, dry-run={dry_run})")
+    added = skipped = overwritten = 0
+    with tarfile.open(archive, "r:gz") as tf:
+        for member in tf.getmembers():
+            target = arz / member.name
+            if target.exists():
+                if mode == "merge":
+                    skipped += 1
+                    typer.echo(f"  skip   {member.name}")
+                    continue
+                if not dry_run:
+                    if target.is_dir():
+                        shutil.rmtree(target)
+                    else:
+                        target.unlink()
+                overwritten += 1
+                typer.echo(f"  replace {member.name}")
+            else:
+                added += 1
+                typer.echo(f"  add    {member.name}")
+            if not dry_run:
+                tf.extract(member, arz)
+    typer.echo(f"\nDone: added={added} overwritten={overwritten} skipped={skipped}")
+
+
+@app.command(name="eval")
+def eval_cmd(
+    scenarios: Annotated[str, typer.Option(help="Comma-separated scenario IDs or 'all'")] = "all",
+    config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+) -> None:
+    """Run the memory eval harness against the configured provider."""
+    from arz.eval import run_eval
+
+    cfg = load_config(config)
+    chosen = None if scenarios.strip().lower() == "all" else [s.strip() for s in scenarios.split(",")]
+    asyncio.run(run_eval(cfg, scenarios=chosen))
+
+
 if __name__ == "__main__":
     app()

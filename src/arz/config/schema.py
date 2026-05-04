@@ -41,6 +41,9 @@ class DashboardConfig(BaseModel):
     # Picking "ollama" without a model defaults to qwen3-embedding:0.6b.
     embedding_model: str = "hash"
     heartbeat_interval_s: int = 300
+    # Warm pool: pre-spawn N providers at startup so the first user
+    # message doesn't pay the 3-10s cold-start cost. 0 = disabled.
+    warm_pool_size: int = 0
 
 
 class SlackConfig(BaseModel):
