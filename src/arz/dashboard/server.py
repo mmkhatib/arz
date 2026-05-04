@@ -405,6 +405,26 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(consolidator_router)
 
     if _STATIC_DIR.exists():
+        # SPA fallback: any non-/api path that doesn't match a real file
+        # should return index.html so React Router can handle it on the
+        # client. Without this, a hard reload of /board, /agents, etc. 404s.
+        from fastapi.responses import FileResponse
+        from starlette.exceptions import HTTPException as StarletteHTTPException
+
+        index_path = _STATIC_DIR / "index.html"
+
+        @app.exception_handler(StarletteHTTPException)
+        async def _spa_fallback(request, exc):
+            if (
+                exc.status_code == 404
+                and request.method == "GET"
+                and not request.url.path.startswith("/api/")
+                and index_path.exists()
+            ):
+                return FileResponse(index_path)
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
         app.mount("/", StaticFiles(directory=str(_STATIC_DIR), html=True), name="static")
 
     return app
