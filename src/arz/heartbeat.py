@@ -66,13 +66,19 @@ class HeartbeatService:
     ) -> None:
         self._runner = runner
         self._path = path or _PATH
-        self._interval = max(60, int(interval_s))
+        # interval_s <= 0 disables the loop entirely. Otherwise clamp to
+        # at least 60s so we don't hammer the LLM on misconfig.
+        n = int(interval_s)
+        self._interval = 0 if n <= 0 else max(60, n)
         self._agent = agent_name
         self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         _ensure_default_file()
 
     def start(self) -> None:
+        if self._interval <= 0:
+            log.info("heartbeat disabled (interval_s=0)")
+            return
         if self._task and not self._task.done():
             return
         self._stopping.clear()

@@ -128,7 +128,16 @@ def gateway(
     import logging
 
     class _QuietPolling(logging.Filter):
-        _SKIP = ("/api/health", "/api/cron", "/api/overview", "/api/sessions")
+        _SKIP = (
+            "/api/health",
+            "/api/cron",
+            "/api/overview",
+            "/api/sessions",
+            "/api/memory/stats",
+            "/api/installer/status",
+            "/api/chat/" ,  # SSE reattach + polling status
+            "/api/settings",
+        )
         def filter(self, record: logging.LogRecord) -> bool:
             msg = record.getMessage()
             return not any(p in msg for p in self._SKIP)

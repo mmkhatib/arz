@@ -201,7 +201,10 @@ function MemoryStatsRow({ collapsed }: { collapsed: boolean }) {
         .catch(() => {});
     };
     tick();
-    const id = window.setInterval(() => { if (!document.hidden) tick(); }, 30_000);
+    // 5 min cadence — memory items barely change between polls and the
+    // gateway access log gets noisy fast. Tab-visibility gate keeps idle
+    // tabs from firing at all.
+    const id = window.setInterval(() => { if (!document.hidden) tick(); }, 300_000);
     return () => { cancelled = true; window.clearInterval(id); };
   }, []);
   if (!stats) return null;
