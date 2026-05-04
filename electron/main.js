@@ -31,6 +31,15 @@ const SHUTDOWN_GRACE_MS = 5_000;
 let mainWindow = null;
 let gatewayProc = null;          // Process handle if WE spawned it
 let gatewaySpawnedByUs = false;  // Don't kill what we didn't start
+let appQuitting = false;         // Set in before-quit so we don't try to restart on intentional exit
+
+// Restart-burst protection — if the gateway crashes more than RESTART_BURST_LIMIT
+// times within RESTART_WINDOW_MS, stop respawning and show an error dialog.
+// Mirrors the systemd StartLimitBurst pattern. Without this, a bad config or
+// stale binary path could loop forever and chew CPU.
+const RESTART_BURST_LIMIT = 5;
+const RESTART_WINDOW_MS = 60_000;
+const restartTimes = [];          // Timestamps of recent (re)starts
 
 function probeGateway() {
   return new Promise((resolve) => {
@@ -80,11 +89,28 @@ function tryStartGateway() {
       if (proc.pid && !errored) {
         gatewayProc = proc;
         gatewaySpawnedByUs = true;
-        proc.once("exit", () => {
-          // If the gateway dies on its own, drop our handle so we don't
-          // try to kill an already-gone PID later.
+        const now = Date.now();
+        restartTimes.push(now);
+        while (restartTimes.length && now - restartTimes[0] > RESTART_WINDOW_MS) {
+          restartTimes.shift();
+        }
+        proc.once("exit", (code, signal) => {
           gatewayProc = null;
           gatewaySpawnedByUs = false;
+          if (appQuitting) return;
+          // Auto-restart on unexpected exit, with burst protection.
+          if (restartTimes.length >= RESTART_BURST_LIMIT) {
+            dialog.showErrorBox(
+              "Arz gateway keeps crashing",
+              `The gateway exited ${restartTimes.length} times in the last ` +
+                `${Math.round(RESTART_WINDOW_MS / 1000)}s and has been stopped to ` +
+                `avoid a restart loop.\n\nLast exit code: ${code}, signal: ${signal}\n\n` +
+                `Run \`arz gateway\` from a terminal to see the error.`,
+            );
+            app.quit();
+            return;
+          }
+          tryStartGateway();
         });
         return proc;
       }
@@ -236,6 +262,7 @@ app.on("window-all-closed", () => {
 // before-quit fires before the app actually exits, while async work can
 // still complete. We use it to take down the gateway cleanly.
 app.on("before-quit", async (e) => {
+  appQuitting = true;
   if (gatewaySpawnedByUs && gatewayProc && !gatewayProc.killed) {
     e.preventDefault();
     await killGatewayIfOurs();

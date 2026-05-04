@@ -38,10 +38,27 @@ class ProviderPool:
 
         If the pool is full, the LRU entry is evicted first.
         Marks *session_id* as most-recently used.
+
+        Lossless resume: a stale entry whose backing process has died
+        (idle-killed, crashed, OOM-reaped, etc.) is silently re-created.
+        The caller's factory is responsible for wiring the prior native
+        session ID via SessionMap so conversation history survives.
         """
-        if session_id in self._pool:
-            self._pool.move_to_end(session_id)
-            return self._pool[session_id]
+        existing = self._pool.get(session_id)
+        if existing is not None:
+            if existing.is_alive():
+                self._pool.move_to_end(session_id)
+                return existing
+            log.info(
+                "Provider in pool but dead — re-creating",
+                session_id=session_id,
+                provider=existing.name,
+            )
+            del self._pool[session_id]
+            try:
+                await existing.shutdown()
+            except Exception:
+                pass
 
         if len(self._pool) >= self.max_size:
             await self._evict_lru()
@@ -50,19 +67,51 @@ class ProviderPool:
         await provider.start()
         self._pool[session_id] = provider
         log.info("Provider activated", session_id=session_id, active=len(self._pool))
+        try:
+            from arz.reaper import get_reaper
+
+            get_reaper().register(provider.pid, provider.name)
+        except Exception:
+            log.warning("Reaper register failed", exc_info=True)
         return provider
 
     async def deactivate(self, session_id: str) -> None:
-        """Explicitly put a session to sleep (shutdown its provider)."""
+        """Put a session to sleep — shut down the process only.
+
+        This is *not* the same as destroying a session. Conversation
+        history (in ``SessionManager``) and the native CLI session ID
+        (in ``SessionMap``) are deliberately NOT touched here, so the
+        next user message can resume seamlessly. Callers that want to
+        delete a session entirely must remove those records explicitly.
+        """
         provider = self._pool.pop(session_id, None)
         if provider:
-            await provider.shutdown()
+            pid = provider.pid
+            try:
+                await provider.shutdown()
+            except Exception:
+                log.warning("Provider shutdown raised", session_id=session_id, exc_info=True)
+            try:
+                from arz.reaper import get_reaper
+
+                get_reaper().unregister(pid)
+            except Exception:
+                pass
             log.info("Provider deactivated", session_id=session_id)
 
     async def shutdown_all(self) -> None:
         """Shut down every active provider (called on gateway shutdown)."""
         ids = list(self._pool.keys())
+        pids = [self._pool[sid].pid for sid in ids]
         await asyncio.gather(*(self._pool[sid].shutdown() for sid in ids), return_exceptions=True)
+        try:
+            from arz.reaper import get_reaper
+
+            reaper = get_reaper()
+            for pid in pids:
+                reaper.unregister(pid)
+        except Exception:
+            pass
         self._pool.clear()
 
     def active_count(self) -> int:

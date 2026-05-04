@@ -79,6 +79,11 @@ class LLMProvider(ABC):
         return True
 
     @property
+    def pid(self) -> int | None:
+        """OS process ID of the backing CLI, if any. None for HTTP providers."""
+        return None
+
+    @property
     def current_model(self) -> str | None:
         """Return the model this provider was started with, or None if unknown."""
         return None

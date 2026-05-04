@@ -103,6 +103,11 @@ class KiroCliProvider(LLMProvider):
         return 0.0
 
     @property
+    def pid(self) -> int | None:
+        proc = getattr(self._client, "_process", None)
+        return proc.pid if proc else None
+
+    @property
     def current_model(self) -> str | None:
         return self._client._model
 

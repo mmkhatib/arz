@@ -90,6 +90,11 @@ class ClaudeCodeProvider(LLMProvider):
         await self._client.reject_tool(str(request_id))
 
     @property
+    def pid(self) -> int | None:
+        proc = getattr(self._client, "_process", None)
+        return proc.pid if proc else None
+
+    @property
     def current_model(self) -> str | None:
         return self._client._model
 

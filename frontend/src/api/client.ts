@@ -64,6 +64,7 @@ export interface CronEntry {
   last_run_at: number | null;
   last_status: string | null;
   last_session_id: string | null;
+  persistent_session?: boolean;
 }
 
 export interface MemoryLesson {
@@ -299,13 +300,27 @@ export const api = {
 
   // ── Cron ──
   listCrons: () => request<CronEntry[]>("/cron"),
-  createCron: (name: string, prompt: string, schedule: string, enabled = true) =>
+  createCron: (
+    name: string,
+    prompt: string,
+    schedule: string,
+    enabled = true,
+    persistent_session = false,
+  ) =>
     request<CronEntry>("/cron", {
       method: "POST",
-      body: JSON.stringify({ name, prompt, schedule, enabled }),
+      body: JSON.stringify({ name, prompt, schedule, enabled, persistent_session }),
     }),
-  updateCron: (id: number, patch: Partial<{ name: string; prompt: string; schedule: string; enabled: boolean }>) =>
-    request<CronEntry>(`/cron/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  updateCron: (
+    id: number,
+    patch: Partial<{
+      name: string;
+      prompt: string;
+      schedule: string;
+      enabled: boolean;
+      persistent_session: boolean;
+    }>,
+  ) => request<CronEntry>(`/cron/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
   deleteCron: async (id: number): Promise<void> => {
     const res = await fetch(`${BASE}/cron/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);

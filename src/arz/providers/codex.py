@@ -94,6 +94,10 @@ class CodexProvider(LLMProvider):
         return True
 
     @property
+    def pid(self) -> int | None:
+        return self._process.pid if self._process else None
+
+    @property
     def session_id(self) -> str | None:
         return self._thread_id
 

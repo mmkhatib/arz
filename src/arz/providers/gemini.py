@@ -100,6 +100,10 @@ class GeminiProvider(LLMProvider):
         return True
 
     @property
+    def pid(self) -> int | None:
+        return self._process.pid if self._process else None
+
+    @property
     def current_model(self) -> str | None:
         return self._model or None
 

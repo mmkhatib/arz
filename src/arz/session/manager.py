@@ -139,6 +139,11 @@ class SessionManager:
     def load_all(self) -> int:
         """Load all persisted sessions from disk. Returns count loaded.
 
+        Lossless across restarts: every message ever written to disk is
+        rehydrated — we never truncate or drop old messages on load. A
+        corrupt JSON file is renamed ``<id>.json.corrupt`` so the next
+        boot doesn't keep warning about the same file.
+
         Also runs a one-shot migration that strips auto-injected
         <preferences> / <projects> / <lessons> / <memory> / [subagent:…]
         wrapper text from saved user messages — a previous bug saved the
@@ -146,6 +151,7 @@ class SessionManager:
         chat panel.
         """
         loaded = 0
+        total_messages = 0
         for path in self._dir.glob("*.json"):
             try:
                 data = json.loads(path.read_text())
@@ -157,6 +163,14 @@ class SessionManager:
                     key = (session.surface, session.chat_id, session.thread_id)
                     self._surface_index[key] = session.id
                 loaded += 1
+                total_messages += len(session.messages)
             except Exception as e:
                 log.warning("Failed to load session %s: %s", path.name, e)
+                try:
+                    quarantined = path.with_suffix(path.suffix + ".corrupt")
+                    path.rename(quarantined)
+                    log.warning("Quarantined corrupt session file → %s", quarantined.name)
+                except OSError:
+                    log.warning("Could not quarantine corrupt session file %s", path.name)
+        log.info("Loaded %d sessions (%d messages total)", loaded, total_messages)
         return loaded

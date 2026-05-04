@@ -26,6 +26,7 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
   const [name, setName] = useState("");
   const [prompt, setPrompt] = useState("");
   const [schedule, setSchedule] = useState("0 9 * * *");
+  const [persistentSession, setPersistentSession] = useState(false);
   const handleClose = onClose ?? (() => {});
 
   const refresh = () =>
@@ -45,10 +46,11 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
     if (!name.trim() || !prompt.trim() || !schedule.trim()) return;
     setError(null);
     try {
-      await api.createCron(name.trim(), prompt.trim(), schedule.trim());
+      await api.createCron(name.trim(), prompt.trim(), schedule.trim(), true, persistentSession);
       setName("");
       setPrompt("");
       setSchedule("0 9 * * *");
+      setPersistentSession(false);
       setCreating(false);
       refresh();
     } catch (e) {
@@ -144,6 +146,20 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
               <div className="text-[10px] text-[var(--muted)]/60 font-mono">
                 Format: minute hour day-of-month month day-of-week
               </div>
+              <label className="flex items-start gap-2 text-[11px] text-[var(--muted)] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={persistentSession}
+                  onChange={(e) => setPersistentSession(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  Persistent session — reuse the same chat across runs.{" "}
+                  <span className="text-[var(--muted)]/60">
+                    Default off: a fresh session per run prevents context bloat / OOM on long-running polls.
+                  </span>
+                </span>
+              </label>
               <button
                 onClick={create}
                 disabled={!name.trim() || !prompt.trim() || !schedule.trim()}
@@ -174,6 +190,14 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
                     <span className="text-[10px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded shrink-0">{item.schedule}</span>
                     {!item.enabled && (
                       <span className="text-[10px] uppercase tracking-wider text-[var(--muted)] bg-[var(--bg)] px-1.5 py-0.5 rounded shrink-0">paused</span>
+                    )}
+                    {item.persistent_session && (
+                      <span
+                        title="Reuses the same session across runs"
+                        className="text-[10px] uppercase tracking-wider text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded shrink-0"
+                      >
+                        persistent
+                      </span>
                     )}
                   </div>
                   <pre className="text-[12px] text-[var(--muted)] whitespace-pre-wrap break-words max-h-[80px] overflow-y-auto">

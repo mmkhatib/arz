@@ -15,6 +15,7 @@ class CronCreate(BaseModel):
     prompt: str = Field(min_length=1, max_length=10_000)
     schedule: str = Field(min_length=3, max_length=120, description="5-field cron expression")
     enabled: bool = True
+    persistent_session: bool = False
 
 
 class CronPatch(BaseModel):
@@ -22,6 +23,7 @@ class CronPatch(BaseModel):
     prompt: str | None = None
     schedule: str | None = None
     enabled: bool | None = None
+    persistent_session: bool | None = None
 
 
 class CronResponse(BaseModel):
@@ -34,6 +36,7 @@ class CronResponse(BaseModel):
     last_run_at: float | None = None
     last_status: str | None = None
     last_session_id: str | None = None
+    persistent_session: bool = False
 
 
 def _registry(request: Request):
@@ -49,7 +52,11 @@ async def list_crons(request: Request) -> list[CronResponse]:
 async def create_cron(body: CronCreate, request: Request) -> CronResponse:
     try:
         entry = _registry(request).create(
-            name=body.name, prompt=body.prompt, schedule=body.schedule, enabled=body.enabled
+            name=body.name,
+            prompt=body.prompt,
+            schedule=body.schedule,
+            enabled=body.enabled,
+            persistent_session=body.persistent_session,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"invalid cron expression: {e}")
@@ -65,6 +72,7 @@ async def update_cron(cron_id: int, body: CronPatch, request: Request) -> CronRe
             prompt=body.prompt,
             schedule=body.schedule,
             enabled=body.enabled,
+            persistent_session=body.persistent_session,
         )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"invalid cron expression: {e}")

@@ -192,6 +192,11 @@ async def delete_session_permanent(session_id: str, request: Request) -> None:
 
     Closing a session keeps the file so it can be resumed from history.
     This endpoint is the destructive variant — used by the history-purge UI.
+
+    NOTE — destroy vs sleep: this is the only place the SessionMap entry
+    (native CLI session ID) is forcibly cleared. Process-only teardown
+    (pool eviction, idle kill) must NEVER touch SessionMap, otherwise
+    conversation history can't be resumed on the next user message.
     """
     mgr: SessionManager = _get_manager(request)
     session = mgr.get(session_id)

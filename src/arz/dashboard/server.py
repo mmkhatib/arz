@@ -99,9 +99,17 @@ async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
         return
 
     log.info("Cron run started", cron_id=entry.id, name=entry.name)
-    session = mgr.create(surface="cron", chat_id=f"cron-{entry.id}")
-    session.title = f"⏱ {entry.name}"
-    session.provider = cfg.provider.name
+    # Persistent mode: reuse the prior session if one exists. Default
+    # (persistent_session=False) creates a fresh session every fire so
+    # context cannot accumulate unbounded — the bug that OOM-killed
+    # MeshClaw gateways after several days.
+    session = None
+    if getattr(entry, "persistent_session", False) and entry.last_session_id:
+        session = mgr.get(entry.last_session_id)
+    if session is None:
+        session = mgr.create(surface="cron", chat_id=f"cron-{entry.id}")
+        session.title = f"⏱ {entry.name}"
+        session.provider = cfg.provider.name
     session.add_message("user", entry.prompt)
     mgr.save(session)
 
@@ -157,6 +165,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Search index ready", sessions=indexed)
     app.state.cron_registry.start()
     log.info("Cron scheduler started")
+    try:
+        from arz.reaper import get_reaper
+
+        await get_reaper().start()
+        log.info("Orphan reaper started")
+    except Exception:
+        log.warning("Could not start orphan reaper", exc_info=True)
     # Seed the memory-consolidator cron if missing. Runs nightly at 03:00.
     try:
         existing = {c.name for c in app.state.cron_registry.list()}
@@ -181,6 +196,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if getattr(app.state, "heartbeat_service", None) is not None:
         app.state.heartbeat_service.stop()
     await app.state.provider_pool.shutdown_all()
+    try:
+        from arz.reaper import get_reaper
+
+        await get_reaper().stop()
+    except Exception:
+        pass
 
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:

@@ -34,9 +34,16 @@ CREATE TABLE IF NOT EXISTS crons (
     created_at  REAL    NOT NULL,
     last_run_at REAL,
     last_status TEXT,
-    last_session_id TEXT
+    last_session_id TEXT,
+    persistent_session INTEGER NOT NULL DEFAULT 0
 );
 """
+
+
+def _migrate_add_persistent_session(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(crons)").fetchall()}
+    if "persistent_session" not in cols:
+        conn.execute("ALTER TABLE crons ADD COLUMN persistent_session INTEGER NOT NULL DEFAULT 0")
 
 
 @dataclass
@@ -50,6 +57,7 @@ class CronEntry:
     last_run_at: float | None
     last_status: str | None
     last_session_id: str | None
+    persistent_session: bool = False
 
     def to_dict(self) -> dict:
         return {
@@ -62,6 +70,7 @@ class CronEntry:
             "last_run_at": self.last_run_at,
             "last_status": self.last_status,
             "last_session_id": self.last_session_id,
+            "persistent_session": self.persistent_session,
         }
 
 
@@ -82,6 +91,7 @@ class CronRegistry:
         self._db.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_DDL)
+            _migrate_add_persistent_session(conn)
         self._lock = threading.Lock()
         self._runner = runner
         self._scheduler = AsyncIOScheduler()
@@ -95,7 +105,7 @@ class CronRegistry:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT id, name, prompt, schedule, enabled, created_at, "
-                "last_run_at, last_status, last_session_id FROM crons "
+                "last_run_at, last_status, last_session_id, persistent_session FROM crons "
                 "ORDER BY created_at DESC"
             ).fetchall()
         return [self._row_to_entry(r) for r in rows]
@@ -104,20 +114,27 @@ class CronRegistry:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT id, name, prompt, schedule, enabled, created_at, "
-                "last_run_at, last_status, last_session_id FROM crons WHERE id = ?",
+                "last_run_at, last_status, last_session_id, persistent_session FROM crons WHERE id = ?",
                 (cron_id,),
             ).fetchone()
         return self._row_to_entry(row) if row else None
 
-    def create(self, name: str, prompt: str, schedule: str, enabled: bool = True) -> CronEntry:
+    def create(
+        self,
+        name: str,
+        prompt: str,
+        schedule: str,
+        enabled: bool = True,
+        persistent_session: bool = False,
+    ) -> CronEntry:
         # Validate cron expression up-front
         CronTrigger.from_crontab(schedule)
         now = time.time()
         with self._lock, self._connect() as conn:
             cur = conn.execute(
-                "INSERT INTO crons (name, prompt, schedule, enabled, created_at) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (name, prompt, schedule, 1 if enabled else 0, now),
+                "INSERT INTO crons (name, prompt, schedule, enabled, created_at, persistent_session) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (name, prompt, schedule, 1 if enabled else 0, now, 1 if persistent_session else 0),
             )
             cron_id = cur.lastrowid
         entry = CronEntry(
@@ -130,6 +147,7 @@ class CronRegistry:
             last_run_at=None,
             last_status=None,
             last_session_id=None,
+            persistent_session=persistent_session,
         )
         if entry.enabled:
             self._add_job(entry)
@@ -143,6 +161,7 @@ class CronRegistry:
         prompt: str | None = None,
         schedule: str | None = None,
         enabled: bool | None = None,
+        persistent_session: bool | None = None,
     ) -> CronEntry | None:
         existing = self.get(cron_id)
         if not existing:
@@ -159,11 +178,22 @@ class CronRegistry:
             last_run_at=existing.last_run_at,
             last_status=existing.last_status,
             last_session_id=existing.last_session_id,
+            persistent_session=(
+                persistent_session if persistent_session is not None else existing.persistent_session
+            ),
         )
         with self._lock, self._connect() as conn:
             conn.execute(
-                "UPDATE crons SET name=?, prompt=?, schedule=?, enabled=? WHERE id=?",
-                (merged.name, merged.prompt, merged.schedule, 1 if merged.enabled else 0, cron_id),
+                "UPDATE crons SET name=?, prompt=?, schedule=?, enabled=?, persistent_session=? "
+                "WHERE id=?",
+                (
+                    merged.name,
+                    merged.prompt,
+                    merged.schedule,
+                    1 if merged.enabled else 0,
+                    1 if merged.persistent_session else 0,
+                    cron_id,
+                ),
             )
         # Reschedule
         self._remove_job(cron_id)
@@ -248,6 +278,7 @@ class CronRegistry:
             last_run_at=row[6],
             last_status=row[7],
             last_session_id=row[8],
+            persistent_session=bool(row[9]) if len(row) > 9 else False,
         )
 
 
