@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Activity, Users, Heart, ListChecks, Save, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
+import SecondaryNav from "@/components/SecondaryNav";
 
 type Tab = "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -15,34 +16,26 @@ export default function AutonomyPage() {
           <h2 className="text-[15px] font-semibold text-[var(--text)]">Autonomy</h2>
         </div>
       </div>
-      <div className="flex border-b border-[var(--border)] px-3">
-        <Tab icon={<Activity size={13} />} label="Subagents" active={tab === "subagents"} onClick={() => setTab("subagents")} />
-        <Tab icon={<Users size={13} />} label="Channels" active={tab === "channels"} onClick={() => setTab("channels")} />
-        <Tab icon={<Heart size={13} />} label="Heartbeat" active={tab === "heartbeat"} onClick={() => setTab("heartbeat")} />
-        <Tab icon={<ListChecks size={13} />} label="Tasks" active={tab === "tasks"} onClick={() => setTab("tasks")} />
-      </div>
-      <div className="overflow-y-auto px-5 py-4 flex-1">
-        {tab === "subagents" && <SubagentsTab />}
-        {tab === "channels" && <ChannelsTab />}
-        {tab === "heartbeat" && <HeartbeatTab />}
-        {tab === "tasks" && <TasksTab />}
+      <div className="flex flex-1 min-h-0">
+        <SecondaryNav<Tab>
+          title="Sections"
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: "subagents", label: "Subagents", icon: <Activity size={13} /> },
+            { id: "channels",  label: "Channels",  icon: <Users size={13} /> },
+            { id: "heartbeat", label: "Heartbeat", icon: <Heart size={13} /> },
+            { id: "tasks",     label: "Tasks",     icon: <ListChecks size={13} /> },
+          ]}
+        />
+        <div className="overflow-y-auto px-5 py-4 flex-1">
+          {tab === "subagents" && <SubagentsTab />}
+          {tab === "channels" && <ChannelsTab />}
+          {tab === "heartbeat" && <HeartbeatTab />}
+          {tab === "tasks" && <TasksTab />}
+        </div>
       </div>
     </div>
-  );
-}
-
-function Tab({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        "flex items-center gap-1.5 px-4 py-2 text-[12px] border-b-2 transition-colors",
-        active ? "border-[var(--cedar)] text-[var(--text)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]",
-      ].join(" ")}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }
 

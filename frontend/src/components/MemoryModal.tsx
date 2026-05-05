@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import type { MemoryHit } from "@/api/client";
 import { Brain, FileText, Search as SearchIcon, Trash2, Plus, Save, Sparkles, FileEdit, Pin, PinOff } from "lucide-react";
+import SecondaryNav from "@/components/SecondaryNav";
 
 interface Props {
   onClose?: () => void;
@@ -36,29 +37,30 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
       )}
     </div>
   );
-  const tabs = (
-    <div className="flex border-b border-[var(--border)] px-3 overflow-x-auto">
-      <TabButton icon={<Sparkles size={13} />} label="Lessons" active={tab === "auto_lessons"} onClick={() => setTab("auto_lessons")} />
-      <TabButton icon={<FileEdit size={13} />} label="Memory Files" active={tab === "files"} onClick={() => setTab("files")} />
-      <TabButton icon={<FileText size={13} />} label="Notes" active={tab === "markdown"} onClick={() => setTab("markdown")} />
-      <TabButton icon={<SearchIcon size={13} />} label="Search" active={tab === "search"} onClick={() => setTab("search")} />
-    </div>
-  );
-  const body = (
-    <div className="overflow-y-auto px-5 py-4 flex-1">
+  const navItems = [
+    { id: "auto_lessons" as const, label: "Lessons",      icon: <Sparkles size={13} /> },
+    { id: "files" as const,        label: "Memory Files", icon: <FileEdit size={13} /> },
+    { id: "markdown" as const,     label: "Notes",        icon: <FileText size={13} /> },
+    { id: "search" as const,       label: "Search",       icon: <SearchIcon size={13} /> },
+  ];
+
+  const tabBody = () => (
+    <>
       {tab === "auto_lessons" && <AutoLessonsTab />}
       {tab === "files" && <MemoryFilesTab />}
       {tab === "markdown" && <MarkdownTab />}
       {tab === "search" && <SearchTab />}
-    </div>
+    </>
   );
 
   if (variant === "page") {
     return (
       <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
-        {tabs}
-        {body}
+        <div className="flex flex-1 min-h-0">
+          <SecondaryNav<Tab> title="Memory" value={tab} onChange={setTab} items={navItems} />
+          <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
+        </div>
       </div>
     );
   }
@@ -70,27 +72,14 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
         if (e.target === e.currentTarget) handleClose();
       }}
     >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[85vh] flex flex-col">
+      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col">
         {header}
-        {tabs}
-        {body}
+        <div className="flex flex-1 min-h-0">
+          <SecondaryNav<Tab> value={tab} onChange={setTab} items={navItems} widthClass="w-44" />
+          <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
+        </div>
       </div>
     </div>
-  );
-}
-
-function TabButton({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={[
-        "flex items-center gap-1.5 px-4 py-2 text-[12px] border-b-2 transition-colors",
-        active ? "border-[var(--cedar)] text-[var(--text)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]",
-      ].join(" ")}
-    >
-      {icon}
-      {label}
-    </button>
   );
 }
 

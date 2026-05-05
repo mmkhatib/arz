@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import type { McpServer, PromptTemplate, ToolView } from "@/api/client";
 import { Puzzle, Server, FileCode, Wrench, Plus, Trash2, Edit2, RefreshCw, AlertTriangle, Check, X, ToggleLeft, ToggleRight, Shield } from "lucide-react";
+import SecondaryNav from "@/components/SecondaryNav";
 
 interface Props {
   onClose?: () => void;
@@ -33,30 +34,30 @@ export default function CapabilitiesModal({ onClose, variant = "modal" }: Props)
     </div>
   );
 
-  const tabs = (
-    <div className="flex border-b border-[var(--border)] px-3">
-      <TabBtn icon={<Server size={13} />} label="MCP Servers" active={tab === "mcp"} onClick={() => setTab("mcp")} />
-      <TabBtn icon={<FileCode size={13} />} label="Prompts" active={tab === "prompts"} onClick={() => setTab("prompts")} />
-      <TabBtn icon={<Wrench size={13} />} label="Tools" active={tab === "tools"} onClick={() => setTab("tools")} />
-      <TabBtn icon={<Shield size={13} />} label="Hooks" active={tab === "hooks"} onClick={() => setTab("hooks")} />
-    </div>
-  );
+  const navItems = [
+    { id: "mcp" as const,     label: "MCP Servers", icon: <Server size={13} /> },
+    { id: "prompts" as const, label: "Prompts",     icon: <FileCode size={13} /> },
+    { id: "tools" as const,   label: "Tools",       icon: <Wrench size={13} /> },
+    { id: "hooks" as const,   label: "Hooks",       icon: <Shield size={13} /> },
+  ];
 
-  const body = (
-    <div className="overflow-y-auto px-5 py-4 flex-1">
+  const tabBody = () => (
+    <>
       {tab === "mcp" && <McpTab />}
       {tab === "prompts" && <PromptsTab />}
       {tab === "tools" && <ToolsTab />}
       {tab === "hooks" && <HooksTab />}
-    </div>
+    </>
   );
 
   if (variant === "page") {
     return (
       <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
         {header}
-        {tabs}
-        {body}
+        <div className="flex flex-1 min-h-0">
+          <SecondaryNav<Tab> title="Capabilities" value={tab} onChange={setTab} items={navItems} />
+          <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
+        </div>
       </div>
     );
   }
@@ -66,23 +67,14 @@ export default function CapabilitiesModal({ onClose, variant = "modal" }: Props)
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
       onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
     >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[88vh] flex flex-col">
+      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[88vh] flex flex-col">
         {header}
-        {tabs}
-        {body}
+        <div className="flex flex-1 min-h-0">
+          <SecondaryNav<Tab> value={tab} onChange={setTab} items={navItems} widthClass="w-44" />
+          <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
+        </div>
       </div>
     </div>
-  );
-}
-
-function TabBtn({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={["flex items-center gap-1.5 px-4 py-2 text-[12px] border-b-2 transition-colors", active ? "border-[var(--cedar)] text-[var(--text)]" : "border-transparent text-[var(--muted)] hover:text-[var(--text)]"].join(" ")}
-    >
-      {icon}{label}
-    </button>
   );
 }
 
