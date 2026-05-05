@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # Tags we recognise. Body can include newlines. Attributes are simple
 # key="value" pairs separated by whitespace.
 _TAG_RE = re.compile(
-    r"<(?P<tag>learn|memory|note)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
+    r"<(?P<tag>learn|memory|note|recall)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
     r"(?P<body>.*?)"
     r"</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
@@ -41,7 +41,7 @@ _VALID_LEARN_CATEGORIES = {"preference", "tool", "knowledge"}
 
 @dataclass
 class Extracted:
-    kind: Literal["learn", "memory", "note"]
+    kind: Literal["learn", "memory", "note", "recall"]
     body: str
     attrs: dict[str, str]
 
@@ -74,9 +74,31 @@ def parse(text: str) -> tuple[str, list[Extracted]]:
     return cleaned, extracted
 
 
-def apply(extractions: list[Extracted]) -> dict[str, int]:
-    """Persist each extraction to the right store. Returns counts per kind."""
-    counts = {"learn": 0, "memory": 0, "note": 0, "skipped": 0}
+# Session-keyed queue of pending <recall> queries the model asked for.
+# The chat route drains these on the NEXT turn, runs a search, and
+# injects the answers as a system block so the model sees them on its
+# follow-up reply. Without MCP this is the cheapest way to give the
+# model an on-demand search surface.
+_pending_recalls: dict[str, list[str]] = {}
+
+
+def queue_recall(session_id: str, query: str) -> None:
+    if not session_id or not query.strip():
+        return
+    _pending_recalls.setdefault(session_id, []).append(query.strip())
+
+
+def drain_recalls(session_id: str) -> list[str]:
+    return _pending_recalls.pop(session_id, [])
+
+
+def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dict[str, int]:
+    """Persist each extraction to the right store. Returns counts per kind.
+
+    ``session_id`` is required for ``<recall>`` extractions so the queued
+    query can be pulled on the next turn.
+    """
+    counts = {"learn": 0, "memory": 0, "note": 0, "recall": 0, "skipped": 0}
     if not extractions:
         return counts
     from arz.lessons import get_lesson_store
@@ -89,6 +111,13 @@ def apply(extractions: list[Extracted]) -> dict[str, int]:
 
     for ex in extractions:
         try:
+            if ex.kind == "recall":
+                if session_id:
+                    queue_recall(session_id, ex.body or ex.attrs.get("query", ""))
+                    counts["recall"] += 1
+                else:
+                    counts["skipped"] += 1
+                continue
             if ex.kind == "learn":
                 cat = (ex.attrs.get("category") or "knowledge").lower()
                 if cat not in _VALID_LEARN_CATEGORIES:

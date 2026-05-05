@@ -230,7 +230,7 @@ async def _run_turn(
                     cleaned, extracted = inline_learn.parse(state.full_reply)
                     if extracted:
                         try:
-                            counts = inline_learn.apply(extracted)
+                            counts = inline_learn.apply(extracted, session_id=session_id)
                             log.info(
                                 "inline-learn extracted",
                                 extra={"session_id": session_id, **counts},
@@ -275,7 +275,7 @@ async def _run_turn(
                 cleaned, extracted = inline_learn.parse(state.full_reply)
                 if extracted:
                     try:
-                        inline_learn.apply(extracted)
+                        inline_learn.apply(extracted, session_id=session_id)
                     except Exception:
                         log.exception("inline-learn apply (finally path) failed")
                 msg = session.add_message("assistant", cleaned or state.full_reply)
@@ -367,52 +367,39 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
 
     cfg = request.app.state.config
 
-    # RAG: prepend top-k memory hits when auto_recall is enabled. Off by default.
-    # Two recall paths: FTS5 keyword (always cheap), and vector (if configured).
-    if cfg.dashboard.auto_recall:
-        try:
-            from arz.memory.fts import get_memory_fts
-            fts = get_memory_fts()
-            try:
-                fts.reindex()  # mtime-driven, near-zero cost when nothing changed
-            except Exception:
-                pass
-            fts_hits = fts.search(message, k=cfg.dashboard.recall_k)
-
-            vec = getattr(request.app.state, "vector_store", None)
-            if vec is None:
-                from arz.memory.embedder import embedder_from_config
-                from arz.memory.vector import VectorStore
-                emb = embedder_from_config(getattr(cfg.dashboard, "embedding_model", "hash"))
-                vec = VectorStore(embedder=emb)
-                request.app.state.vector_store = vec
-            vector_hits = vec.search(message, k=cfg.dashboard.recall_k)
-
-            blocks: list[str] = []
-            for h in fts_hits:
-                blocks.append(f"- [fts:{h['source']}/{h['key']}] {h['snippet']}")
-            for k, content, _ in vector_hits:
-                blocks.append(f"- [vec:{k}] {content[:400]}")
-            if blocks:
-                message = f"<memory>\n" + "\n".join(blocks) + f"\n</memory>\n\n{message}"
-        except Exception:
-            log.exception("Auto-recall failed; continuing without context injection")
-
-    # Auto-inject memory files (preferences + projects, ~3k chars total).
+    # Drain any <recall> queries queued by the assistant on a prior turn.
+    # Run them as searches and prepend the results so the model sees what
+    # it asked for. This is the on-demand search path without MCP.
     try:
-        memory_block = get_memory_files().render_for_prompt()
-        if memory_block:
-            message = f"{memory_block}\n\n{message}"
-    except Exception:
-        log.exception("Memory file injection failed; continuing without it")
+        pending = inline_learn.drain_recalls(session_id)
+        if pending:
+            from arz.memory.context import _recall_block  # type: ignore[attr-defined]
 
-    # Auto-inject lessons (always-on; cheap; capped at ~6k chars).
-    try:
-        lessons_block = get_lesson_store().render_for_prompt(message)
-        if lessons_block:
-            message = f"{lessons_block}\n\n{message}"
+            recall_blocks: list[str] = []
+            for q in pending:
+                blk = _recall_block(q, recall_k=int(getattr(cfg.dashboard, "recall_k", 5) or 5), config=cfg)
+                if blk:
+                    recall_blocks.append(f"<recall_result query=\"{q}\">\n{blk}\n</recall_result>")
+            if recall_blocks:
+                message = "\n\n".join(recall_blocks) + "\n\n" + message
     except Exception:
-        log.exception("Lesson injection failed; continuing without it")
+        log.exception("recall drain failed")
+
+    # Single source of truth for memory context — same shape on every
+    # provider, every surface (chat, subagent, heartbeat, taskrunner).
+    try:
+        from arz.memory.context import build_prefix
+
+        prefix = build_prefix(
+            message,
+            config=cfg,
+            recall_k=int(getattr(cfg.dashboard, "recall_k", 5) or 5),
+            enable_recall=bool(getattr(cfg.dashboard, "auto_recall", True)),
+        )
+        if prefix:
+            message = f"{prefix}\n\n{message}"
+    except Exception:
+        log.exception("Memory context build failed; continuing without it")
 
     # Inject any completed subagent results that landed since the last turn.
     try:

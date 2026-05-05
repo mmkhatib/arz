@@ -35,8 +35,8 @@ class DashboardConfig(BaseModel):
     token_auth: bool = False
     max_active_sessions: int = 5
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
-    auto_recall: bool = False
-    recall_k: int = 3
+    auto_recall: bool = True
+    recall_k: int = 5
     # Embedder spec: "hash" (no deps) | "ollama[:model][@url]"
     # Picking "ollama" without a model defaults to qwen3-embedding:0.6b.
     embedding_model: str = "hash"

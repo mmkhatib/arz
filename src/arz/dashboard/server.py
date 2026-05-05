@@ -124,16 +124,43 @@ async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
         registry.record_run(entry.id, "error: unsupported provider", session.id)
         return
 
+    # Inject the standard memory prefix so cron fires see the same
+    # context as a chat turn would.
+    cron_prompt = entry.prompt
+    try:
+        from arz.memory.context import build_prefix
+
+        prefix = build_prefix(
+            cron_prompt,
+            config=cfg,
+            recall_k=int(getattr(cfg.dashboard, "recall_k", 5) or 5),
+            enable_recall=bool(getattr(cfg.dashboard, "auto_recall", True)),
+        )
+        if prefix:
+            cron_prompt = f"{prefix}\n\n{cron_prompt}"
+    except Exception:
+        log.exception("cron memory injection failed", cron_id=entry.id)
+
     full_reply = ""
     status = "success"
     try:
         await provider.start()
-        async for event in provider.stream(entry.prompt):
+        async for event in provider.stream(cron_prompt):
             if event.kind == EVENT_TEXT_CHUNK and event.text:
                 full_reply += event.text
             elif event.kind == EVENT_COMPLETE:
                 break
         if full_reply:
+            # Self-learning: cron replies persist tags too.
+            try:
+                from arz import inline_learn
+
+                cleaned, extracted = inline_learn.parse(full_reply)
+                if extracted:
+                    inline_learn.apply(extracted)
+                full_reply = cleaned or full_reply
+            except Exception:
+                log.exception("cron inline-learn failed", cron_id=entry.id)
             msg = session.add_message("assistant", full_reply)
             msg.model = provider.current_model
             mgr.save(session)
@@ -292,6 +319,23 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
         else:
             return f"(unsupported provider {provider_name!r})"
 
+        # Inject the same memory prefix the chat route uses so subagents,
+        # heartbeat items, task-runner steps, and cron fires all see the
+        # user's preferences/projects/lessons/recall hits.
+        try:
+            from arz.memory.context import build_prefix
+
+            prefix = build_prefix(
+                prompt,
+                config=config,
+                recall_k=int(getattr(config.dashboard, "recall_k", 5) or 5),
+                enable_recall=bool(getattr(config.dashboard, "auto_recall", True)),
+            )
+            if prefix:
+                prompt = f"{prefix}\n\n{prompt}"
+        except Exception:
+            log.exception("subagent memory injection failed")
+
         text = ""
         try:
             await provider.start()
@@ -300,6 +344,15 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
                     text += event.text
                 elif event.kind == _EC:
                     break
+            # Self-learning: subagent replies can also emit <learn>/<memory>/<note>.
+            try:
+                from arz import inline_learn
+
+                _, extracted = inline_learn.parse(text)
+                if extracted:
+                    inline_learn.apply(extracted)
+            except Exception:
+                log.exception("subagent inline-learn failed")
         finally:
             try:
                 await provider.shutdown()

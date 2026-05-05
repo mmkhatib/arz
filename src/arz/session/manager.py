@@ -14,7 +14,7 @@ from arz.session.session import Session
 # <preferences>…</preferences>, <projects>…</projects>, <lessons>…</lessons>,
 # <memory>…</memory>, plus subagent completion lines starting with [subagent:…].
 _INJECT_BLOCK_RE = re.compile(
-    r"<(preferences|projects|lessons|memory|memory_notes)\b[^>]*>[\s\S]*?</\1>\s*",
+    r"<(preferences|projects|lessons|memory|memory_notes|recall_result)\b[^>]*>[\s\S]*?</\1>\s*",
     re.IGNORECASE,
 )
 _SUBAGENT_LINE_RE = re.compile(r"^\[subagent:[^\]]+\][^\n]*(?:\n[^\n]*)*?\n\n", re.MULTILINE)
