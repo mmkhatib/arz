@@ -237,6 +237,34 @@ async def _run_turn(
                             )
                         except Exception:
                             log.exception("inline-learn apply failed")
+                    else:
+                        # Fallback: model didn't emit any tags. Run a cheap
+                        # post-turn extraction pass against the raw reply
+                        # to catch durable preferences / corrections the
+                        # model decided to write to its own native store
+                        # (Claude Code's project memory) or to none at all.
+                        try:
+                            from arz.post_turn_extract import maybe_extract
+                            from arz.config.loader import load_config as _lc
+
+                            # Find the user message that triggered this
+                            # turn — last user msg in session history.
+                            user_for_extract = ""
+                            if session and session.messages:
+                                for m in reversed(session.messages):
+                                    if m.role == "user":
+                                        user_for_extract = m.text
+                                        break
+                            if user_for_extract:
+                                asyncio.create_task(
+                                    maybe_extract(
+                                        user_for_extract,
+                                        cleaned or state.full_reply,
+                                        config=_lc(),
+                                    )
+                                )
+                        except Exception:
+                            log.exception("post-turn extraction schedule failed")
                     msg = session.add_message("assistant", cleaned or state.full_reply)
                     if usage_dict:
                         msg.usage = usage_dict
