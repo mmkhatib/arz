@@ -19,23 +19,29 @@ _PREF_CAP = 1000
 _PROJ_CAP = 2000
 _MEM_CAP = 2000
 
-_DEFAULT_PREFERENCES = """\
-# Preferences
+# Seed files start empty so we never inject fake/example bullets into
+# the prompt as if they were real user preferences. The Memory UI shows
+# inline examples via a popover instead.
+_DEFAULT_PREFERENCES = ""
+_DEFAULT_PROJECTS = ""
 
-Durable user preferences that auto-inject into every turn (capped at ~1k chars).
-Edit freely. One short bullet per line.
 
-- example: I prefer terse responses with no trailing summaries
-- example: when refactoring, prefer one bundled PR over many small ones
-"""
-
-_DEFAULT_PROJECTS = """\
-# Active projects
-
-What's currently in flight (capped at ~2k chars). Edit freely.
-
-- example: arz — multi-provider agent runtime
-"""
+# Old seed-default content fingerprints. If a memory file matches one of
+# these byte-for-byte we know the user never touched it, so it's safe to
+# wipe to empty. Anything else we leave alone — the user's customisations
+# stay intact even if they kept the example bullets around.
+_OLD_DEFAULT_PREFERENCES = (
+    "# Preferences\n\n"
+    "Durable user preferences that auto-inject into every turn (capped at ~1k chars).\n"
+    "Edit freely. One short bullet per line.\n\n"
+    "- example: I prefer terse responses with no trailing summaries\n"
+    "- example: when refactoring, prefer one bundled PR over many small ones\n"
+)
+_OLD_DEFAULT_PROJECTS = (
+    "# Active projects\n\n"
+    "What's currently in flight (capped at ~2k chars). Edit freely.\n\n"
+    "- example: arz — multi-provider agent runtime\n"
+)
 
 
 def _ensure_defaults() -> None:
@@ -44,9 +50,15 @@ def _ensure_defaults() -> None:
     pref = _DIR / "preferences.md"
     if not pref.exists():
         pref.write_text(_DEFAULT_PREFERENCES, encoding="utf-8")
+    elif pref.read_text(encoding="utf-8") == _OLD_DEFAULT_PREFERENCES:
+        # One-shot migration: untouched seed file → wipe to empty so we
+        # stop injecting fake examples as real preferences.
+        pref.write_text("", encoding="utf-8")
     proj = _DIR / "projects.md"
     if not proj.exists():
         proj.write_text(_DEFAULT_PROJECTS, encoding="utf-8")
+    elif proj.read_text(encoding="utf-8") == _OLD_DEFAULT_PROJECTS:
+        proj.write_text("", encoding="utf-8")
 
 
 class MemoryFiles:

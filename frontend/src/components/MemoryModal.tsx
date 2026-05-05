@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import type { MemoryHit } from "@/api/client";
-import { Brain, FileText, Search as SearchIcon, Trash2, Plus, Save, Sparkles, FileEdit, Pin, PinOff } from "lucide-react";
+import { Brain, FileText, Search as SearchIcon, Trash2, Plus, Save, Sparkles, FileEdit, Pin, PinOff, Lightbulb } from "lucide-react";
 import SecondaryNav from "@/components/SecondaryNav";
+import Popover from "@/components/Popover";
 
 interface Props {
   onClose?: () => void;
@@ -287,7 +288,14 @@ function MemoryFilesTab() {
 
       <div>
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[12px] font-semibold text-[var(--text)]">preferences.md</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-semibold text-[var(--text)]">preferences.md</span>
+            <ExamplesButton
+              title="Preferences — examples"
+              examples={PREF_EXAMPLES}
+              onInsert={(snippet) => setPref((cur) => (cur ? cur.trimEnd() + "\n" + snippet : snippet))}
+            />
+          </div>
           <div className="flex items-center gap-2">
             {justSaved && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
             <button onClick={() => save("preferences.md")} disabled={saving || pref === origPref} className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
@@ -299,13 +307,21 @@ function MemoryFilesTab() {
           value={pref}
           onChange={(e) => setPref(e.target.value)}
           rows={8}
+          placeholder="Empty. Click the lightbulb above for example bullets, or write your own — one per line."
           className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
         />
       </div>
 
       <div>
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[12px] font-semibold text-[var(--text)]">projects.md</div>
+          <div className="flex items-center gap-2">
+            <span className="text-[12px] font-semibold text-[var(--text)]">projects.md</span>
+            <ExamplesButton
+              title="Projects — examples"
+              examples={PROJ_EXAMPLES}
+              onInsert={(snippet) => setProj((cur) => (cur ? cur.trimEnd() + "\n" + snippet : snippet))}
+            />
+          </div>
           <button onClick={() => save("projects.md")} disabled={saving || proj === origProj} className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
             <Save size={11} /> Save
           </button>
@@ -314,6 +330,7 @@ function MemoryFilesTab() {
           value={proj}
           onChange={(e) => setProj(e.target.value)}
           rows={10}
+          placeholder="Empty. Click the lightbulb above for example bullets, or write your own — one per line."
           className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
         />
       </div>
@@ -542,6 +559,72 @@ function SearchTab() {
         ))}
       </div>
       {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+    </div>
+  );
+}
+
+// ── Examples popover ─────────────────────────────────────────────────────────
+
+const PREF_EXAMPLES: string[] = [
+  "- I prefer terse responses with no trailing summaries",
+  "- when refactoring, prefer one bundled PR over many small ones",
+  "- never start a sentence with the word \"So\"",
+  "- always show absolute file paths, never relative",
+  "- I work in PT timezone — schedule things in PT unless I say otherwise",
+];
+
+const PROJ_EXAMPLES: string[] = [
+  "- arz — multi-provider LLM agent runtime; main repo at ~/workspace/arz",
+  "- side project: rebuilding home-network monitoring on Tailscale + Grafana",
+  "- on-call rotation: every other Tuesday for the data platform team",
+];
+
+function ExamplesButton({
+  title,
+  examples,
+  onInsert,
+}: {
+  title: string;
+  examples: string[];
+  onInsert: (snippet: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title="Show example bullets"
+        className="flex items-center gap-1 text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-[var(--cedar)] hover:bg-[var(--bg)]"
+      >
+        <Lightbulb size={11} /> Examples
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} position="below">
+        <div className="min-w-[320px] max-w-[460px] flex flex-col">
+          <div className="px-3 py-2 text-[11px] uppercase tracking-wider font-medium text-[var(--muted)] border-b border-[var(--border)]">
+            {title}
+          </div>
+          <div className="px-2 py-2 flex flex-col gap-1 max-h-[280px] overflow-y-auto">
+            {examples.map((ex, i) => (
+              <div
+                key={i}
+                className="group flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-[var(--bg)] text-[12px] font-mono text-[var(--text)]"
+              >
+                <span className="flex-1 break-words">{ex}</span>
+                <button
+                  onClick={() => { onInsert(ex); setOpen(false); }}
+                  className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded text-[var(--muted)] hover:text-[var(--cedar)] hover:bg-[var(--surface)]"
+                  title="Insert into editor"
+                >
+                  insert
+                </button>
+              </div>
+            ))}
+          </div>
+          <div className="px-3 py-2 border-t border-[var(--border)] text-[10px] text-[var(--muted)]/70">
+            These are examples only — they're never injected into prompts unless you click insert + save.
+          </div>
+        </div>
+      </Popover>
     </div>
   );
 }
