@@ -17,6 +17,7 @@ from pathlib import Path
 _DIR = Path.home() / ".arz" / "memory"
 _PREF_CAP = 1000
 _PROJ_CAP = 2000
+_MEM_CAP = 2000
 
 _DEFAULT_PREFERENCES = """\
 # Preferences
@@ -95,10 +96,16 @@ class MemoryFiles:
             if len(proj) > _PROJ_CAP:
                 proj = proj[:_PROJ_CAP] + "…"
             out.append(f"<projects>\n{proj}\n</projects>")
+        mem = self.read("memory.md").strip()
+        if mem:
+            if len(mem) > _MEM_CAP:
+                # Tail-cap so the most recent self-written memories survive.
+                mem = "…" + mem[-_MEM_CAP:]
+            out.append(f"<memory_notes>\n{mem}\n</memory_notes>")
         return "\n\n".join(out)
 
     def _safe_path(self, name: str) -> Path:
-        if name in ("preferences.md", "projects.md"):
+        if name in ("preferences.md", "projects.md", "memory.md"):
             return self._dir / name
         if name.startswith("history/") and name.endswith(".md") and "/" not in name[len("history/"):]:
             return self._dir / name

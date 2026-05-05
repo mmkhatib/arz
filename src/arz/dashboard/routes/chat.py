@@ -15,6 +15,7 @@ from arz.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_C
 from arz.dashboard.sse import sse_chunk, sse_complete, sse_error, sse_permission_request, sse_tool_call, sse_tool_result
 from arz.dashboard.stream_registry import get_stream_registry
 from arz.dashboard.token_auth import require_token
+from arz import inline_learn
 from arz.hooks import get_hook_manager
 from arz.lessons import get_lesson_store
 from arz.memory.files import get_memory_files
@@ -221,7 +222,22 @@ async def _run_turn(
                 usage_dict = event.usage.to_dict() if event.usage else None
                 elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
                 if session and state.full_reply:
-                    msg = session.add_message("assistant", state.full_reply)
+                    # Inline self-learning — strip <learn>/<memory>/<note>
+                    # tags and persist them. Cleaned text is what we save
+                    # and what the user sees; the raw stream already went
+                    # to subscribers but tags are inert in markdown so the
+                    # display impact is minimal.
+                    cleaned, extracted = inline_learn.parse(state.full_reply)
+                    if extracted:
+                        try:
+                            counts = inline_learn.apply(extracted)
+                            log.info(
+                                "inline-learn extracted",
+                                extra={"session_id": session_id, **counts},
+                            )
+                        except Exception:
+                            log.exception("inline-learn apply failed")
+                    msg = session.add_message("assistant", cleaned or state.full_reply)
                     if usage_dict:
                         msg.usage = usage_dict
                     msg.model = provider.current_model
@@ -231,7 +247,7 @@ async def _run_turn(
                     if state.archive_versions:
                         # Regenerate path: keep the prior assistant text(s)
                         # accessible via ◀▶ in the UI.
-                        msg.versions = list(state.archive_versions) + [state.full_reply]
+                        msg.versions = list(state.archive_versions) + [cleaned or state.full_reply]
                         msg.version_index = len(msg.versions) - 1
                     mgr.save(session)
                     saved_assistant = True
@@ -256,13 +272,19 @@ async def _run_turn(
         # mid-stream provider eviction, etc.
         if session and state.full_reply and not saved_assistant:
             try:
-                msg = session.add_message("assistant", state.full_reply)
+                cleaned, extracted = inline_learn.parse(state.full_reply)
+                if extracted:
+                    try:
+                        inline_learn.apply(extracted)
+                    except Exception:
+                        log.exception("inline-learn apply (finally path) failed")
+                msg = session.add_message("assistant", cleaned or state.full_reply)
                 msg.model = provider.current_model
                 msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
                 if state.turn_tool_calls:
                     msg.tool_calls = state.turn_tool_calls
                 if state.archive_versions:
-                    msg.versions = list(state.archive_versions) + [state.full_reply]
+                    msg.versions = list(state.archive_versions) + [cleaned or state.full_reply]
                     msg.version_index = len(msg.versions) - 1
                 mgr.save(session)
             except Exception:
