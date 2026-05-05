@@ -38,12 +38,15 @@ export default function SecondaryNav<T extends string>({
   value,
   onChange,
   footer,
-  widthClass = "w-48",
+  widthClass = "w-56",
 }: Props<T>) {
+  // Style mirrors SessionList (chat sidebar) so the visual model is the
+  // same across the app: surface background, full-height column, item
+  // hover = bg-border, active = bg-user-bg with cedar accent dot.
   return (
     <nav
       className={[
-        "shrink-0 flex flex-col bg-[var(--surface)]/40 border-r border-[var(--border)]",
+        "shrink-0 flex flex-col h-full bg-[var(--surface)] border-r border-[var(--border)]",
         widthClass,
         // On phones the secondary nav becomes a horizontal scroll strip
         // so it doesn't eat the chat area. Tablets+ get the vertical column.
@@ -51,44 +54,50 @@ export default function SecondaryNav<T extends string>({
       ].join(" ")}
     >
       {title && (
-        <div className="px-3 pt-3 pb-2 text-[10px] uppercase tracking-wider text-[var(--muted)] font-medium max-md:hidden">
-          {title}
+        <div className="flex items-center px-4 py-3 border-b border-[var(--border)] max-md:hidden">
+          <span className="text-[var(--accent)] font-semibold tracking-wide text-[13px]">{title}</span>
         </div>
       )}
-      <div className="flex flex-col gap-0.5 p-1.5 flex-1 max-md:flex-row">
-        {items.map((it) => (
-          <button
-            key={it.id}
-            onClick={() => !it.disabled && onChange(it.id)}
-            disabled={it.disabled}
-            title={it.hint || it.label}
-            className={[
-              "group/sn flex items-center gap-2 rounded-md text-[13px] py-2 px-2.5 text-left transition-colors max-md:shrink-0",
-              it.disabled
-                ? "text-[var(--muted)]/40 cursor-not-allowed"
-                : it.id === value
-                ? "bg-[var(--cedar)]/15 text-[var(--text)]"
-                : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)]",
-            ].join(" ")}
-          >
-            {it.icon && (
-              <span
-                className={[
-                  "w-4 h-4 flex items-center justify-center shrink-0",
-                  it.id === value ? "text-[var(--cedar)]" : "",
-                ].join(" ")}
-              >
-                {it.icon}
+      <div className="flex-1 overflow-y-auto py-2 max-md:flex max-md:flex-row max-md:py-1 max-md:px-1">
+        {items.map((it) => {
+          const isActive = it.id === value;
+          return (
+            <button
+              key={it.id}
+              onClick={() => !it.disabled && onChange(it.id)}
+              disabled={it.disabled}
+              title={it.hint || it.label}
+              className={[
+                "group/sn w-full flex items-center gap-2 px-4 py-2 text-[13px] text-left transition-colors max-md:w-auto max-md:shrink-0 max-md:rounded-md",
+                it.disabled
+                  ? "text-[var(--muted)]/40 cursor-not-allowed"
+                  : isActive
+                  ? "bg-[var(--user-bg)] text-[var(--text)]"
+                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)]",
+              ].join(" ")}
+            >
+              <span className="w-2 flex items-center justify-center shrink-0">
+                {isActive && <span className="text-[10px] text-[var(--accent)]">●</span>}
               </span>
-            )}
-            <span className="flex-1 truncate">{it.label}</span>
-            {it.badge !== undefined && it.badge !== "" && (
-              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--bg)] text-[var(--muted)] shrink-0">
-                {it.badge}
-              </span>
-            )}
-          </button>
-        ))}
+              {it.icon && (
+                <span
+                  className={[
+                    "w-4 h-4 flex items-center justify-center shrink-0",
+                    isActive ? "text-[var(--cedar)]" : "",
+                  ].join(" ")}
+                >
+                  {it.icon}
+                </span>
+              )}
+              <span className="flex-1 truncate">{it.label}</span>
+              {it.badge !== undefined && it.badge !== "" && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--bg)] text-[var(--muted)] shrink-0">
+                  {it.badge}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
       {footer && (
         <div className="border-t border-[var(--border)] p-2 max-md:hidden">{footer}</div>

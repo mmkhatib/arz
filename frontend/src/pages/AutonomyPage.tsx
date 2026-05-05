@@ -247,24 +247,26 @@ function HeartbeatTab() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-[12px] text-[var(--muted)]">
-        The heartbeat loop reads this checklist on a fixed interval (default 5 min). Each
-        unchecked <code>- [ ]</code> item runs as one subagent turn; the line then flips to
-        <code> - [x]</code>. Lines tagged <code>&lt;!-- KEEP --&gt;</code> reset back to
-        unchecked after the next tick so they keep firing.
-      </div>
-      <div className="text-[10px] font-mono text-[var(--muted)]/60">{path}</div>
-      <textarea
-        value={content}
-        onChange={(e) => setContent(e.target.value)}
-        rows={20}
-        className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
-      />
-      <div className="flex items-center gap-3">
-        <button onClick={save} disabled={saving || content === orig} className="flex items-center gap-1 px-4 py-1.5 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
-          <Save size={11} /> Save
-        </button>
-        {justSaved && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
+      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--surface)] flex flex-col gap-3">
+        <div className="text-[12px] text-[var(--muted)]">
+          The heartbeat loop reads this checklist on a fixed interval (default 5 min). Each
+          unchecked <code>- [ ]</code> item runs as one subagent turn; the line then flips to
+          <code> - [x]</code>. Lines tagged <code>&lt;!-- KEEP --&gt;</code> reset back to
+          unchecked after the next tick so they keep firing.
+        </div>
+        <div className="text-[10px] font-mono text-[var(--muted)]/60">{path}</div>
+        <textarea
+          value={content}
+          onChange={(e) => setContent(e.target.value)}
+          rows={20}
+          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+        />
+        <div className="flex items-center gap-3">
+          <button onClick={save} disabled={saving || content === orig} className="flex items-center gap-1 px-4 py-1.5 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
+            <Save size={11} /> Save
+          </button>
+          {justSaved && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
+        </div>
       </div>
       {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
     </div>
