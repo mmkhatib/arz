@@ -250,18 +250,18 @@ function MemoryFilesTab() {
   return (
     <div className="flex flex-col gap-4">
       <div className="text-[12px] text-[var(--muted)]">
-        These files auto-inject into every chat turn:
-        <code className="text-[var(--cedar)] ml-1">preferences.md</code> (cap 1k chars) +
-        <code className="text-[var(--cedar)] ml-1">projects.md</code> (cap 2k chars).
+        Memory builds itself as you chat — the model emits tags or the
+        nightly consolidator extracts items. You usually don't need to
+        edit anything here. Below is what's currently being injected
+        into every turn.
       </div>
 
       <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex items-center gap-3">
         <div className="flex-1 min-w-0">
-          <div className="text-[12px] font-semibold text-[var(--text)]">Memory consolidation</div>
+          <div className="text-[12px] font-semibold text-[var(--text)]">Consolidation</div>
           <div className="text-[11px] text-[var(--muted)]">
-            Runs nightly at 03:00 (cron <code>memory-consolidator</code>). Walks recent
-            sessions and asks the LLM to extract durable preferences, project context, and
-            lessons — appends to the files below + writes a daily summary to <code>history/</code>.
+            Nightly LLM rollup of recent sessions into preferences, projects,
+            and lessons. Runs at 03:00; click below to force one now.
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -286,65 +286,230 @@ function MemoryFilesTab() {
         <div className="text-[11px] text-[var(--muted)] bg-[var(--surface)] border border-[var(--border)] rounded px-2 py-1">{consolidateMsg}</div>
       )}
 
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[12px] font-semibold text-[var(--text)]">preferences.md</span>
-            <ExamplesButton
-              title="Preferences — examples"
-              examples={PREF_EXAMPLES}
-              onInsert={(snippet) => setPref((cur) => (cur ? cur.trimEnd() + "\n" + snippet : snippet))}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            {justSaved && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
-            <button onClick={() => save("preferences.md")} disabled={saving || pref === origPref} className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
-              <Save size={11} /> Save
-            </button>
-          </div>
-        </div>
-        <textarea
-          value={pref}
-          onChange={(e) => setPref(e.target.value)}
-          rows={8}
-          placeholder="Empty. Click the lightbulb above for example bullets, or write your own — one per line."
-          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
-        />
-      </div>
+      <BulletSection
+        title="Preferences"
+        subtitle="Always-on rules — style, tone, dont-do-X. Cap 1k chars."
+        content={pref}
+        onChange={setPref}
+        onSave={() => save("preferences.md")}
+        dirty={pref !== origPref}
+        saving={saving}
+        savedFlag={justSaved}
+        examples={PREF_EXAMPLES}
+        examplesTitle="Preferences — examples"
+      />
 
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[12px] font-semibold text-[var(--text)]">projects.md</span>
-            <ExamplesButton
-              title="Projects — examples"
-              examples={PROJ_EXAMPLES}
-              onInsert={(snippet) => setProj((cur) => (cur ? cur.trimEnd() + "\n" + snippet : snippet))}
-            />
-          </div>
-          <button onClick={() => save("projects.md")} disabled={saving || proj === origProj} className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
-            <Save size={11} /> Save
-          </button>
-        </div>
-        <textarea
-          value={proj}
-          onChange={(e) => setProj(e.target.value)}
-          rows={10}
-          placeholder="Empty. Click the lightbulb above for example bullets, or write your own — one per line."
-          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
-        />
-      </div>
+      <BulletSection
+        title="Projects"
+        subtitle="What's currently in flight — for context the model can lean on. Cap 2k chars."
+        content={proj}
+        onChange={setProj}
+        onSave={() => save("projects.md")}
+        dirty={proj !== origProj}
+        saving={saving}
+        savedFlag={justSaved}
+        examples={PROJ_EXAMPLES}
+        examplesTitle="Projects — examples"
+      />
 
       {history.length > 0 && (
-        <div>
-          <div className="text-[12px] font-semibold text-[var(--text)] mb-1">history/</div>
-          <div className="text-[11px] font-mono text-[var(--muted)] flex flex-wrap gap-2">
-            {history.map((h) => <span key={h} className="px-2 py-0.5 rounded bg-[var(--surface)] border border-[var(--border)]">{h}</span>)}
+        <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
+          <div className="text-[12px] font-semibold text-[var(--text)] mb-1">Daily history</div>
+          <div className="text-[11px] text-[var(--muted)] mb-2">
+            Auto-summaries the consolidator wrote per day. Searchable from the Search tab.
+          </div>
+          <div className="text-[11px] font-mono text-[var(--muted)] flex flex-wrap gap-1.5">
+            {history.map((h) => (
+              <span key={h} className="px-2 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)]">{h}</span>
+            ))}
           </div>
         </div>
       )}
 
       {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+    </div>
+  );
+}
+
+// ── BulletSection — list-first view of a memory file ────────────────────────
+//
+// Parses each non-empty line of the file content. Lines starting with
+// "- " or "* " render as bullets; anything else is shown as a header
+// row. Read-first: each bullet has a delete button. Add via the inline
+// "+" form. "Edit raw" toggles the raw textarea for power users.
+
+function BulletSection({
+  title,
+  subtitle,
+  content,
+  onChange,
+  onSave,
+  dirty,
+  saving,
+  savedFlag,
+  examples,
+  examplesTitle,
+}: {
+  title: string;
+  subtitle: string;
+  content: string;
+  onChange: (next: string) => void;
+  onSave: () => void;
+  dirty: boolean;
+  saving: boolean;
+  savedFlag: boolean;
+  examples: string[];
+  examplesTitle: string;
+}) {
+  const [showRaw, setShowRaw] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  const lines = content.split(/\r?\n/);
+  const bullets: { idx: number; text: string }[] = [];
+  const others: { idx: number; text: string }[] = [];
+  lines.forEach((raw, i) => {
+    const line = raw.replace(/\s+$/g, "");
+    if (!line.trim()) return;
+    if (/^\s*[-*]\s+/.test(line)) {
+      bullets.push({ idx: i, text: line.replace(/^\s*[-*]\s+/, "") });
+    } else if (/^#/.test(line.trim())) {
+      // Skip markdown headers — they're chrome, not content.
+    } else {
+      others.push({ idx: i, text: line });
+    }
+  });
+
+  const removeBullet = (idx: number) => {
+    const next = lines.filter((_, i) => i !== idx).join("\n");
+    onChange(next);
+  };
+
+  const addBullet = () => {
+    const t = draft.trim();
+    if (!t) return;
+    const trimmed = content.replace(/\s+$/, "");
+    const sep = trimmed ? "\n" : "";
+    onChange(trimmed + sep + `- ${t}\n`);
+    setDraft("");
+    setAdding(false);
+  };
+
+  return (
+    <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="text-[13px] font-semibold text-[var(--text)]">{title}</span>
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]/70 font-mono">
+              {bullets.length} {bullets.length === 1 ? "item" : "items"}
+            </span>
+          </div>
+          <div className="text-[11px] text-[var(--muted)] mt-0.5">{subtitle}</div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => setAdding((v) => !v)}
+            className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md text-[var(--cedar)] hover:bg-[var(--bg)]"
+            title="Add a bullet"
+          >
+            <Plus size={11} /> Add
+          </button>
+          <ExamplesButton
+            title={examplesTitle}
+            examples={examples}
+            onInsert={(snippet) => {
+              const trimmed = content.replace(/\s+$/, "");
+              const sep = trimmed ? "\n" : "";
+              const line = snippet.startsWith("- ") ? snippet : `- ${snippet}`;
+              onChange(trimmed + sep + line + "\n");
+            }}
+          />
+          <button
+            onClick={() => setShowRaw((v) => !v)}
+            className="text-[11px] px-2 py-1 rounded-md text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)]"
+            title="Edit raw markdown"
+          >
+            {showRaw ? "Hide raw" : "Edit raw"}
+          </button>
+        </div>
+      </div>
+
+      {adding && (
+        <div className="flex gap-2">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addBullet();
+              else if (e.key === "Escape") { setAdding(false); setDraft(""); }
+            }}
+            placeholder="One bullet — Enter to add"
+            autoFocus
+            className="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
+          />
+          <button
+            onClick={addBullet}
+            disabled={!draft.trim()}
+            className="text-[11px] px-2 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40"
+          >
+            Add
+          </button>
+        </div>
+      )}
+
+      {bullets.length === 0 && others.length === 0 ? (
+        <div className="text-[11px] text-[var(--muted)]/70 italic py-2">
+          Empty. The model fills this in as you teach it — or click Add / Examples to seed manually.
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {bullets.map(({ idx, text }) => (
+            <div
+              key={idx}
+              className="group flex items-start gap-2 py-1.5 border-b border-[var(--border)]/40 last:border-b-0"
+            >
+              <span className="text-[var(--muted)]/50 text-[12px] mt-0.5 shrink-0">·</span>
+              <span className="flex-1 text-[12px] text-[var(--text)] break-words">{text}</span>
+              <button
+                onClick={() => removeBullet(idx)}
+                className="opacity-0 group-hover:opacity-100 text-[var(--muted)] hover:text-red-400 transition-opacity shrink-0"
+                title="Remove"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+          {others.map(({ idx, text }) => (
+            <div key={idx} className="text-[11px] text-[var(--muted)]/70 italic py-1 break-words">
+              {text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showRaw && (
+        <textarea
+          value={content}
+          onChange={(e) => onChange(e.target.value)}
+          rows={8}
+          placeholder="Raw markdown. One bullet per line."
+          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y mt-2"
+        />
+      )}
+
+      {(dirty || savedFlag) && (
+        <div className="flex items-center gap-2 justify-end mt-1">
+          {savedFlag && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
+          <button
+            onClick={onSave}
+            disabled={saving || !dirty}
+            className="text-[12px] flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white disabled:opacity-40 hover:bg-[var(--cedar-lt)]"
+          >
+            <Save size={11} /> Save
+          </button>
+        </div>
+      )}
     </div>
   );
 }
