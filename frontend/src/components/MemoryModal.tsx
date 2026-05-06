@@ -541,26 +541,66 @@ function SearchTab() {
         </button>
       </div>
       <div className="flex-1 overflow-y-auto flex flex-col gap-2">
-        {hits === null && <div className="text-center text-[var(--muted)]/60 text-[12px] py-6">Type to search</div>}
+        {hits === null && <div className="text-center text-[var(--muted)]/60 text-[12px] py-6">Type to search across lessons, memory files, notes, and history.</div>}
         {hits?.length === 0 && <div className="text-center text-[var(--muted)]/60 text-[12px] py-6">No results</div>}
         {hits?.map((h) => (
           <div key={`${h.source}-${h.key}`} className="border border-[var(--border)] bg-[var(--surface)] rounded-lg p-3">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[11px] font-mono text-[var(--text)] truncate">{h.key}</span>
-              <span className="text-[9px] uppercase tracking-wider text-[var(--muted)]/60 font-mono">{h.source}</span>
+            <div className="flex items-center gap-2 mb-2">
+              <SourceBadge source={h.source} />
+              <span className="text-[11px] font-mono text-[var(--muted)] truncate" title={h.key}>
+                {keyDisplay(h.key, h.source)}
+              </span>
               {h.score > 0 && (
-                <span className="text-[10px] font-mono text-[var(--muted)]/50 ml-auto">score {h.score.toFixed(1)}</span>
+                <span className="ml-auto text-[10px] font-mono text-[var(--muted)]/50" title={`bm25 / vector relevance score`}>
+                  {h.score.toFixed(2)}
+                </span>
               )}
             </div>
-            <pre className="text-[12px] text-[var(--muted)] whitespace-pre-wrap break-words max-h-[140px] overflow-y-auto">
-              {h.content}
-            </pre>
+            <div
+              className="text-[12px] text-[var(--text)] whitespace-pre-wrap break-words max-h-[140px] overflow-y-auto leading-snug [&_mark]:bg-[var(--cedar)]/30 [&_mark]:text-[var(--text)] [&_mark]:rounded [&_mark]:px-0.5"
+              dangerouslySetInnerHTML={{ __html: sanitiseSnippet(h.content) }}
+            />
           </div>
         ))}
       </div>
       {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
     </div>
   );
+}
+
+// ── Search-result helpers ────────────────────────────────────────────────────
+
+const SOURCE_STYLES: Record<string, { label: string; cls: string }> = {
+  lessons:    { label: "Lesson",   cls: "bg-amber-900/40 text-amber-300" },
+  preferences:{ label: "Pref",     cls: "bg-emerald-900/40 text-emerald-300" },
+  projects:   { label: "Project",  cls: "bg-blue-900/40 text-blue-300" },
+  memory:     { label: "Memory",   cls: "bg-fuchsia-900/40 text-fuchsia-300" },
+  history:    { label: "History",  cls: "bg-purple-900/40 text-purple-300" },
+  markdown:   { label: "Note",     cls: "bg-cyan-900/40 text-cyan-300" },
+  vector:     { label: "Vector",   cls: "bg-pink-900/40 text-pink-300" },
+};
+
+function SourceBadge({ source }: { source: string }) {
+  const s = SOURCE_STYLES[source] ?? { label: source, cls: "bg-[var(--border)] text-[var(--muted)]" };
+  return (
+    <span className={`shrink-0 text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded ${s.cls}`}>
+      {s.label}
+    </span>
+  );
+}
+
+function keyDisplay(key: string, source: string): string {
+  // Backend keys come as "<source>:<id>" — strip the redundant prefix
+  // since the source badge already conveys it.
+  if (key.startsWith(source + ":")) return key.slice(source.length + 1);
+  return key;
+}
+
+// FTS5 snippet uses literal <mark> tags. We accept those and strip every
+// other tag so the dangerouslySetInnerHTML stays safe.
+function sanitiseSnippet(s: string): string {
+  if (!s) return "";
+  return s.replace(/<(?!\/?mark\b)[^>]*>/gi, "");
 }
 
 // ── Examples popover ─────────────────────────────────────────────────────────
