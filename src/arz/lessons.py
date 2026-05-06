@@ -50,12 +50,14 @@ class LessonStore:
         self._lock = Lock()
         self._lessons: list[Lesson] = []
         self._next_id = 1
+        self._mtime: float = 0.0
         self._load()
 
     # ── persistence ─────────────────────────────────────────────────────────
 
     def _load(self) -> None:
         if not self._path.exists():
+            self._mtime = 0.0
             return
         out: list[Lesson] = []
         with self._path.open("r", encoding="utf-8") as f:
@@ -70,6 +72,24 @@ class LessonStore:
         self._lessons = out
         if out:
             self._next_id = max(l.id for l in out) + 1
+        try:
+            self._mtime = self._path.stat().st_mtime
+        except OSError:
+            self._mtime = 0.0
+
+    def _reload_if_changed(self) -> None:
+        """Re-read the JSONL if its mtime has moved.
+
+        Covers the case where another process (a script, a manual file
+        edit, the consolidator running in a subagent) wrote to the
+        store. Cheap when nothing changed — one stat() call.
+        """
+        try:
+            mtime = self._path.stat().st_mtime if self._path.exists() else 0.0
+        except OSError:
+            return
+        if mtime and mtime != self._mtime:
+            self._load()
 
     def _persist(self) -> None:
         tmp = self._path.with_suffix(".jsonl.tmp")
@@ -77,11 +97,17 @@ class LessonStore:
             for l in self._lessons:
                 f.write(l.model_dump_json() + "\n")
         tmp.replace(self._path)
+        # Stamp mtime so _reload_if_changed doesn't re-read our own write.
+        try:
+            self._mtime = self._path.stat().st_mtime
+        except OSError:
+            pass
 
     # ── public API ──────────────────────────────────────────────────────────
 
     def list(self) -> list[Lesson]:
         with self._lock:
+            self._reload_if_changed()
             return list(self._lessons)
 
     def add(self, category: str, text: str, pinned: bool = False) -> Lesson:
@@ -134,6 +160,7 @@ class LessonStore:
 
     def render_for_prompt(self, user_message: str) -> str:
         with self._lock:
+            self._reload_if_changed()
             if not self._lessons:
                 return ""
             picked: list[Lesson] = []
