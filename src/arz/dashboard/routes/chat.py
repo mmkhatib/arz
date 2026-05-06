@@ -256,11 +256,19 @@ async def _run_turn(
                                         user_for_extract = m.text
                                         break
                             if user_for_extract:
+                                # Use the session's actual provider/model
+                                # rather than the global config — global
+                                # may be misconfigured (e.g. provider=
+                                # claude-code with a codex model).
+                                sess_provider = getattr(session, "provider", None) if session else None
+                                sess_model = getattr(session, "model", None) if session else None
                                 asyncio.create_task(
                                     maybe_extract(
                                         user_for_extract,
                                         cleaned or state.full_reply,
                                         config=_lc(),
+                                        provider_name=sess_provider,
+                                        model=sess_model,
                                     )
                                 )
                         except Exception:

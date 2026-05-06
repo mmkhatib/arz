@@ -57,15 +57,28 @@ async def maybe_extract(
     assistant_reply: str,
     *,
     config: ArzConfig,
+    provider_name: str | None = None,
+    model: str | None = None,
 ) -> int:
     """If *assistant_reply* contains no inline tags, run an extraction
-    pass and persist what it finds. Returns the number of items saved."""
+    pass and persist what it finds. Returns the number of items saved.
+
+    ``provider_name`` / ``model`` override the global config — pass the
+    session's effective provider so extraction never tries to run a
+    provider/model combo that's broken at the global level.
+    """
     if not user_message.strip() or not assistant_reply.strip():
         return 0
     if _has_inline_tags(assistant_reply):
         return 0  # Tags already handled inline; don't double-process.
 
-    items = await _extract(user_message, assistant_reply, config)
+    items = await _extract(
+        user_message,
+        assistant_reply,
+        config,
+        provider_name=provider_name,
+        model=model,
+    )
     if not items:
         return 0
     return _persist(items)
@@ -75,19 +88,25 @@ def _has_inline_tags(text: str) -> bool:
     return any(t in text.lower() for t in ("<learn", "<memory", "<note"))
 
 
-async def _extract(user_message: str, assistant_reply: str, config: ArzConfig) -> list[dict]:
+async def _extract(
+    user_message: str,
+    assistant_reply: str,
+    config: ArzConfig,
+    *,
+    provider_name: str | None = None,
+    model: str | None = None,
+) -> list[dict]:
     """Run a single, cheap LLM call to extract memory items.
 
-    Uses the configured provider — same model the user is paying for.
-    Could be swapped to a smaller / cheaper model later (Haiku, local
-    4B) by overriding ``config.dashboard.extraction_model`` if defined.
+    Provider/model override the configured default — pass the session's
+    effective values so we don't trip on a broken global config.
     """
     prompt = _PROMPT.format(
         user=user_message[:4000],
         assistant=assistant_reply[:4000],
     )
 
-    provider = _build_provider(config)
+    provider = _build_provider(config, provider_name=provider_name, model=model)
     if provider is None:
         return []
 
@@ -113,15 +132,19 @@ async def _extract(user_message: str, assistant_reply: str, config: ArzConfig) -
     return _parse(text)
 
 
-def _build_provider(config: ArzConfig):
+def _build_provider(
+    config: ArzConfig,
+    *,
+    provider_name: str | None = None,
+    model: str | None = None,
+):
     """Spawn a fresh provider for the extraction pass.
 
-    Mirrors the configured provider — keeps the call entirely local to
-    whatever the user is already running. Returns None if the provider
-    isn't supported for the simple-text use case.
+    Falls back to the global config when overrides aren't supplied.
+    Returns None if the provider isn't supported.
     """
-    name = config.provider.name
-    model = config.provider.model
+    name = provider_name or config.provider.name
+    model = model or config.provider.model
     try:
         if name == "claude-code":
             from arz.providers.claude_code import ClaudeCodeProvider
