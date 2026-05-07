@@ -196,6 +196,13 @@ class GeminiProvider(LLMProvider):
 
         deadline = asyncio.get_event_loop().time() + _TURN_TIMEOUT
         assert process.stdout
+        # Whole-stream echo detection. Some gemini-cli builds ignore
+        # --output-format and dump the prompt verbatim before the actual
+        # reply. We collect plain-text lines into a buffer and decide
+        # what to emit at end-of-stream — everything before
+        # `USER MESSAGE:` is the prompt echo and gets stripped.
+        plain_buffer: list[str] = []
+        json_seen = False
         try:
             while asyncio.get_event_loop().time() < deadline:
                 try:
@@ -212,13 +219,14 @@ class GeminiProvider(LLMProvider):
 
                 try:
                     event = json.loads(line)
+                    json_seen = True
                 except json.JSONDecodeError:
                     text = line.decode(errors="replace")
-                    # Defence against gemini-cli ignoring --output-format
-                    # and dumping the prompt verbatim. Drop any line that
-                    # contains the operator-instruction marker.
-                    if text and "OPERATOR INSTRUCTIONS" not in text and not text.startswith("<system>"):
-                        yield LLMEvent(kind="text_chunk", text=text + "\n")
+                    if text:
+                        # Always buffer plain-text. We don't know yet if
+                        # gemini-cli is echoing the prompt, so we can't
+                        # safely stream live. Decided at end-of-stream.
+                        plain_buffer.append(text)
                     continue
 
                 # Gemini stream-json has roughly the same shape as Claude Code's
@@ -256,6 +264,40 @@ class GeminiProvider(LLMProvider):
                 process.kill()
             await process.wait()
             self._process = None
+
+        # Flush any plain-text we buffered (gemini-cli stream-json
+        # fallback). If the buffer contains our operator-instructions
+        # marker the whole prompt was echoed — strip everything up to
+        # the LAST "USER MESSAGE:" tag and emit only what came after.
+        if plain_buffer and not json_seen:
+            joined = "\n".join(plain_buffer)
+            if "OPERATOR INSTRUCTIONS" in joined:
+                # Find the last occurrence of the user-message divider —
+                # gemini's actual answer begins after it.
+                marker = "USER MESSAGE:"
+                idx = joined.rfind(marker)
+                if idx >= 0:
+                    after = joined[idx + len(marker):].lstrip("\n")
+                    # The very next line is the user's input we just sent;
+                    # drop it so only the model's reply remains.
+                    parts = after.split("\n", 1)
+                    cleaned = parts[1] if len(parts) > 1 else ""
+                else:
+                    cleaned = ""
+                # If we couldn't find a clean answer, surface a helpful
+                # error rather than the giant echo.
+                cleaned = cleaned.strip()
+                if not cleaned:
+                    cleaned = (
+                        "[gemini echoed the prompt instead of answering — "
+                        "check that gemini-cli supports --output-format stream-json, "
+                        "or drop GEMINI_API_KEY for an interactive auth retry]"
+                    )
+                yield LLMEvent(kind="text_chunk", text=cleaned + "\n")
+            else:
+                # No echo detected — emit lines normally.
+                for ln in plain_buffer:
+                    yield LLMEvent(kind="text_chunk", text=ln + "\n")
 
         yield LLMEvent(kind="complete", stop_reason="end_turn")
 
