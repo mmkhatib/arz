@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/api/client";
 import { BarChart3, Download } from "lucide-react";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 interface Props {
   onClose?: () => void;
@@ -44,35 +45,35 @@ export default function AnalyticsModal({ onClose, variant = "modal" }: Props) {
       .catch((e) => setError(String(e)));
   }, [days]);
 
+  const headerActions = (
+    <>
+      <select
+        value={days}
+        onChange={(e) => setDays(Number(e.target.value))}
+        className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
+      >
+        <option value={7}>7 days</option>
+        <option value={14}>14 days</option>
+        <option value={30}>30 days</option>
+        <option value={90}>90 days</option>
+      </select>
+      <a
+        href={api.analyticsCsvUrl()}
+        download
+        className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] hover:bg-[var(--cedar-lt)]"
+      >
+        <Download size={11} /> CSV
+      </a>
+    </>
+  );
+
   const header = (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-      <div className="flex items-center gap-2">
-        <BarChart3 size={16} className="text-[var(--cedar)]" />
-        <h2 className="text-[15px] font-semibold text-[var(--text)]">Analytics</h2>
-      </div>
-      <div className="flex items-center gap-2">
-        <select
-          value={days}
-          onChange={(e) => setDays(Number(e.target.value))}
-          className="bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-[12px] text-[var(--text)]"
-        >
-          <option value={7}>7 days</option>
-          <option value={14}>14 days</option>
-          <option value={30}>30 days</option>
-          <option value={90}>90 days</option>
-        </select>
-        <a
-          href={api.analyticsCsvUrl()}
-          download
-          className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] hover:bg-[var(--cedar-lt)]"
-        >
-          <Download size={11} /> CSV
-        </a>
-        {variant === "modal" && (
-          <button onClick={handleClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none ml-2">×</button>
-        )}
-      </div>
-    </div>
+    <PageHeader
+      icon={<BarChart3 size={16} />}
+      title="Analytics"
+      actions={headerActions}
+      onClose={variant === "modal" ? handleClose : undefined}
+    />
   );
 
   const panels = (
@@ -116,44 +117,25 @@ export default function AnalyticsModal({ onClose, variant = "modal" }: Props) {
     </>
   );
 
-  if (variant === "page") {
-    return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-        {header}
-        <div className="flex-1 overflow-y-auto px-6 py-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 content-start">
-          {panels}
-        </div>
-        {error && <div className="m-3 text-red-400 text-[11px] bg-red-900/20 rounded px-3 py-2">{error}</div>}
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) handleClose();
-      }}
-    >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[88vh] flex flex-col">
-        {header}
-        <div className="overflow-y-auto px-5 py-4 flex-1 grid grid-cols-1 md:grid-cols-2 gap-4">
-          {panels}
-        </div>
-        {error && <div className="m-3 text-red-400 text-[11px] bg-red-900/20 rounded px-3 py-2">{error}</div>}
+    <PageShell variant={variant} maxWidth="max-w-4xl" onClose={handleClose}>
+      {header}
+      <div className="overflow-y-auto px-5 py-4 flex-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 content-start">
+        {panels}
       </div>
-    </div>
+      {error && <div className="m-3 text-red-400 text-[11px] bg-red-900/20 rounded px-3 py-2">{error}</div>}
+    </PageShell>
   );
 }
 
 function Panel({ title, children, colSpan }: { title: string; children: React.ReactNode; colSpan?: number }) {
   return (
-    <div
-      className={["border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]", colSpan === 2 ? "md:col-span-2" : ""].join(" ")}
+    <section
+      className={["border border-[var(--border)] rounded-lg bg-[var(--surface)] flex flex-col", colSpan === 2 ? "md:col-span-2" : ""].join(" ")}
     >
-      <div className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-2">{title}</div>
-      {children}
-    </div>
+      <header className="px-4 py-2 border-b border-[var(--border)] text-[10px] uppercase tracking-wider text-[var(--muted)]">{title}</header>
+      <div className="p-3">{children}</div>
+    </section>
   );
 }
 

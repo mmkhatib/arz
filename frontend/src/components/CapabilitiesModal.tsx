@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import type { McpServer, PromptTemplate, ToolView } from "@/api/client";
 import { Puzzle, Server, FileCode, Wrench, Plus, Trash2, Edit2, RefreshCw, AlertTriangle, Check, X, ToggleLeft, ToggleRight, Shield } from "lucide-react";
 import SecondaryNav from "@/components/SecondaryNav";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 interface Props {
   onClose?: () => void;
@@ -22,18 +23,6 @@ export default function CapabilitiesModal({ onClose, variant = "modal" }: Props)
     return () => document.removeEventListener("keydown", onKey);
   }, [variant]);
 
-  const header = (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-      <div className="flex items-center gap-2">
-        <Puzzle size={16} className="text-[var(--cedar)]" />
-        <h2 className="text-[15px] font-semibold text-[var(--text)]">Capabilities</h2>
-      </div>
-      {variant === "modal" && (
-        <button onClick={handleClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none">×</button>
-      )}
-    </div>
-  );
-
   const navItems = [
     { id: "mcp" as const,     label: "MCP Servers", icon: <Server size={13} /> },
     { id: "prompts" as const, label: "Prompts",     icon: <FileCode size={13} /> },
@@ -50,31 +39,24 @@ export default function CapabilitiesModal({ onClose, variant = "modal" }: Props)
     </>
   );
 
-  if (variant === "page") {
-    return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-        {header}
-        <div className="flex flex-1 min-h-0">
-          <SecondaryNav<Tab> title="Capabilities" value={tab} onChange={setTab} items={navItems} />
-          <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
-    >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[88vh] flex flex-col">
-        {header}
-        <div className="flex flex-1 min-h-0">
-          <SecondaryNav<Tab> value={tab} onChange={setTab} items={navItems} widthClass="w-44" />
-          <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
-        </div>
+    <PageShell variant={variant} maxWidth="max-w-4xl" onClose={handleClose}>
+      <PageHeader
+        icon={<Puzzle size={16} />}
+        title="Capabilities"
+        onClose={variant === "modal" ? handleClose : undefined}
+      />
+      <div className="flex flex-1 min-h-0">
+        <SecondaryNav<Tab>
+          title={variant === "page" ? "Capabilities" : undefined}
+          value={tab}
+          onChange={setTab}
+          items={navItems}
+          widthClass={variant === "modal" ? "w-44" : "w-56"}
+        />
+        <div className="overflow-y-auto px-5 py-4 flex-1">{tabBody()}</div>
       </div>
-    </div>
+    </PageShell>
   );
 }
 

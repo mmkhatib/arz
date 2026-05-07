@@ -3,6 +3,7 @@ import { api } from "@/api/client";
 import type { AgentConfig } from "@/api/client";
 import { Bot, Plus, Trash2, Edit2, Star, StarOff, X, Check, Play } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 interface Props {
   onClose?: () => void;
@@ -114,15 +115,11 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
   };
 
   const header = (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-      <div className="flex items-center gap-2">
-        <Bot size={16} className="text-[var(--cedar)]" />
-        <h2 className="text-[15px] font-semibold text-[var(--text)]">Agents</h2>
-      </div>
-      {variant === "modal" && (
-        <button onClick={handleClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none">×</button>
-      )}
-    </div>
+    <PageHeader
+      icon={<Bot size={16} />}
+      title="Agents"
+      onClose={variant === "modal" ? handleClose : undefined}
+    />
   );
 
   const formPanel = (
@@ -283,25 +280,11 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
     </div>
   );
 
-  if (variant === "page") {
-    return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-        {header}
-        {body}
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
-    >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-3xl mx-4 max-h-[88vh] flex flex-col">
-        {header}
-        {body}
-      </div>
-    </div>
+    <PageShell variant={variant} maxWidth="max-w-4xl" onClose={handleClose}>
+      {header}
+      {body}
+    </PageShell>
   );
 }
 

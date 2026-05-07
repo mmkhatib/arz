@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "@/api/client";
 import type { CronEntry } from "@/api/client";
 import { Clock, Plus, Trash2, Play, Power, Pencil } from "lucide-react";
+import { PageShell, PageHeader, PageBody } from "@/components/PageShell";
 
 interface Props {
   onClose?: () => void;
@@ -184,24 +185,20 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
   };
 
   const header = (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-      <div className="flex items-center gap-2">
-        <Clock size={16} className="text-[var(--cedar)]" />
-        <h2 className="text-[15px] font-semibold text-[var(--text)]">Scheduled tasks</h2>
-        <span className="text-[12px] text-[var(--muted)]">{items.length}</span>
-      </div>
-      <div className="flex items-center gap-2">
+    <PageHeader
+      icon={<Clock size={16} />}
+      title="Scheduled tasks"
+      count={items.length}
+      onClose={variant === "modal" ? handleClose : undefined}
+      actions={
         <button
           onClick={startNew}
           className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] hover:bg-[var(--cedar-lt)]"
         >
           <Plus size={11} /> New schedule
         </button>
-        {variant === "modal" && (
-          <button onClick={handleClose} className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none px-1" aria-label="Close">×</button>
-        )}
-      </div>
-    </div>
+      }
+    />
   );
 
   const editor = editing && (
@@ -329,32 +326,15 @@ export default function ScheduleModal({ onClose, onJumpToSession, variant = "mod
     </div>
   );
 
-  const body = (
-    <div className="overflow-y-auto px-5 py-4 flex-1 flex flex-col gap-4">
-      {editor}
-      {table}
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
-    </div>
-  );
-
-  if (variant === "page") {
-    return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-        {header}
-        {body}
-      </div>
-    );
-  }
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => { if (e.target === e.currentTarget) handleClose(); }}
-    >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-4xl mx-4 max-h-[85vh] flex flex-col">
-        {header}
-        {body}
-      </div>
-    </div>
+    <PageShell variant={variant} maxWidth="max-w-4xl" onClose={handleClose}>
+      {header}
+      <PageBody>
+        {editor}
+        {table}
+        {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+      </PageBody>
+    </PageShell>
   );
 }
 

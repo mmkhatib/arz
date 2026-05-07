@@ -17,6 +17,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Columns3, Wrench, Hand, Bot, Clock } from "lucide-react";
 import { api, type SessionSummary } from "@/api/client";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 type Lane = "approval" | "your_turn" | "working" | "idle";
 
@@ -78,20 +79,20 @@ export default function BoardPage() {
   }
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2">
-          <Columns3 size={16} className="text-[var(--cedar)]" />
-          <h2 className="text-[15px] font-semibold text-[var(--text)]">Board</h2>
-          <span className="text-[12px] text-[var(--muted)]">{items.length} active</span>
-        </div>
-        <button
-          onClick={refresh}
-          className="text-[11px] text-[var(--muted)] hover:text-[var(--text)] px-2 py-1 rounded"
-        >
-          ↻ refresh
-        </button>
-      </div>
+    <PageShell variant="page">
+      <PageHeader
+        icon={<Columns3 size={16} />}
+        title="Board"
+        count={`${items.length} active`}
+        actions={
+          <button
+            onClick={refresh}
+            className="text-[12px] text-[var(--muted)] hover:text-[var(--text)] px-2 py-1 rounded-md hover:bg-[var(--surface)]"
+          >
+            ↻ refresh
+          </button>
+        }
+      />
       <div className="flex-1 overflow-x-auto overflow-y-hidden p-4">
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 h-full">
           {LANE_DEFS.map((lane) => (
@@ -125,6 +126,6 @@ export default function BoardPage() {
           ))}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

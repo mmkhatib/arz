@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Cpu, Download, Check, ExternalLink, Loader2, X, Power, PowerOff, MemoryStick } from "lucide-react";
 import { api } from "@/api/client";
 import { setOllamaInstalledModels } from "@/utils/models";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 interface CliRow {
   name: string;
@@ -138,22 +139,22 @@ export default function LLMInstallerPage() {
     installed.some((i) => i.name === m.name);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2">
-          <Cpu size={16} className="text-[var(--cedar)]" />
-          <h2 className="text-[15px] font-semibold text-[var(--text)]">Models &amp; Runtimes</h2>
-        </div>
-        <button
-          onClick={refresh}
-          className="text-[12px] px-2 py-1 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]"
-        >
-          Refresh
-        </button>
-      </div>
+    <PageShell variant="page">
+      <PageHeader
+        icon={<Cpu size={16} />}
+        title="Models & Runtimes"
+        actions={
+          <button
+            onClick={refresh}
+            className="text-[12px] px-2 py-1 rounded-md text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]"
+          >
+            Refresh
+          </button>
+        }
+      />
 
       {error && (
-        <div className="mx-5 mt-3 text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">{error}</div>
+        <div className="mx-5 mt-3 text-red-400 text-[12px] bg-red-900/20 rounded-md px-3 py-2">{error}</div>
       )}
 
       <div className="overflow-y-auto px-5 py-4 flex-1 flex flex-col gap-6">
@@ -333,6 +334,6 @@ export default function LLMInstallerPage() {
           </section>
         )}
       </div>
-    </div>
+    </PageShell>
   );
 }

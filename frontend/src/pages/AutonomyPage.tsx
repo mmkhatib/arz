@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, Users, Heart, ListChecks, Save, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import SecondaryNav from "@/components/SecondaryNav";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 type Tab = "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -9,16 +10,11 @@ export default function AutonomyPage() {
   const [tab, setTab] = useState<Tab>("subagents");
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-      <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-        <div className="flex items-center gap-2">
-          <Activity size={16} className="text-[var(--cedar)]" />
-          <h2 className="text-[15px] font-semibold text-[var(--text)]">Autonomy</h2>
-        </div>
-      </div>
+    <PageShell variant="page">
+      <PageHeader icon={<Activity size={16} />} title="Autonomy" />
       <div className="flex flex-1 min-h-0">
         <SecondaryNav<Tab>
-          title="Sections"
+          title="Autonomy"
           value={tab}
           onChange={setTab}
           items={[
@@ -35,7 +31,7 @@ export default function AutonomyPage() {
           {tab === "tasks" && <TasksTab />}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }
 

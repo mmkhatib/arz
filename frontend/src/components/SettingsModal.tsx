@@ -11,6 +11,8 @@ import {
 import { useTheme, THEMES } from "@/hooks/useTheme";
 import type { ModePreference } from "@/hooks/useTheme";
 import { modelsForProvider, defaultModelForProvider, isModelValid } from "@/utils/models";
+import { Settings as SettingsIcon } from "lucide-react";
+import { PageShell, PageHeader } from "@/components/PageShell";
 
 interface Props {
   onClose?: () => void;
@@ -244,55 +246,20 @@ function Shell({
   error?: string | null;
   variant?: "modal" | "page";
 }) {
-  const header = (
-    <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-[var(--border)]">
-      <div className="flex items-center gap-3">
-        <h2 className="text-[15px] font-semibold text-[var(--text)]">Settings</h2>
-        {savedFlag && (
-          <span className="text-[11px] text-[var(--accent)] uppercase tracking-wider animate-pulse">
-            Saved
-          </span>
-        )}
-      </div>
-      {variant === "modal" && (
-        <button
-          onClick={onClose}
-          className="text-[var(--muted)] hover:text-[var(--text)] text-xl leading-none"
-          aria-label="Close settings"
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-  const errorBlock = error && (
-    <div className="mx-5 mt-3 text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">
-      {error}
-    </div>
-  );
-
-  if (variant === "page") {
-    return (
-      <div className="flex flex-col h-full bg-[var(--bg)] min-w-0 flex-1 overflow-hidden">
-        {header}
-        {errorBlock}
-        <div className="overflow-y-auto px-6 py-4 flex-1">{children}</div>
-      </div>
-    );
-  }
-
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-2xl mx-4 max-h-[85vh] flex flex-col">
-        {header}
-        {errorBlock}
-        <div className="overflow-y-auto px-5 py-4 flex-1">{children}</div>
-      </div>
-    </div>
+    <PageShell variant={variant} maxWidth="max-w-3xl" onClose={onClose}>
+      <PageHeader
+        icon={<SettingsIcon size={16} />}
+        title="Settings"
+        subtitle={savedFlag ? "saved" : undefined}
+        onClose={variant === "modal" ? onClose : undefined}
+      />
+      {error && (
+        <div className="mx-5 mt-3 text-red-400 text-[12px] bg-red-900/20 rounded-md px-3 py-2">
+          {error}
+        </div>
+      )}
+      <div className="overflow-y-auto px-5 py-4 flex-1 flex flex-col gap-4">{children}</div>
+    </PageShell>
   );
 }
