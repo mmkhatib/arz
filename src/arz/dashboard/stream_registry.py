@@ -58,36 +58,53 @@ class StreamRegistry:
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
+    # Hard cap: a "running" turn this old gets force-cancelled when a new
+    # turn arrives. Generous enough that real long-running tool calls
+    # finish, tight enough that a hung provider doesn't block forever.
+    _MAX_TURN_AGE_S = 20 * 60  # 20 min
+
     async def start(self, session_id: str) -> StreamState:
         """Allocate a StreamState. Caller fills .task immediately after.
 
-        Clears stale "running" entries automatically: if a prior turn's
-        asyncio.Task already finished but the state still says "running"
-        (the finally-block didn't fire — provider crash, cancelled awaiter,
-        whatever), we treat it as failed instead of blocking the new turn
-        with a 409 forever.
+        Clears stuck "running" entries automatically:
+          - Task already done but status not transitioned -> mark failed
+          - Task still running but turn-age > _MAX_TURN_AGE_S
+            -> cancel the task, mark cancelled, allow new turn
         """
         async with self._lock:
             existing = self._states.get(session_id)
             if existing and existing.status == "running":
-                stale = (existing.task is None) or existing.task.done()
-                if stale:
+                age = time.time() - existing.started_at
+                task_done = (existing.task is None) or existing.task.done()
+                if task_done:
                     log.warning(
                         "Clearing stale 'running' StreamState for %s (task done but status not transitioned)",
                         session_id,
                     )
-                    existing.status = "failed"
-                    existing.finished_at = time.time()
-                    existing.error = "stuck-state cleared by next turn"
-                    for q in existing.subscribers:
-                        try: q.put_nowait(None)
-                        except asyncio.QueueFull: pass
-                    existing.subscribers.clear()
+                    self._mark_finished(existing, "failed", "stuck-state cleared by next turn")
+                elif age > self._MAX_TURN_AGE_S:
+                    log.warning(
+                        "Force-cancelling stuck turn for %s (age=%.0fs > %.0fs cap)",
+                        session_id, age, self._MAX_TURN_AGE_S,
+                    )
+                    if existing.task is not None and not existing.task.done():
+                        existing.task.cancel()
+                    self._mark_finished(existing, "cancelled", f"turn exceeded {self._MAX_TURN_AGE_S}s budget")
                 else:
                     raise RuntimeError(f"session {session_id} already has a running turn")
             state = StreamState(session_id=session_id)
             self._states[session_id] = state
             return state
+
+    @staticmethod
+    def _mark_finished(state: StreamState, status: str, error: str | None = None) -> None:
+        state.status = status
+        state.finished_at = time.time()
+        state.error = error
+        for q in state.subscribers:
+            try: q.put_nowait(None)
+            except asyncio.QueueFull: pass
+        state.subscribers.clear()
 
     async def finish(self, session_id: str, *, status: str = "complete", error: str | None = None) -> None:
         """Mark a turn done and close all subscriber queues."""

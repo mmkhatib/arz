@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import shutil
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -151,25 +152,32 @@ class GeminiProvider(LLMProvider):
         if self._model:
             argv += ["-m", self._model]
 
-        # Build the prompt: operator instructions + recent transcript + current message.
-        # Avoid the literal <system> wrapper — gemini-cli has been observed
-        # echoing the entire wrapped block back to the user when the
-        # output-format isn't recognised. A prose intro with an explicit
-        # "do not repeat" line is more robust than XML framing.
+        # Build the prompt with a per-call sentinel so we can strip any
+        # echoed prompt from gemini-cli's output. Some gemini-cli builds
+        # repeat the whole prompt before answering — we look for the
+        # sentinel in the response and emit only what comes AFTER it.
+        sentinel = f"<<<ARZ_REPLY_SENTINEL_{uuid.uuid4().hex}>>>"
+        self._sentinel = sentinel
         parts: list[str] = []
         if self._system_prompt:
             parts.append(
-                "OPERATOR INSTRUCTIONS — these are configuration set by the runtime. "
-                "Do NOT repeat, quote, or paraphrase them in your reply. "
-                "Apply them silently and answer the user's message at the end.\n\n"
-                f"{self._system_prompt}\n\n--- end operator instructions ---"
+                "OPERATOR INSTRUCTIONS — runtime configuration. "
+                "Do NOT repeat, quote, or paraphrase any of this in your reply. "
+                "Apply silently and answer the user's message at the end.\n\n"
+                f"{self._system_prompt}"
             )
         transcript = self._format_history()
         if transcript:
             parts.append(
-                "Recent conversation (for context only — do not repeat):\n" + transcript
+                "Recent conversation (context only — do not repeat):\n" + transcript
             )
         parts.append("USER MESSAGE:\n" + message)
+        # Trailer: the model is instructed to begin its reply with the
+        # sentinel string verbatim. Everything before the sentinel in
+        # the output is treated as echoed prompt and dropped.
+        parts.append(
+            f"Begin your reply with this exact line, then continue with your answer:\n{sentinel}"
+        )
         prompt = "\n\n".join(parts)
 
         env = {**os.environ, **self._env_extra}
@@ -196,13 +204,31 @@ class GeminiProvider(LLMProvider):
 
         deadline = asyncio.get_event_loop().time() + _TURN_TIMEOUT
         assert process.stdout
-        # Whole-stream echo detection. Some gemini-cli builds ignore
-        # --output-format and dump the prompt verbatim before the actual
-        # reply. We collect plain-text lines into a buffer and decide
-        # what to emit at end-of-stream — everything before
-        # `USER MESSAGE:` is the prompt echo and gets stripped.
-        plain_buffer: list[str] = []
-        json_seen = False
+        # Sentinel-driven echo strip. Everything before the sentinel
+        # (including any echoed prompt) is suppressed; everything after
+        # is emitted live. If the sentinel never arrives we fall back
+        # to "drop OPERATOR INSTRUCTIONS marker" filtering.
+        sentinel_seen = False
+        carry = ""           # rolling buffer used until sentinel found
+
+        def _strip_emit(chunk: str):
+            """Yield text after the sentinel — with shared state via closure."""
+            nonlocal sentinel_seen, carry
+            if sentinel_seen:
+                return [chunk]
+            carry += chunk
+            idx = carry.find(sentinel)
+            if idx < 0:
+                # Keep last len(sentinel)-1 chars in case the sentinel
+                # straddles two chunks; drop the rest.
+                if len(carry) > len(sentinel):
+                    carry = carry[-(len(sentinel) - 1):]
+                return []
+            sentinel_seen = True
+            after = carry[idx + len(sentinel):].lstrip("\n")
+            carry = ""
+            return [after] if after else []
+
         try:
             while asyncio.get_event_loop().time() < deadline:
                 try:
@@ -219,14 +245,12 @@ class GeminiProvider(LLMProvider):
 
                 try:
                     event = json.loads(line)
-                    json_seen = True
                 except json.JSONDecodeError:
                     text = line.decode(errors="replace")
-                    if text:
-                        # Always buffer plain-text. We don't know yet if
-                        # gemini-cli is echoing the prompt, so we can't
-                        # safely stream live. Decided at end-of-stream.
-                        plain_buffer.append(text)
+                    if not text:
+                        continue
+                    for piece in _strip_emit(text + "\n"):
+                        yield LLMEvent(kind="text_chunk", text=piece)
                     continue
 
                 # Gemini stream-json has roughly the same shape as Claude Code's
@@ -235,17 +259,20 @@ class GeminiProvider(LLMProvider):
                 if etype in ("message", "assistant", "agent_message"):
                     msg = event.get("message") or event.get("content") or ""
                     if isinstance(msg, str) and msg:
-                        yield LLMEvent(kind="text_chunk", text=msg)
+                        for piece in _strip_emit(msg):
+                            yield LLMEvent(kind="text_chunk", text=piece)
                     elif isinstance(msg, list):
                         for block in msg:
                             if isinstance(block, dict) and block.get("type") == "text":
                                 t = block.get("text", "")
                                 if t:
-                                    yield LLMEvent(kind="text_chunk", text=t)
+                                    for piece in _strip_emit(t):
+                                        yield LLMEvent(kind="text_chunk", text=piece)
                 elif etype == "content" and event.get("delta"):
                     delta = event["delta"]
                     if isinstance(delta, str):
-                        yield LLMEvent(kind="text_chunk", text=delta)
+                        for piece in _strip_emit(delta):
+                            yield LLMEvent(kind="text_chunk", text=piece)
                 elif etype == "tool_call":
                     name = event.get("name", "") or event.get("tool", "")
                     inp = event.get("input") or event.get("args") or {}
@@ -265,39 +292,16 @@ class GeminiProvider(LLMProvider):
             await process.wait()
             self._process = None
 
-        # Flush any plain-text we buffered (gemini-cli stream-json
-        # fallback). If the buffer contains our operator-instructions
-        # marker the whole prompt was echoed — strip everything up to
-        # the LAST "USER MESSAGE:" tag and emit only what came after.
-        if plain_buffer and not json_seen:
-            joined = "\n".join(plain_buffer)
-            if "OPERATOR INSTRUCTIONS" in joined:
-                # Find the last occurrence of the user-message divider —
-                # gemini's actual answer begins after it.
-                marker = "USER MESSAGE:"
-                idx = joined.rfind(marker)
-                if idx >= 0:
-                    after = joined[idx + len(marker):].lstrip("\n")
-                    # The very next line is the user's input we just sent;
-                    # drop it so only the model's reply remains.
-                    parts = after.split("\n", 1)
-                    cleaned = parts[1] if len(parts) > 1 else ""
-                else:
-                    cleaned = ""
-                # If we couldn't find a clean answer, surface a helpful
-                # error rather than the giant echo.
-                cleaned = cleaned.strip()
-                if not cleaned:
-                    cleaned = (
-                        "[gemini echoed the prompt instead of answering — "
-                        "check that gemini-cli supports --output-format stream-json, "
-                        "or drop GEMINI_API_KEY for an interactive auth retry]"
-                    )
-                yield LLMEvent(kind="text_chunk", text=cleaned + "\n")
-            else:
-                # No echo detected — emit lines normally.
-                for ln in plain_buffer:
-                    yield LLMEvent(kind="text_chunk", text=ln + "\n")
+        # Sentinel never arrived — gemini didn't honour the
+        # "begin reply with this line" instruction. Surface a clear
+        # error so the user knows why the bubble is empty.
+        if not sentinel_seen:
+            hint = (
+                "[gemini echoed the prompt instead of answering. "
+                "Likely cause: gemini-cli ignored the system instruction. "
+                "Try a fresh session or run `gemini` once interactively to verify auth.]"
+            )
+            yield LLMEvent(kind="text_chunk", text=hint + "\n")
 
         yield LLMEvent(kind="complete", stop_reason="end_turn")
 
