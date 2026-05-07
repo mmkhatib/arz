@@ -211,18 +211,48 @@ class GeminiProvider(LLMProvider):
         sentinel_seen = False
         carry = ""           # rolling buffer used until sentinel found
 
+        # The sentinel appears at LEAST twice in any echoed scenario:
+        # once in the prompt's "Begin your reply with..." trailer and
+        # once in the model's actual reply opening. We arm on the SECOND
+        # occurrence so we never split on the prompt's own copy.
+        # If gemini doesn't echo (good case), it appears only once and
+        # we arm on that single occurrence.
+        sentinel_hits = 0
+        prompt_has_one = bool(self._system_prompt) or transcript or True  # always true
+        target_hit = 2 if prompt_has_one else 1
+
         def _strip_emit(chunk: str):
-            """Yield text after the sentinel — with shared state via closure."""
-            nonlocal sentinel_seen, carry
+            nonlocal sentinel_seen, carry, sentinel_hits
             if sentinel_seen:
                 return [chunk]
             carry += chunk
-            idx = carry.find(sentinel)
+            # Count occurrences seen so far in the running buffer.
+            sentinel_hits = carry.count(sentinel)
+            if sentinel_hits < target_hit:
+                # Not enough yet. Trim the carry to keep it bounded but
+                # still allow a future sentinel match — we keep enough
+                # buffer that we don't lose context. Safe upper bound:
+                # 100 KiB; a real reply opens shortly after the prompt.
+                if len(carry) > 100_000:
+                    # Last-resort: drop everything before the most recent
+                    # sentinel and reset the count.
+                    last = carry.rfind(sentinel)
+                    if last >= 0:
+                        carry = carry[last:]
+                        sentinel_hits = 1
+                    else:
+                        carry = carry[-(len(sentinel) - 1):]
+                        sentinel_hits = 0
+                return []
+            # Reached target — find the Nth occurrence index.
+            idx = -1
+            search_from = 0
+            for _ in range(target_hit):
+                idx = carry.find(sentinel, search_from)
+                if idx < 0:
+                    break
+                search_from = idx + len(sentinel)
             if idx < 0:
-                # Keep last len(sentinel)-1 chars in case the sentinel
-                # straddles two chunks; drop the rest.
-                if len(carry) > len(sentinel):
-                    carry = carry[-(len(sentinel) - 1):]
                 return []
             sentinel_seen = True
             after = carry[idx + len(sentinel):].lstrip("\n")
@@ -292,16 +322,27 @@ class GeminiProvider(LLMProvider):
             await process.wait()
             self._process = None
 
-        # Sentinel never arrived — gemini didn't honour the
-        # "begin reply with this line" instruction. Surface a clear
-        # error so the user knows why the bubble is empty.
+        # End-of-stream fallback. Two cases to recover from:
+        #
+        # (a) carry has ONE sentinel (gemini didn't echo, just emitted
+        #     reply opening with sentinel). target_hit=2 was waiting
+        #     for a phantom second copy that never came — use the one
+        #     we have.
+        # (b) carry has NO sentinel (gemini ignored the instruction
+        #     entirely or auth failed). Surface a clear error.
         if not sentinel_seen:
-            hint = (
-                "[gemini echoed the prompt instead of answering. "
-                "Likely cause: gemini-cli ignored the system instruction. "
-                "Try a fresh session or run `gemini` once interactively to verify auth.]"
-            )
-            yield LLMEvent(kind="text_chunk", text=hint + "\n")
+            last = carry.rfind(sentinel)
+            if last >= 0:
+                after = carry[last + len(sentinel):].lstrip("\n").rstrip()
+                if after:
+                    yield LLMEvent(kind="text_chunk", text=after + "\n")
+            else:
+                hint = (
+                    "[gemini did not return a reply with the expected sentinel. "
+                    "Common causes: auth not set up (run `gemini` once interactively), "
+                    "or gemini-cli ignored the system instruction.]"
+                )
+                yield LLMEvent(kind="text_chunk", text=hint + "\n")
 
         yield LLMEvent(kind="complete", stop_reason="end_turn")
 
