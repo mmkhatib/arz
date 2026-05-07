@@ -141,6 +141,11 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
                 target = files.base_dir / fname
                 target.parent.mkdir(parents=True, exist_ok=True)
                 prev = target.read_text(encoding="utf-8") if target.exists() else ""
+                # Dedup: skip if a fuzzy match already exists. Stops the
+                # same hallucinated fact accumulating across runs.
+                if _bullet_already_present(prev, ex.body):
+                    counts["skipped"] += 1
+                    continue
                 sep = "" if not prev else ("\n" if prev.endswith("\n") else "\n\n")
                 target.write_text(prev + sep + f"- {ex.body.strip()}\n", encoding="utf-8")
                 counts["memory"] += 1
@@ -162,3 +167,36 @@ _SAFE_SEG_RE = re.compile(r"[^a-zA-Z0-9_\-/]+")
 def _safe_segment(s: str) -> str:
     s = _SAFE_SEG_RE.sub("_", s.strip()).strip("/_")
     return s[:120] or "scratchpad"
+
+
+def _normalise(s: str) -> str:
+    """Lowercase + strip punctuation + collapse whitespace for fuzzy-equality.
+
+    "User prefers avocado toast." == "user prefers avocado toast"
+    """
+    out = re.sub(r"[^a-z0-9 ]+", " ", (s or "").lower())
+    return re.sub(r"\s+", " ", out).strip()
+
+
+def _bullet_already_present(file_text: str, candidate: str) -> bool:
+    """True if any existing bullet in *file_text* fuzzy-matches *candidate*."""
+    target = _normalise(candidate)
+    if not target:
+        return True
+    for line in file_text.splitlines():
+        line = line.strip()
+        if not line.startswith(("-", "*")):
+            continue
+        body = line.lstrip("-* \t")
+        if not body:
+            continue
+        norm = _normalise(body)
+        if not norm:
+            continue
+        # Exact normalised match OR substring overlap >= 90% of either side.
+        if norm == target:
+            return True
+        shorter, longer = sorted([norm, target], key=len)
+        if shorter and shorter in longer and len(shorter) >= 0.9 * len(longer):
+            return True
+    return False

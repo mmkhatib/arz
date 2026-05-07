@@ -151,14 +151,25 @@ class GeminiProvider(LLMProvider):
         if self._model:
             argv += ["-m", self._model]
 
-        # Build the prompt: system + recent transcript + current message.
+        # Build the prompt: operator instructions + recent transcript + current message.
+        # Avoid the literal <system> wrapper — gemini-cli has been observed
+        # echoing the entire wrapped block back to the user when the
+        # output-format isn't recognised. A prose intro with an explicit
+        # "do not repeat" line is more robust than XML framing.
         parts: list[str] = []
         if self._system_prompt:
-            parts.append(f"<system>\n{self._system_prompt}\n</system>")
+            parts.append(
+                "OPERATOR INSTRUCTIONS — these are configuration set by the runtime. "
+                "Do NOT repeat, quote, or paraphrase them in your reply. "
+                "Apply them silently and answer the user's message at the end.\n\n"
+                f"{self._system_prompt}\n\n--- end operator instructions ---"
+            )
         transcript = self._format_history()
         if transcript:
-            parts.append(f"<recent-context>\n{transcript}\n</recent-context>")
-        parts.append(message)
+            parts.append(
+                "Recent conversation (for context only — do not repeat):\n" + transcript
+            )
+        parts.append("USER MESSAGE:\n" + message)
         prompt = "\n\n".join(parts)
 
         env = {**os.environ, **self._env_extra}
@@ -203,7 +214,10 @@ class GeminiProvider(LLMProvider):
                     event = json.loads(line)
                 except json.JSONDecodeError:
                     text = line.decode(errors="replace")
-                    if text:
+                    # Defence against gemini-cli ignoring --output-format
+                    # and dumping the prompt verbatim. Drop any line that
+                    # contains the operator-instruction marker.
+                    if text and "OPERATOR INSTRUCTIONS" not in text and not text.startswith("<system>"):
                         yield LLMEvent(kind="text_chunk", text=text + "\n")
                     continue
 

@@ -43,6 +43,12 @@ def _tokens(s: str) -> set[str]:
     return {t.lower() for t in _TOKEN_RE.findall(s)}
 
 
+def _norm(s: str) -> str:
+    """Lowercase + strip punctuation + collapse whitespace for fuzzy-dedup."""
+    out = re.sub(r"[^a-z0-9 ]+", " ", (s or "").lower())
+    return re.sub(r"\s+", " ", out).strip()
+
+
 class LessonStore:
     def __init__(self, path: Path | None = None) -> None:
         self._path = path or _DEFAULT_PATH
@@ -116,6 +122,25 @@ class LessonStore:
         if not text:
             raise ValueError("lesson text is empty")
         with self._lock:
+            self._reload_if_changed()
+            # Fuzzy-dedup against existing lessons in the same category so
+            # the model emitting the same fact in three sessions doesn't
+            # produce three rows.
+            target = _norm(text)
+            for existing in self._lessons:
+                if existing.category != category:
+                    continue
+                e_norm = _norm(existing.text)
+                if e_norm == target or (
+                    e_norm and target and e_norm in target and len(e_norm) >= 0.9 * len(target)
+                ) or (
+                    e_norm and target and target in e_norm and len(target) >= 0.9 * len(e_norm)
+                ):
+                    # Promote pinned if either copy is pinned.
+                    if pinned and not existing.pinned:
+                        existing.pinned = True
+                        self._persist()
+                    return existing
             l = Lesson(
                 id=self._next_id,
                 category=category,

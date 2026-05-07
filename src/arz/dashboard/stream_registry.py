@@ -59,11 +59,32 @@ class StreamRegistry:
     # ── lifecycle ───────────────────────────────────────────────────────────
 
     async def start(self, session_id: str) -> StreamState:
-        """Allocate a StreamState. Caller fills .task immediately after."""
+        """Allocate a StreamState. Caller fills .task immediately after.
+
+        Clears stale "running" entries automatically: if a prior turn's
+        asyncio.Task already finished but the state still says "running"
+        (the finally-block didn't fire — provider crash, cancelled awaiter,
+        whatever), we treat it as failed instead of blocking the new turn
+        with a 409 forever.
+        """
         async with self._lock:
             existing = self._states.get(session_id)
             if existing and existing.status == "running":
-                raise RuntimeError(f"session {session_id} already has a running turn")
+                stale = (existing.task is None) or existing.task.done()
+                if stale:
+                    log.warning(
+                        "Clearing stale 'running' StreamState for %s (task done but status not transitioned)",
+                        session_id,
+                    )
+                    existing.status = "failed"
+                    existing.finished_at = time.time()
+                    existing.error = "stuck-state cleared by next turn"
+                    for q in existing.subscribers:
+                        try: q.put_nowait(None)
+                        except asyncio.QueueFull: pass
+                    existing.subscribers.clear()
+                else:
+                    raise RuntimeError(f"session {session_id} already has a running turn")
             state = StreamState(session_id=session_id)
             self._states[session_id] = state
             return state
