@@ -27,9 +27,7 @@ def _resolve_binary() -> str:
     found = shutil.which(_CODEX_BIN)
     if found:
         return found
-    raise FileNotFoundError(
-        "codex CLI not found. Install it: npm i -g @openai/codex"
-    )
+    raise FileNotFoundError("codex CLI not found. Install it: npm i -g @openai/codex")
 
 
 async def _drain_stderr(stream: asyncio.StreamReader) -> None:
@@ -149,9 +147,11 @@ class CodexProvider(LLMProvider):
         argv += [
             "--full-auto",
             "--json",
-            "--color", "never",
+            "--color",
+            "never",
             "--skip-git-repo-check",
-            "-C", str(self._work_dir),
+            "-C",
+            str(self._work_dir),
         ]
         if self._model and not self._model.startswith("claude-"):
             argv += ["-m", self._model]
@@ -210,7 +210,7 @@ class CodexProvider(LLMProvider):
             while asyncio.get_event_loop().time() < deadline:
                 try:
                     line = await asyncio.wait_for(process.stdout.readline(), timeout=60.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if process.returncode is not None:
                         break
                     continue

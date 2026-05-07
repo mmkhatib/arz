@@ -91,7 +91,9 @@ async def write_markdown(key: str, body: MarkdownPut, request: Request) -> Markd
         raise HTTPException(status_code=422, detail="invalid key")
     _markdown_store(request).save(key, body.content)
     if body.content.strip():
-        _vector_store(request).add(f"md:{key}", body.content, meta={"source": "markdown", "key": key})
+        _vector_store(request).add(
+            f"md:{key}", body.content, meta={"source": "markdown", "key": key}
+        )
     return MarkdownEntry(key=key, content=body.content)
 
 
@@ -177,6 +179,7 @@ async def search_memory(
     that pure FTS misses.
     """
     from arz.memory.fts import get_memory_fts
+
     fts = get_memory_fts()
     try:
         fts.reindex()  # cheap mtime scan
@@ -185,12 +188,14 @@ async def search_memory(
 
     hits: list[MemoryHit] = []
     for row in fts.search(q, source=source, k=k):
-        hits.append(MemoryHit(
-            key=f"{row['source']}:{row['key']}",
-            content=row["snippet"],
-            score=-row["rank"],  # bm25 returns negative-better; flip for "higher = better"
-            source=row["source"],
-        ))
+        hits.append(
+            MemoryHit(
+                key=f"{row['source']}:{row['key']}",
+                content=row["snippet"],
+                score=-row["rank"],  # bm25 returns negative-better; flip for "higher = better"
+                source=row["source"],
+            )
+        )
     # Backfill with vector hits for semantic recall.
     if len(hits) < k:
         seen = {h.key for h in hits}
@@ -207,6 +212,7 @@ async def search_memory(
 async def reindex_memory() -> dict:
     """Force a full FTS rebuild — used after big edits or first-run setup."""
     from arz.memory.fts import get_memory_fts
+
     counts = get_memory_fts().reindex(force=True)
     return {"counts": counts}
 
@@ -217,6 +223,7 @@ async def reindex_memory() -> dict:
 @router.get("/api/memory/files")
 async def list_memory_files() -> dict:
     from arz.memory.files import get_memory_files
+
     mf = get_memory_files()
     return {
         "preferences": mf.read("preferences.md"),
@@ -228,6 +235,7 @@ async def list_memory_files() -> dict:
 @router.get("/api/memory/files/{name:path}")
 async def read_memory_file(name: str) -> dict:
     from arz.memory.files import get_memory_files
+
     try:
         return {"name": name, "content": get_memory_files().read(name)}
     except ValueError as e:
@@ -237,6 +245,7 @@ async def read_memory_file(name: str) -> dict:
 @router.put("/api/memory/files/{name:path}", status_code=204)
 async def write_memory_file(name: str, request: Request) -> None:
     from arz.memory.files import get_memory_files
+
     body = await request.json()
     content = body.get("content")
     if content is None:

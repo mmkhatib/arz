@@ -2,14 +2,10 @@
 
 from __future__ import annotations
 
-import tempfile
 from pathlib import Path
-
-import pytest
 
 from arz.memory.lessons import LessonsStore
 from arz.memory.markdown import MarkdownStore
-
 
 # ── MarkdownStore ──────────────────────────────────────────────────────────────
 

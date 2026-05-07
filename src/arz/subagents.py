@@ -16,9 +16,10 @@ import asyncio
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass, field
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import structlog
 
@@ -134,7 +135,7 @@ class SubagentManager:
                 text = await asyncio.wait_for(result_coro, timeout=_TIMEOUT_S)
                 rec.result = text or ""
                 rec.status = "completed"
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 rec.status = "timeout"
                 rec.result = "(subagent exceeded 30-min timeout)"
             except Exception as e:

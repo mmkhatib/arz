@@ -63,9 +63,8 @@ async def tokens_by_day(
         for m in session.messages:
             if m.role != "assistant" or not m.usage or m.created_at < cutoff:
                 continue
-            total = (
-                int(m.usage.get("input_tokens", 0) or 0)
-                + int(m.usage.get("output_tokens", 0) or 0)
+            total = int(m.usage.get("input_tokens", 0) or 0) + int(
+                m.usage.get("output_tokens", 0) or 0
             )
             counts[m.created_at.date().isoformat()] += total
     return _fill_buckets(counts, days)
@@ -132,22 +131,36 @@ async def export_csv(request: Request) -> Response:
     """Export per-message rows as CSV: session_id, role, created_at, model, in_tok, out_tok, elapsed_ms."""
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["session_id", "session_title", "provider", "role", "created_at", "model", "input_tokens", "output_tokens", "elapsed_ms"])
+    w.writerow(
+        [
+            "session_id",
+            "session_title",
+            "provider",
+            "role",
+            "created_at",
+            "model",
+            "input_tokens",
+            "output_tokens",
+            "elapsed_ms",
+        ]
+    )
     for session in _all_sessions(request):
         for m in session.messages:
             d = m.to_dict()
             usage = d.get("usage") or {}
-            w.writerow([
-                session.id,
-                session.title,
-                session.provider or "",
-                m.role,
-                m.created_at.isoformat(),
-                d.get("model", ""),
-                usage.get("input_tokens", ""),
-                usage.get("output_tokens", ""),
-                d.get("elapsed_ms", ""),
-            ])
+            w.writerow(
+                [
+                    session.id,
+                    session.title,
+                    session.provider or "",
+                    m.role,
+                    m.created_at.isoformat(),
+                    d.get("model", ""),
+                    usage.get("input_tokens", ""),
+                    usage.get("output_tokens", ""),
+                    d.get("elapsed_ms", ""),
+                ]
+            )
     return Response(
         content=buf.getvalue(),
         media_type="text/csv",

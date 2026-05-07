@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import time
 from pathlib import Path
 
 import structlog
@@ -95,7 +94,7 @@ class HeartbeatService:
         try:
             await asyncio.wait_for(self._stopping.wait(), timeout=10.0)
             return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
         while not self._stopping.is_set():
             try:
@@ -104,7 +103,7 @@ class HeartbeatService:
                 log.exception("heartbeat tick failed")
             try:
                 await asyncio.wait_for(self._stopping.wait(), timeout=self._interval)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     async def _tick(self) -> None:
@@ -139,4 +138,6 @@ class HeartbeatService:
             lines[i] = f"{m.group(1)}x{m.group(3)}{body}"
             rewrote = True
         if rewrote:
-            self._path.write_text("\n".join(lines) + ("\n" if text.endswith("\n") else ""), encoding="utf-8")
+            self._path.write_text(
+                "\n".join(lines) + ("\n" if text.endswith("\n") else ""), encoding="utf-8"
+            )

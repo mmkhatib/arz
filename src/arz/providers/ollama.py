@@ -84,7 +84,11 @@ class OllamaProvider(LLMProvider):
         # if it duplicates `current_message` (the chat route saves user
         # messages immediately, so it's already in self._history).
         recent = self._history[-_MAX_HISTORY_MESSAGES:]
-        if recent and recent[-1].get("role") == "user" and (recent[-1].get("text") or "").strip() == current_message.strip():
+        if (
+            recent
+            and recent[-1].get("role") == "user"
+            and (recent[-1].get("text") or "").strip() == current_message.strip()
+        ):
             recent = recent[:-1]
         for m in recent:
             role = m.get("role") or "user"
@@ -139,6 +143,7 @@ class OllamaProvider(LLMProvider):
                             usage = None
                             if "prompt_eval_count" in event or "eval_count" in event:
                                 from arz.acp.types import Usage
+
                                 try:
                                     usage = Usage(
                                         input_tokens=int(event.get("prompt_eval_count") or 0),

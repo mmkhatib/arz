@@ -20,9 +20,7 @@ def _resolve_binary() -> str:
     found = shutil.which(_CLAUDE_BIN)
     if found:
         return found
-    raise FileNotFoundError(
-        "claude CLI not found. Install Claude Code: https://claude.ai/code"
-    )
+    raise FileNotFoundError("claude CLI not found. Install Claude Code: https://claude.ai/code")
 
 
 class ClaudeCodeProvider(LLMProvider):

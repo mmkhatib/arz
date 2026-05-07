@@ -92,6 +92,7 @@ def _detect_provider(name: str) -> tuple[bool, str | None]:
         # SDK provider — no CLI to detect; consider it "installed" if anthropic is importable
         try:
             import anthropic  # noqa: F401
+
             return True, None
         except Exception:
             return False, None
@@ -116,9 +117,11 @@ async def overview(
     enabled = sum(1 for c in cron_entries if c.enabled)
     last_run_at = max((c.last_run_at for c in cron_entries if c.last_run_at), default=None)
     import time as _time
+
     cutoff = _time.time() - 86400.0
     error_count_24h = sum(
-        1 for c in cron_entries
+        1
+        for c in cron_entries
         if c.last_run_at and c.last_run_at >= cutoff and (c.last_status or "").startswith("error")
     )
 
@@ -129,10 +132,12 @@ async def overview(
     lesson_store = getattr(state, "lessons_store", None)
     if md_store is None:
         from arz.memory.markdown import MarkdownStore
+
         md_store = MarkdownStore()
         state.markdown_store = md_store
     if lesson_store is None:
         from arz.memory.lessons import LessonsStore
+
         lesson_store = LessonsStore()
         state.lessons_store = lesson_store
     try:
@@ -142,6 +147,7 @@ async def overview(
     # Prefer the new auto-inject lessons store; fall back to legacy SQLite store.
     try:
         from arz.lessons import get_lesson_store
+
         lessons = len(get_lesson_store().list())
     except Exception:
         try:
@@ -157,30 +163,35 @@ async def overview(
     mcp_count = 0
     try:
         from arz.agents import AgentRegistry
+
         agents_count = len(AgentRegistry().list())
     except Exception:
         pass
     try:
         from arz.subagents import get_subagent_manager
+
         subagents_count = len(get_subagent_manager().list_recent(limit=200))
     except Exception:
         pass
     try:
         from arz.channels import get_channel_store
+
         channels_count = len(get_channel_store().list())
     except Exception:
         pass
     try:
         from arz.taskrunner import get_task_runner
+
         tasks_count = len(get_task_runner().list())
     except Exception:
         pass
     try:
-        from pathlib import Path as _P
         import json as _json
+        from pathlib import Path as _P
+
         reg_path = _P.home() / ".arz" / "mcp_registry.json"
         if reg_path.exists():
-            mcp_count = len((_json.loads(reg_path.read_text()).get("servers") or {}))
+            mcp_count = len(_json.loads(reg_path.read_text()).get("servers") or {})
     except Exception:
         pass
 
@@ -190,18 +201,21 @@ async def overview(
     providers: list[ProviderStatus] = []
     for name in provider_names:
         installed, binary = _detect_provider(name)
-        providers.append(ProviderStatus(
-            name=name,
-            installed=installed,
-            binary_path=binary,
-            is_active=(name == cfg.provider.name),
-        ))
+        providers.append(
+            ProviderStatus(
+                name=name,
+                installed=installed,
+                binary_path=binary,
+                is_active=(name == cfg.provider.name),
+            )
+        )
 
     # Recent activity from the audit log; if empty, fall back to recent
     # messages across sessions so the panel is useful from day one.
     audit_log = getattr(state, "audit_log", None)
     if audit_log is None:
         from arz.dashboard.audit import AuditLog
+
         audit_log = AuditLog()
         state.audit_log = audit_log
     recent = [
@@ -225,7 +239,9 @@ async def overview(
                 events.append((ts, kind, f"[{s.title[:40]}] {m.role}: {summary}", s.id))
         events.sort(key=lambda e: e[0], reverse=True)
         for i, (ts, kind, summary, sid) in enumerate(events[:activity_limit]):
-            recent.append(AuditEntryPub(id=-(i + 1), ts=ts, kind=kind, summary=summary, session_id=sid))
+            recent.append(
+                AuditEntryPub(id=-(i + 1), ts=ts, kind=kind, summary=summary, session_id=sid)
+            )
 
     pool = getattr(state, "provider_pool", None)
     pool_status: PoolStatus | None = None

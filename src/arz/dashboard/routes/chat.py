@@ -4,27 +4,38 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from arz import inline_learn
 from arz.acp.client import AcpError
-from arz.acp.types import EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
-from arz.dashboard.sse import sse_chunk, sse_complete, sse_error, sse_permission_request, sse_tool_call, sse_tool_result
+from arz.acp.types import (
+    EVENT_COMPLETE,
+    EVENT_PERMISSION_REQUEST,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
+)
+from arz.dashboard.sse import (
+    sse_chunk,
+    sse_complete,
+    sse_error,
+    sse_permission_request,
+    sse_tool_call,
+    sse_tool_result,
+)
 from arz.dashboard.stream_registry import get_stream_registry
 from arz.dashboard.token_auth import require_token
-from arz import inline_learn
 from arz.hooks import get_hook_manager
-from arz.lessons import get_lesson_store
-from arz.memory.files import get_memory_files
 from arz.prompts.loader import resolve_system_prompt
-from arz.subagents import get_subagent_manager
 from arz.providers.base import LLMProvider
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
 from arz.session.session_map import SessionMap
+from arz.subagents import get_subagent_manager
 
 log = logging.getLogger(__name__)
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -33,7 +44,7 @@ _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
 
 _APPROVAL_TO_CLAUDE = {
-    "normal": None,                # default behavior
+    "normal": None,  # default behavior
     "trust_reads": "acceptEdits",  # auto-accept edits, ask for risky
     "trust": "bypassPermissions",  # never ask
     "yolo": "bypassPermissions",
@@ -52,6 +63,7 @@ def _make_provider(
 ) -> LLMProvider:
     """Factory: build the right provider for this session."""
     from arz.config.schema import ArzConfig
+
     assert isinstance(config, ArzConfig)
 
     provider_name = provider_name_override or config.provider.name
@@ -63,6 +75,7 @@ def _make_provider(
     if agent_name:
         try:
             from arz.agents import AgentRegistry
+
             agent = AgentRegistry().get(agent_name)
             if agent and agent.system_prompt:
                 agent_prompt = agent.system_prompt
@@ -72,6 +85,7 @@ def _make_provider(
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
+
         return ClaudeCodeProvider(
             model=model,
             work_dir=work_dir,
@@ -82,6 +96,7 @@ def _make_provider(
 
     if provider_name == "kiro-cli":
         from arz.providers.kiro_cli import KiroCliProvider
+
         return KiroCliProvider(
             model=model,
             work_dir=work_dir,
@@ -90,6 +105,7 @@ def _make_provider(
 
     if provider_name == "codex":
         from arz.providers.codex import CodexProvider
+
         return CodexProvider(
             model=model,
             work_dir=work_dir,
@@ -99,6 +115,7 @@ def _make_provider(
 
     if provider_name == "gemini":
         from arz.providers.gemini import GeminiProvider
+
         return GeminiProvider(
             model=model,
             work_dir=work_dir,
@@ -109,6 +126,7 @@ def _make_provider(
 
     if provider_name == "ollama":
         from arz.providers.ollama import OllamaProvider
+
         return OllamaProvider(
             model=model,
             work_dir=work_dir,
@@ -136,6 +154,7 @@ async def _run_turn(
     — survives client disconnects, page navigations, refreshes.
     """
     import time as _time
+
     registry = get_stream_registry()
     state = registry._states.get(session_id)
     if state is None:
@@ -144,12 +163,17 @@ async def _run_turn(
     async def emit(chunk: str) -> None:
         state.events.append(chunk)
         for q in list(state.subscribers):
-            try: q.put_nowait(chunk)
+            try:
+                q.put_nowait(chunk)
             except asyncio.QueueFull:
-                try: q.get_nowait()
-                except Exception: pass
-                try: q.put_nowait(chunk)
-                except Exception: pass
+                try:
+                    q.get_nowait()
+                except Exception:
+                    pass
+                try:
+                    q.put_nowait(chunk)
+                except Exception:
+                    pass
 
     session = mgr.get(session_id)
     turn_started = _time.monotonic()
@@ -163,21 +187,25 @@ async def _run_turn(
                 await emit(sse_chunk(event.text))
 
             elif event.kind == EVENT_TOOL_RESULT:
-                await emit(sse_tool_result(
-                    tool_call_id=event.tool_call_id or "",
-                    content=event.tool_output or "",
-                ))
+                await emit(
+                    sse_tool_result(
+                        tool_call_id=event.tool_call_id or "",
+                        content=event.tool_output or "",
+                    )
+                )
 
             elif event.kind == EVENT_TOOL_CALL:
                 tool_name = event.text or ""
                 tool_input_str = str(event.tool_input or "")
                 if tool_name:
                     state.turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
-                await emit(sse_tool_call(
-                    tool_name=tool_name,
-                    tool_input=tool_input_str,
-                    request_id=event.request_id or "",
-                ))
+                await emit(
+                    sse_tool_call(
+                        tool_name=tool_name,
+                        tool_input=tool_input_str,
+                        request_id=event.request_id or "",
+                    )
+                )
 
             elif event.kind == EVENT_PERMISSION_REQUEST:
                 request_id = str(event.request_id or "")
@@ -192,24 +220,28 @@ async def _run_turn(
                             await provider.reject_tool(request_id)
                             await emit(sse_chunk(f"\n⚠️ blocked: {rule.reason}\n"))
                             continue
-                    if mode in ("trust", "yolo") or (yolo_sessions is not None and session_id in yolo_sessions):
-                        await provider.approve_tool(request_id)
-                    elif mode == "trust_reads" and tool_name in READ_ONLY_TOOLS:
-                        await provider.approve_tool(request_id)
-                    elif hooks.auto_approves(tool_name):
+                    if (
+                        mode in ("trust", "yolo")
+                        or (yolo_sessions is not None and session_id in yolo_sessions)
+                        or mode == "trust_reads"
+                        and tool_name in READ_ONLY_TOOLS
+                        or hooks.auto_approves(tool_name)
+                    ):
                         await provider.approve_tool(request_id)
                     elif pending_approvals is not None:
                         loop = asyncio.get_event_loop()
                         fut: asyncio.Future = loop.create_future()
                         pending_approvals[request_id] = fut
-                        await emit(sse_permission_request(
-                            title=event.title or event.text or "",
-                            tool_input=str(event.tool_input or ""),
-                            request_id=request_id,
-                        ))
+                        await emit(
+                            sse_permission_request(
+                                title=event.title or event.text or "",
+                                tool_input=str(event.tool_input or ""),
+                                request_id=request_id,
+                            )
+                        )
                         try:
                             approved = await asyncio.wait_for(fut, timeout=7200.0)
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             approved = False
                         finally:
                             pending_approvals.pop(request_id, None)
@@ -244,8 +276,8 @@ async def _run_turn(
                         # model decided to write to its own native store
                         # (Claude Code's project memory) or to none at all.
                         try:
-                            from arz.post_turn_extract import maybe_extract
                             from arz.config.loader import load_config as _lc
+                            from arz.post_turn_extract import maybe_extract
 
                             # Find the user message that triggered this
                             # turn — last user msg in session history.
@@ -260,7 +292,9 @@ async def _run_turn(
                                 # rather than the global config — global
                                 # may be misconfigured (e.g. provider=
                                 # claude-code with a codex model).
-                                sess_provider = getattr(session, "provider", None) if session else None
+                                sess_provider = (
+                                    getattr(session, "provider", None) if session else None
+                                )
                                 sess_model = getattr(session, "model", None) if session else None
                                 asyncio.create_task(
                                     maybe_extract(
@@ -287,11 +321,13 @@ async def _run_turn(
                         msg.version_index = len(msg.versions) - 1
                     mgr.save(session)
                     saved_assistant = True
-                await emit(sse_complete(
-                    event.stop_reason or "end_turn",
-                    context_pct=event.context_usage_pct or 0.0,
-                    usage=usage_dict,
-                ))
+                await emit(
+                    sse_complete(
+                        event.stop_reason or "end_turn",
+                        context_pct=event.context_usage_pct or 0.0,
+                        usage=usage_dict,
+                    )
+                )
                 break
 
     except asyncio.CancelledError:
@@ -413,9 +449,11 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
 
             recall_blocks: list[str] = []
             for q in pending:
-                blk = _recall_block(q, recall_k=int(getattr(cfg.dashboard, "recall_k", 5) or 5), config=cfg)
+                blk = _recall_block(
+                    q, recall_k=int(getattr(cfg.dashboard, "recall_k", 5) or 5), config=cfg
+                )
                 if blk:
-                    recall_blocks.append(f"<recall_result query=\"{q}\">\n{blk}\n</recall_result>")
+                    recall_blocks.append(f'<recall_result query="{q}">\n{blk}\n</recall_result>')
             if recall_blocks:
                 message = "\n\n".join(recall_blocks) + "\n\n" + message
     except Exception:
@@ -443,9 +481,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         if pending:
             blocks: list[str] = []
             for rec in pending:
-                blocks.append(
-                    f"[subagent:{rec.agent_name} status={rec.status}]\n{rec.result}"
-                )
+                blocks.append(f"[subagent:{rec.agent_name} status={rec.status}]\n{rec.result}")
             message = "\n\n".join(blocks) + "\n\n" + message
     except Exception:
         log.exception("Subagent injection failed; continuing without it")
@@ -466,7 +502,16 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     provider_sid = session_map.get(session_id)
 
     def _factory() -> LLMProvider:
-        p = _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval, effective_agent)
+        p = _make_provider(
+            cfg,
+            session_id,
+            history,
+            session_work_dir,
+            effective_provider_name,
+            effective_model,
+            effective_approval,
+            effective_agent,
+        )
         if provider_sid:
             p.set_resume_session_id(provider_sid)
         return p
@@ -512,7 +557,16 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         try:
             provider = await pool.activate(
                 session_id,
-                lambda: _make_provider(cfg, session_id, history, session_work_dir, effective_provider_name, effective_model, effective_approval, effective_agent),
+                lambda: _make_provider(
+                    cfg,
+                    session_id,
+                    history,
+                    session_work_dir,
+                    effective_provider_name,
+                    effective_model,
+                    effective_approval,
+                    effective_agent,
+                ),
             )
         except (AcpError, FileNotFoundError, ValueError) as e:
             raise HTTPException(
@@ -553,12 +607,17 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     # Spawn the LLM run as a fire-and-forget task. It's anchored on the
     # event loop, not on this HTTP request — so client disconnects don't
     # cancel it.
-    state.task = asyncio.create_task(_run_turn(
-        provider, session_id, message, mgr,
-        request.app.state.pending_approvals,
-        request.app.state.yolo_sessions,
-        request.app.state.session_modes,
-    ))
+    state.task = asyncio.create_task(
+        _run_turn(
+            provider,
+            session_id,
+            message,
+            mgr,
+            request.app.state.pending_approvals,
+            request.app.state.yolo_sessions,
+            request.app.state.session_modes,
+        )
+    )
 
     # The returned SSE stream just observes the same registry. Disconnecting
     # only drops the subscriber — the background task keeps running.

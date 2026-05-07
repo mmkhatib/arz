@@ -13,9 +13,10 @@ each surface adapter is responsible for its own ``is_authorized()`` gate.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from arz.core.event_bus import Event, EventBus
 from arz.session.manager import SessionManager
@@ -86,7 +87,9 @@ class MessageRouter:
         if sender is None:
             raise RuntimeError(f"No sender registered for surface {msg.surface!r}")
         await sender(msg)
-        await self._bus.post(Event(kind="message_sent", payload={"surface": msg.surface}, source="router"))
+        await self._bus.post(
+            Event(kind="message_sent", payload={"surface": msg.surface}, source="router")
+        )
 
     async def handle(self, msg: IncomingMessage) -> Session:
         """Record an incoming message on its session and emit a bus event.

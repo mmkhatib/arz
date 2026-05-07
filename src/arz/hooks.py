@@ -52,14 +52,16 @@ def _load_config(path: Path) -> HookConfig:
         if isinstance(r, dict) and r.get("pattern") and r.get("reply") is not None
     ]
     extra_deny: list[DenyRule] = []
-    for d in (data.get("deny") or []):
+    for d in data.get("deny") or []:
         if isinstance(d, dict) and d.get("pattern"):
             try:
-                extra_deny.append(DenyRule(
-                    pattern=re.compile(d["pattern"], re.IGNORECASE),
-                    reason=d.get("reason", "user-defined deny rule"),
-                    severity=d.get("severity", "warn"),
-                ))
+                extra_deny.append(
+                    DenyRule(
+                        pattern=re.compile(d["pattern"], re.IGNORECASE),
+                        reason=d.get("reason", "user-defined deny rule"),
+                        severity=d.get("severity", "warn"),
+                    )
+                )
             except re.error:
                 continue
     return HookConfig(auto_approve, replies, extra_deny)

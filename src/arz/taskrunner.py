@@ -17,9 +17,9 @@ import json
 import re
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from collections.abc import Awaitable, Callable
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
 
 import structlog
 
@@ -36,7 +36,7 @@ SubagentRunner = Callable[[str, str], Awaitable[str]]
 class TaskStep:
     n: int
     text: str
-    status: str = "pending"   # pending | running | done | failed
+    status: str = "pending"  # pending | running | done | failed
     attempts: int = 0
     result: str = ""
 
@@ -46,7 +46,7 @@ class TaskRecord:
     id: str
     spec: str
     agent: str
-    status: str = "pending"   # pending | decomposing | running | verifying | done | failed
+    status: str = "pending"  # pending | decomposing | running | verifying | done | failed
     steps: list[TaskStep] = field(default_factory=list)
     verdict: str = ""
     started_at: float = 0.0
@@ -205,9 +205,7 @@ class TaskRunner:
             # 3. verify
             rec.status = "verifying"
             self._persist(rec)
-            step_results = "\n\n".join(
-                f"## Step {s.n}: {s.text}\n{s.result}" for s in rec.steps
-            )
+            step_results = "\n\n".join(f"## Step {s.n}: {s.text}\n{s.result}" for s in rec.steps)
             verdict_text = await self._runner(
                 rec.agent,
                 _VERIFY_PROMPT.format(spec=rec.spec, step_results=step_results),

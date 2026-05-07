@@ -7,9 +7,10 @@ import logging
 import sys
 import threading
 import traceback
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class ToolRegistry:
             log.exception("Failed to load tool module %s", path)
             return ToolSpec(
                 name=path.stem,
-                description=f"(failed to load: see error)",
+                description="(failed to load: see error)",
                 input_schema={},
                 source_path=str(path),
                 error=traceback.format_exc(limit=3),

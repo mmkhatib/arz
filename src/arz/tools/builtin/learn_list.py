@@ -25,8 +25,5 @@ async def run(input: dict) -> str:
         lessons = [l for l in lessons if l.category == category]
     if not lessons:
         return "(no lessons)"
-    lines = [
-        f"#{l.id} [{l.category}]{' 📌' if l.pinned else ''} {l.text}"
-        for l in lessons
-    ]
+    lines = [f"#{l.id} [{l.category}]{' 📌' if l.pinned else ''} {l.text}" for l in lessons]
     return "\n".join(lines)

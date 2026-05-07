@@ -22,8 +22,9 @@ def _get_manager(request: Request) -> SessionManager:
 
 
 def _session_to_dict(session: object) -> dict:
-    from arz.session.session import Session
     from arz.dashboard.stream_registry import get_stream_registry
+    from arz.session.session import Session
+
     assert isinstance(session, Session)
     return {
         "id": session.id,
@@ -65,6 +66,7 @@ async def create_session(request: Request) -> dict:
         thread_id=body.get("thread_id"),
     )
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     dirty = False
     if body.get("provider"):
@@ -94,6 +96,7 @@ async def set_autonudge(session_id: str, request: Request) -> None:
         raise HTTPException(status_code=404, detail="Session not found")
     body = await request.json()
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     if "goal" in body:
         g = body.get("goal")
@@ -113,7 +116,9 @@ async def set_autonudge(session_id: str, request: Request) -> None:
     mgr.save(session)
 
 
-@router.patch("/api/sessions/{session_id}/messages/{index}/version", status_code=status.HTTP_204_NO_CONTENT)
+@router.patch(
+    "/api/sessions/{session_id}/messages/{index}/version", status_code=status.HTTP_204_NO_CONTENT
+)
 async def select_message_version(session_id: str, index: int, request: Request) -> None:
     """Switch the visible text on an assistant message that has multiple
     regenerated versions. ``index`` is the position in ``session.messages``;
@@ -158,6 +163,7 @@ async def fork_session(session_id: str, request: Request) -> dict:
     initial_prompt = (body.get("initial_prompt") or "").strip() or None
 
     from arz.session.session import Message, Session
+
     assert isinstance(src, Session)
 
     fork = mgr.create(
@@ -177,11 +183,20 @@ async def fork_session(session_id: str, request: Request) -> dict:
     if isinstance(up_to, int) and 0 <= up_to <= len(msgs):
         msgs = msgs[:up_to]
     # Deep-copy each message so edits to the fork don't mutate the source.
-    fork.messages = [Message(**m.to_dict_for_clone()) if hasattr(m, "to_dict_for_clone")
-                     else Message(role=m.role, text=m.text, created_at=m.created_at,
-                                  usage=m.usage, model=m.model, elapsed_ms=m.elapsed_ms,
-                                  tool_calls=list(m.tool_calls) if m.tool_calls else None)
-                     for m in msgs]
+    fork.messages = [
+        Message(**m.to_dict_for_clone())
+        if hasattr(m, "to_dict_for_clone")
+        else Message(
+            role=m.role,
+            text=m.text,
+            created_at=m.created_at,
+            usage=m.usage,
+            model=m.model,
+            elapsed_ms=m.elapsed_ms,
+            tool_calls=list(m.tool_calls) if m.tool_calls else None,
+        )
+        for m in msgs
+    ]
     if initial_prompt:
         fork.add_message("user", initial_prompt)
     mgr.save(fork)
@@ -283,6 +298,7 @@ async def search_sessions(q: str, request: Request) -> list[dict]:
     results = []
     for session in mgr.list_active():
         from arz.session.session import Session
+
         assert isinstance(session, Session)
         if query in session.title.lower():
             results.append(_session_to_dict(session))
@@ -334,7 +350,9 @@ async def delete_session_permanent(session_id: str, request: Request) -> None:
             search_index.remove_session(session_id)
         except Exception:
             pass
-    request.app.state.session_map.remove(session_id) if hasattr(request.app.state, "session_map") else None
+    request.app.state.session_map.remove(session_id) if hasattr(
+        request.app.state, "session_map"
+    ) else None
     pool = getattr(request.app.state, "provider_pool", None)
     if pool is not None:
         try:
@@ -354,6 +372,7 @@ async def set_session_color(session_id: str, request: Request) -> None:
     if color is not None and (not isinstance(color, int) or color < 0 or color > 5):
         raise HTTPException(status_code=422, detail="color must be 0-5 or null")
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     session.color = color
     mgr.save(session)
@@ -377,12 +396,14 @@ async def set_session_agent(session_id: str, request: Request) -> None:
     body = await request.json()
     agent_name = (body.get("agent") or "").strip() or None
     from arz.session.session import Session
+
     assert isinstance(session, Session)
 
     if agent_name:
         registry = getattr(request.app.state, "agent_registry", None)
         if registry is None:
             from arz.agents import AgentRegistry
+
             registry = AgentRegistry()
             request.app.state.agent_registry = registry
         agent = registry.get(agent_name)
@@ -412,6 +433,7 @@ async def create_session_from_agent(request: Request) -> dict:
     registry = getattr(request.app.state, "agent_registry", None)
     if registry is None:
         from arz.agents import AgentRegistry
+
         registry = AgentRegistry()
         request.app.state.agent_registry = registry
     agent = registry.get(agent_name)
@@ -425,6 +447,7 @@ async def create_session_from_agent(request: Request) -> dict:
         thread_id=body.get("thread_id"),
     )
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     session.agent = agent_name
     if agent.provider:
@@ -448,6 +471,7 @@ async def set_session_model(session_id: str, request: Request) -> None:
     body = await request.json()
     model = (body.get("model") or "").strip()
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     session.model = model or None
     mgr.save(session)
@@ -468,6 +492,7 @@ async def set_work_dir(session_id: str, request: Request) -> None:
     if path and not os.path.isabs(path):
         raise HTTPException(status_code=422, detail="path must be absolute")
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     session.work_dir = path or None
     mgr.save(session)
@@ -487,6 +512,7 @@ async def rename_session(session_id: str, request: Request) -> None:
     if len(new_title) > 200:
         raise HTTPException(status_code=422, detail="title must be ≤200 chars")
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     session.title = new_title
     mgr.save(session)
@@ -509,6 +535,7 @@ async def generate_title(session_id: str, request: Request) -> dict:
     # Fall back to first user/assistant turn from history when omitted.
     if not user_msg or not assistant_msg:
         from arz.session.session import Session
+
         assert isinstance(session, Session)
         first_user = next((m for m in session.messages if m.role == "user"), None)
         first_asst = next((m for m in session.messages if m.role == "assistant"), None)
@@ -528,6 +555,7 @@ async def generate_title(session_id: str, request: Request) -> dict:
     # Use the session's actual provider + model. Falls back to global config.
     cfg = request.app.state.config
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     provider_name = session.provider or cfg.provider.name
     model_name = session.model or ""
@@ -543,12 +571,21 @@ async def generate_title(session_id: str, request: Request) -> dict:
         if claude_bin:
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    claude_bin, "-p", prompt, "--no-markdown",
+                    claude_bin,
+                    "-p",
+                    prompt,
+                    "--no-markdown",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.DEVNULL,
                 )
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15.0)
-                title = stdout.decode(errors="replace").strip().strip('"\'').replace("\n", " ").strip()[:80]
+                title = (
+                    stdout.decode(errors="replace")
+                    .strip()
+                    .strip("\"'")
+                    .replace("\n", " ")
+                    .strip()[:80]
+                )
             except Exception:
                 pass
         if not title:
@@ -570,18 +607,23 @@ async def _generate_title_via_provider(provider_name: str, model: str, prompt: s
     provider: LLMProvider
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
+
         provider = ClaudeCodeProvider(model=model or None)
     elif provider_name == "kiro-cli":
         from arz.providers.kiro_cli import KiroCliProvider
+
         provider = KiroCliProvider(model=model or "auto")
     elif provider_name == "codex":
         from arz.providers.codex import CodexProvider
+
         provider = CodexProvider(model=model or None)
     elif provider_name == "gemini":
         from arz.providers.gemini import GeminiProvider
+
         provider = GeminiProvider(model=model or None)
     elif provider_name == "ollama":
         from arz.providers.ollama import OllamaProvider
+
         provider = OllamaProvider(model=model or None)
     else:
         raise RuntimeError(f"unsupported provider for title gen: {provider_name!r}")
@@ -601,7 +643,7 @@ async def _generate_title_via_provider(provider_name: str, model: str, prompt: s
             pass
 
     # Tighten the model's output into a clean title.
-    title = text.strip().strip('"\'').replace("\n", " ").strip()
+    title = text.strip().strip("\"'").replace("\n", " ").strip()
     # Strip any markdown / code fences the model may have added
     title = title.strip("`").strip()
     if title.lower().startswith(("title:", "answer:")):

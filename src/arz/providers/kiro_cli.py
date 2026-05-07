@@ -26,9 +26,7 @@ def _resolve_binary() -> str:
     found = shutil.which(_KIRO_BIN)
     if found:
         return found
-    raise AcpError(
-        f"{_KIRO_BIN} not found. Install kiro-cli or switch to provider=claude-code."
-    )
+    raise AcpError(f"{_KIRO_BIN} not found. Install kiro-cli or switch to provider=claude-code.")
 
 
 class KiroCliProvider(LLMProvider):

@@ -15,7 +15,6 @@ here are in-memory only.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -145,7 +144,14 @@ async def run_eval(cfg: ArzConfig, scenarios: list[str] | None = None) -> dict[s
             print(f"[{status}] {scn.id}  ({turns_passed}/{len(scn.turns)} turns, {elapsed:.1f}s)")
             for d in details:
                 print(d)
-            results.append({"id": scn.id, "passed": turns_passed, "total": len(scn.turns), "elapsed_s": elapsed})
+            results.append(
+                {
+                    "id": scn.id,
+                    "passed": turns_passed,
+                    "total": len(scn.turns),
+                    "elapsed_s": elapsed,
+                }
+            )
         except Exception as e:
             log.exception("eval scenario %s crashed", scn.id)
             print(f"[ERROR] {scn.id}: {e}")

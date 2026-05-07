@@ -314,9 +314,7 @@ class AgentRegistry:
             if (existing.system_prompt or "") == v1_prompt:
                 # Preserve the user's is_default toggle (they may have
                 # picked a different default).
-                merged = AgentConfig(
-                    **{**agent.model_dump(), "is_default": existing.is_default}
-                )
+                merged = AgentConfig(**{**agent.model_dump(), "is_default": existing.is_default})
                 path.write_text(merged.model_dump_json(indent=2), encoding="utf-8")
         marker.write_text(str(_SEED_REVISION), encoding="utf-8")
 

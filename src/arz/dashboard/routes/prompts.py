@@ -69,7 +69,9 @@ async def create_prompt(body: PromptCreate) -> PromptTemplate:
         suffix += 1
         slug = f"{base}_{suffix}"
     now = time.time()
-    pt = PromptTemplate(slug=slug, title=body.title, body=body.body, tags=body.tags, created_at=now, updated_at=now)
+    pt = PromptTemplate(
+        slug=slug, title=body.title, body=body.body, tags=body.tags, created_at=now, updated_at=now
+    )
     _path(slug).write_text(pt.model_dump_json(indent=2), encoding="utf-8")
     return pt
 
@@ -80,7 +82,14 @@ async def update_prompt(slug: str, body: PromptCreate) -> PromptTemplate:
     if not p.exists():
         raise HTTPException(404, f"Prompt '{slug}' not found")
     existing = PromptTemplate(**json.loads(p.read_text(encoding="utf-8")))
-    updated = existing.model_copy(update={"title": body.title, "body": body.body, "tags": body.tags, "updated_at": time.time()})
+    updated = existing.model_copy(
+        update={
+            "title": body.title,
+            "body": body.body,
+            "tags": body.tags,
+            "updated_at": time.time(),
+        }
+    )
     p.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
     return updated
 

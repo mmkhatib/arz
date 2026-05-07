@@ -17,11 +17,11 @@ from typing import Any
 class IncomingMessage:
     """A message arriving from a messaging surface."""
 
-    surface: str                        # "slack" | "telegram" | "whatsapp"
-    chat_id: str                        # channel / group / DM identifier
-    thread_id: str | None               # thread-ts, reply-to-message-id, etc.
-    message_id: str                     # platform-assigned message ID
-    sender_id: str                      # platform user ID
+    surface: str  # "slack" | "telegram" | "whatsapp"
+    chat_id: str  # channel / group / DM identifier
+    thread_id: str | None  # thread-ts, reply-to-message-id, etc.
+    message_id: str  # platform-assigned message ID
+    sender_id: str  # platform user ID
     sender_display_name: str
     text: str
     attachments: list[str] = field(default_factory=list)

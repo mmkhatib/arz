@@ -46,7 +46,7 @@ class Message:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Message":
+    def from_dict(cls, d: dict) -> Message:
         return cls(
             role=d["role"],
             text=d["text"],
@@ -119,7 +119,7 @@ class Session:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Session":
+    def from_dict(cls, d: dict) -> Session:
         return cls(
             id=d["id"],
             title=d.get("title", "Session"),

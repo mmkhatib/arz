@@ -13,9 +13,9 @@ import logging
 import sqlite3
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -84,7 +84,7 @@ class CronRegistry:
 
     def __init__(
         self,
-        runner: Callable[[CronEntry], "asyncio.Future | asyncio.Task | None"],
+        runner: Callable[[CronEntry], asyncio.Future | asyncio.Task | None],
         db_path: Path | None = None,
     ) -> None:
         self._db = db_path or _DEFAULT_DB
@@ -179,7 +179,9 @@ class CronRegistry:
             last_status=existing.last_status,
             last_session_id=existing.last_session_id,
             persistent_session=(
-                persistent_session if persistent_session is not None else existing.persistent_session
+                persistent_session
+                if persistent_session is not None
+                else existing.persistent_session
             ),
         )
         with self._lock, self._connect() as conn:
@@ -284,15 +286,15 @@ class CronRegistry:
 
 # Process-wide accessor — set by the gateway at startup so tools running
 # in the same process can find the registry without lugging around app.state.
-_singleton: "CronRegistry | None" = None
+_singleton: CronRegistry | None = None
 
 
-def set_cron_registry(registry: "CronRegistry") -> None:
+def set_cron_registry(registry: CronRegistry) -> None:
     global _singleton
     _singleton = registry
 
 
-def get_cron_registry() -> "CronRegistry":
+def get_cron_registry() -> CronRegistry:
     if _singleton is None:
         raise RuntimeError("CronRegistry not initialised")
     return _singleton

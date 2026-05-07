@@ -20,7 +20,6 @@ import re
 import time
 from pathlib import Path
 from threading import Lock
-from typing import Iterable
 
 from pydantic import BaseModel
 
@@ -131,10 +130,10 @@ class LessonStore:
                 if existing.category != category:
                     continue
                 e_norm = _norm(existing.text)
-                if e_norm == target or (
-                    e_norm and target and e_norm in target and len(e_norm) >= 0.9 * len(target)
-                ) or (
-                    e_norm and target and target in e_norm and len(target) >= 0.9 * len(e_norm)
+                if (
+                    e_norm == target
+                    or (e_norm and target and e_norm in target and len(e_norm) >= 0.9 * len(target))
+                    or (e_norm and target and target in e_norm and len(target) >= 0.9 * len(e_norm))
                 ):
                     # Promote pinned if either copy is pinned.
                     if pinned and not existing.pinned:

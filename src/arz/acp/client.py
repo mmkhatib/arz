@@ -20,22 +20,19 @@ import asyncio
 import json
 import logging
 import os
-import signal
 import shutil
+import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from arz.acp.types import (
-    AcpEvent,
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
     EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
-    JsonRpcMessage,
-    JsonRpcRequest,
     METHOD_INITIALIZE,
     METHOD_PROMPT,
     METHOD_REQUEST_PERMISSION,
@@ -48,6 +45,9 @@ from arz.acp.types import (
     PROTOCOL_VERSION,
     UPDATE_AGENT_MESSAGE_CHUNK,
     UPDATE_TOOL_CALL,
+    AcpEvent,
+    JsonRpcMessage,
+    JsonRpcRequest,
 )
 
 _KIRO_SESSIONS_DIR = Path.home() / ".kiro" / "sessions" / "cli"
@@ -168,7 +168,7 @@ class AcpClient:
             else:
                 self._process.terminate()
             await asyncio.wait_for(self._process.wait(), timeout=3.0)
-        except (asyncio.TimeoutError, ProcessLookupError, OSError):
+        except (TimeoutError, ProcessLookupError, OSError):
             try:
                 if is_posix:
                     try:
@@ -230,11 +230,13 @@ class AcpClient:
         if not self._process or self._session_id is None:
             return
         try:
-            await self._send_raw({
-                "jsonrpc": "2.0",
-                "method": METHOD_CANCEL,
-                "params": {"sessionId": self._session_id},
-            })
+            await self._send_raw(
+                {
+                    "jsonrpc": "2.0",
+                    "method": METHOD_CANCEL,
+                    "params": {"sessionId": self._session_id},
+                }
+            )
         except Exception:
             logger.warning("ACP cancel failed", exc_info=True)
 
@@ -272,6 +274,7 @@ class AcpClient:
         else:
             try:
                 import subprocess as _sp
+
                 spawn_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
             except (ImportError, AttributeError):
                 pass
@@ -279,9 +282,7 @@ class AcpClient:
         logger.info("Spawned %s (PID %d)", " ".join(argv), self._process.pid)
 
         if self._process.stderr:
-            self._stderr_task = asyncio.ensure_future(
-                self._drain_stderr(self._process.stderr)
-            )
+            self._stderr_task = asyncio.ensure_future(self._drain_stderr(self._process.stderr))
 
     def _died_reason(self, base: str) -> str:
         """Compose a death message including recent stderr lines."""
@@ -307,17 +308,17 @@ class AcpClient:
     async def _initialize(self) -> None:
         """ACP handshake: initialize → session/load or session/new → set_model."""
         init_id = self._next_req_id()
-        await self._send(JsonRpcRequest(
-            method=METHOD_INITIALIZE,
-            params={
-                "protocolVersion": PROTOCOL_VERSION,
-                "clientInfo": {"name": _CLIENT_NAME, "version": _CLIENT_VERSION},
-            },
-            id=init_id,
-        ))
-        init_response = await asyncio.wait_for(
-            self._read_response(init_id), timeout=_INIT_TIMEOUT
+        await self._send(
+            JsonRpcRequest(
+                method=METHOD_INITIALIZE,
+                params={
+                    "protocolVersion": PROTOCOL_VERSION,
+                    "clientInfo": {"name": _CLIENT_NAME, "version": _CLIENT_VERSION},
+                },
+                id=init_id,
+            )
         )
+        init_response = await asyncio.wait_for(self._read_response(init_id), timeout=_INIT_TIMEOUT)
         if init_response.error:
             raise AcpError(f"ACP initialize failed: {init_response.error}")
 
@@ -335,16 +336,18 @@ class AcpClient:
             if session_file.exists():
                 try:
                     load_id = self._next_req_id()
-                    await self._send(JsonRpcRequest(
-                        method=METHOD_SESSION_LOAD,
-                        params={
-                            "sessionId": resume_sid,
-                            "cwd": str(self._work_dir),
-                            "mcpServers": [],
-                            "_meta": {"_kiro.dev/session_file": str(session_file)},
-                        },
-                        id=load_id,
-                    ))
+                    await self._send(
+                        JsonRpcRequest(
+                            method=METHOD_SESSION_LOAD,
+                            params={
+                                "sessionId": resume_sid,
+                                "cwd": str(self._work_dir),
+                                "mcpServers": [],
+                                "_meta": {"_kiro.dev/session_file": str(session_file)},
+                            },
+                            id=load_id,
+                        )
+                    )
                     load_resp = await asyncio.wait_for(
                         self._read_response(load_id), timeout=_INIT_TIMEOUT
                     )
@@ -352,8 +355,10 @@ class AcpClient:
                         self._session_id = resume_sid
                         self._resumed = True
                         logger.info("kiro-cli session resumed: %s", resume_sid)
-                except (AcpError, AcpProcessDied, asyncio.TimeoutError):
-                    logger.info("session/load failed for %s — falling back to session/new", resume_sid)
+                except (TimeoutError, AcpError, AcpProcessDied):
+                    logger.info(
+                        "session/load failed for %s — falling back to session/new", resume_sid
+                    )
             else:
                 logger.info("kiro session file missing for %s — starting fresh", resume_sid)
 
@@ -362,14 +367,14 @@ class AcpClient:
         # client-supplied sessionId crashes kiro-cli silently.
         if not self._session_id:
             new_id = self._next_req_id()
-            await self._send(JsonRpcRequest(
-                method=METHOD_SESSION_NEW,
-                params={"cwd": str(self._work_dir), "mcpServers": []},
-                id=new_id,
-            ))
-            new_resp = await asyncio.wait_for(
-                self._read_response(new_id), timeout=_INIT_TIMEOUT
+            await self._send(
+                JsonRpcRequest(
+                    method=METHOD_SESSION_NEW,
+                    params={"cwd": str(self._work_dir), "mcpServers": []},
+                    id=new_id,
+                )
             )
+            new_resp = await asyncio.wait_for(self._read_response(new_id), timeout=_INIT_TIMEOUT)
             if new_resp.error:
                 raise AcpError(f"ACP session/new failed: {new_resp.error}")
             sid = (new_resp.result or {}).get("sessionId")
@@ -383,16 +388,25 @@ class AcpClient:
         # "auto" (Kiro's default) so we don't tickle that path needlessly.
         if self._model and self._model != "auto":
             model_id = self._next_req_id()
-            await self._send(JsonRpcRequest(
-                method=METHOD_SET_MODEL,
-                params={"sessionId": self._session_id, "modelId": self._model},
-                id=model_id,
-            ))
+            await self._send(
+                JsonRpcRequest(
+                    method=METHOD_SET_MODEL,
+                    params={"sessionId": self._session_id, "modelId": self._model},
+                    id=model_id,
+                )
+            )
             try:
                 await asyncio.wait_for(self._read_response(model_id), timeout=_INIT_TIMEOUT)
-            except (AcpError, asyncio.TimeoutError):
-                logger.warning("session/set_model failed for %s — proceeding with default", self._model)
-        logger.info("ACP session ready (id=%s model=%s resumed=%s)", self._session_id, self._model, self._resumed)
+            except (TimeoutError, AcpError):
+                logger.warning(
+                    "session/set_model failed for %s — proceeding with default", self._model
+                )
+        logger.info(
+            "ACP session ready (id=%s model=%s resumed=%s)",
+            self._session_id,
+            self._model,
+            self._resumed,
+        )
 
     # ── I/O helpers ───────────────────────────────────────────────────────────
 
@@ -406,14 +420,14 @@ class AcpClient:
         self._process.stdin.write(line.encode())
         await self._process.stdin.drain()
 
-    async def _send_permission_response(
-        self, request_id: Any, outcome: str, option: str
-    ) -> None:
-        await self._send_raw({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "result": {"outcome": {"outcome": outcome, "optionId": option}},
-        })
+    async def _send_permission_response(self, request_id: Any, outcome: str, option: str) -> None:
+        await self._send_raw(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {"outcome": {"outcome": outcome, "optionId": option}},
+            }
+        )
 
     async def _read_line(self) -> JsonRpcMessage | None:
         """Read one line from stdout and parse it as a JSON-RPC message."""
@@ -421,7 +435,7 @@ class AcpClient:
             return None
         try:
             raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=30.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
         if not raw:
             return None
@@ -457,7 +471,7 @@ class AcpClient:
                 raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=0.1)
                 if not raw:
                     break
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break
 
     async def _read_until_complete(self, prompt_id: int) -> AsyncIterator[AcpEvent]:
@@ -475,12 +489,12 @@ class AcpClient:
                 raise AcpProcessDied(self._died_reason("Stdout closed mid-stream"))
 
             try:
-                raw = await asyncio.wait_for(
-                    self._process.stdout.readline(), timeout=60.0
-                )
-            except asyncio.TimeoutError:
+                raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=60.0)
+            except TimeoutError:
                 if not self.is_alive():
-                    raise AcpProcessDied(self._died_reason("Process exited while waiting for events"))
+                    raise AcpProcessDied(
+                        self._died_reason("Process exited while waiting for events")
+                    )
                 continue
 
             if not raw:
@@ -505,6 +519,7 @@ class AcpClient:
                 if isinstance(msg.result, dict):
                     stop_reason = msg.result.get("stopReason") or "end_turn"
                 from arz.acp.types import Usage
+
                 usage = None
                 if kiro_credits or kiro_turn_ms:
                     usage = Usage(

@@ -13,9 +13,10 @@ import logging
 from arz.acp.types import EVENT_COMPLETE, EVENT_TEXT_CHUNK
 from arz.config.schema import ArzConfig
 from arz.core.router import IncomingMessage as CoreIncoming
-from arz.core.router import MessageRouter, OutgoingMessage as CoreOutgoing
-from arz.surfaces.base import IncomingMessage as SurfaceIncoming
-from arz.surfaces.base import MessagingSurface, OutgoingMessage as SurfaceOutgoing
+from arz.core.router import MessageRouter
+from arz.core.router import OutgoingMessage as CoreOutgoing
+from arz.surfaces.base import MessagingSurface
+from arz.surfaces.base import OutgoingMessage as SurfaceOutgoing
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class SurfaceManager:
         cfg = self._config
         if cfg.slack.enabled and cfg.slack.bot_token and cfg.slack.app_token and cfg.slack.owner_id:
             from arz.surfaces.slack import SlackSurface
+
             self._surfaces["slack"] = SlackSurface(
                 bot_token=cfg.slack.bot_token,
                 app_token=cfg.slack.app_token,
@@ -40,6 +42,7 @@ class SurfaceManager:
             )
         if cfg.telegram.enabled and cfg.telegram.bot_token and cfg.telegram.owner_id:
             from arz.surfaces.telegram import TelegramSurface
+
             self._surfaces["telegram"] = TelegramSurface(
                 bot_token=cfg.telegram.bot_token,
                 owner_id=cfg.telegram.owner_id,
@@ -51,6 +54,7 @@ class SurfaceManager:
             and cfg.whatsapp.owner_number
         ):
             from arz.surfaces.whatsapp import WhatsAppSurface
+
             self._surfaces["whatsapp"] = WhatsAppSurface(
                 access_token=cfg.whatsapp.access_token,
                 phone_number_id=cfg.whatsapp.phone_number_id,
@@ -100,17 +104,18 @@ class SurfaceManager:
                     session = await self._router.handle(core_msg)
                     reply_text = await self._run_provider(event.text)
                     if reply_text:
-                        from arz.session.session import Message
                         msg = session.add_message("assistant", reply_text)
                         # Best-effort: tag with current global model
                         msg.model = self._config.provider.model
-                        await self._router.deliver(CoreOutgoing(
-                            surface=event.surface,
-                            chat_id=event.chat_id,
-                            text=reply_text,
-                            thread_id=event.thread_id,
-                            extra={"reply_to_message_id": event.message_id},
-                        ))
+                        await self._router.deliver(
+                            CoreOutgoing(
+                                surface=event.surface,
+                                chat_id=event.chat_id,
+                                text=reply_text,
+                                thread_id=event.thread_id,
+                                extra={"reply_to_message_id": event.message_id},
+                            )
+                        )
                 except Exception:
                     log.exception("Surface %s message handling failed", surface.name)
         except asyncio.CancelledError:
@@ -121,9 +126,11 @@ class SurfaceManager:
         cfg = self._config
         if cfg.provider.name == "claude-code":
             from arz.providers.claude_code import ClaudeCodeProvider
+
             provider = ClaudeCodeProvider(model=cfg.provider.model, work_dir=cfg.provider.work_dir)
         elif cfg.provider.name == "kiro-cli":
             from arz.providers.kiro_cli import KiroCliProvider
+
             provider = KiroCliProvider(model=cfg.provider.model, work_dir=cfg.provider.work_dir)
         else:
             return ""

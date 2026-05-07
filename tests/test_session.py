@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from arz.session.session import Message, Session
 from arz.session.manager import SessionManager
+from arz.session.session import Session
 
 
 def _make_manager() -> tuple[SessionManager, Path]:

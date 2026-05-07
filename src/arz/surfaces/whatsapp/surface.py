@@ -106,7 +106,10 @@ class WhatsAppSurface(MessagingSurface):
         for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
                 value = change.get("value", {})
-                contacts = {c.get("wa_id"): c.get("profile", {}).get("name", "") for c in value.get("contacts", [])}
+                contacts = {
+                    c.get("wa_id"): c.get("profile", {}).get("name", "")
+                    for c in value.get("contacts", [])
+                }
                 for m in value.get("messages", []):
                     sender = m.get("from", "")
                     if not self.is_authorized(sender):
@@ -115,14 +118,16 @@ class WhatsAppSurface(MessagingSurface):
                     text = ""
                     if m.get("type") == "text":
                         text = m.get("text", {}).get("body", "")
-                    await self._queue.put(IncomingMessage(
-                        surface="whatsapp",
-                        chat_id=sender,
-                        thread_id=None,
-                        message_id=m.get("id", ""),
-                        sender_id=sender,
-                        sender_display_name=contacts.get(sender, sender),
-                        text=text,
-                        attachments=[],
-                        raw=m,
-                    ))
+                    await self._queue.put(
+                        IncomingMessage(
+                            surface="whatsapp",
+                            chat_id=sender,
+                            thread_id=None,
+                            message_id=m.get("id", ""),
+                            sender_id=sender,
+                            sender_display_name=contacts.get(sender, sender),
+                            text=text,
+                            attachments=[],
+                            raw=m,
+                        )
+                    )

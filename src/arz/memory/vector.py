@@ -15,7 +15,7 @@ from pathlib import Path
 
 import sqlite_vec
 
-from arz.memory.embedder import DEFAULT_DIM, Embedder, HashEmbedder, embedder_from_config
+from arz.memory.embedder import DEFAULT_DIM, Embedder, HashEmbedder
 
 log = logging.getLogger(__name__)
 

@@ -129,9 +129,7 @@ class OrphanReaper:
     def _save(self) -> None:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(
-                json.dumps([asdict(e) for e in self._owned.values()], indent=2)
-            )
+            self._path.write_text(json.dumps([asdict(e) for e in self._owned.values()], indent=2))
         except OSError:
             log.warning("Could not persist owned-pid manifest", exc_info=True)
 

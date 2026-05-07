@@ -27,7 +27,6 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from threading import Lock
 
@@ -41,8 +40,8 @@ _MENTION_RE = re.compile(r"@([a-zA-Z][a-zA-Z0-9_-]{1,40})")
 
 class ChannelMember(BaseModel):
     agent: str
-    listen_mode: str = "ALL"   # ALL | MENTION | SILENT
-    approval: str = "WRITES"   # ALL | WRITES | TRUSTED
+    listen_mode: str = "ALL"  # ALL | MENTION | SILENT
+    approval: str = "WRITES"  # ALL | WRITES | TRUSTED
 
 
 class ChannelMessage(BaseModel):

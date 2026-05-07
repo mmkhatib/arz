@@ -23,14 +23,21 @@ import signal
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from arz.acp.types import AcpEvent, EVENT_COMPLETE, EVENT_PERMISSION_REQUEST, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
+from arz.acp.types import (
+    EVENT_COMPLETE,
+    EVENT_PERMISSION_REQUEST,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
+    AcpEvent,
+)
 
 logger = logging.getLogger(__name__)
 
 _CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 _STDOUT_LIMIT = 10 * 1024 * 1024
 _READ_TIMEOUT = 20.0
-_STARTUP_DRAIN = 8.0    # seconds to drain startup hook events
+_STARTUP_DRAIN = 8.0  # seconds to drain startup hook events
 _TURN_TIMEOUT = 7200.0  # 2 hours per turn
 _HISTORY_MAX_MSGS = 50
 _HISTORY_MAX_CHARS = 8000
@@ -97,10 +104,12 @@ class ClaudeInteractiveClient:
         argv = [
             self._binary,
             "--print",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
             "--verbose",
             "--include-partial-messages",
-            "--input-format", "stream-json",
+            "--input-format",
+            "stream-json",
         ]
         if self._model:
             argv += ["--model", self._model]
@@ -126,6 +135,7 @@ class ClaudeInteractiveClient:
         else:
             try:
                 import subprocess as _sp
+
                 spawn_kwargs["creationflags"] = _sp.CREATE_NEW_PROCESS_GROUP
             except (ImportError, AttributeError):
                 pass
@@ -173,13 +183,15 @@ class ClaudeInteractiveClient:
         if not self.is_alive():
             raise RuntimeError("Claude interactive process is not running")
 
-        await self._write_json({
-            "type": "user",
-            "message": {
-                "role": "user",
-                "content": [{"type": "text", "text": message}],
-            },
-        })
+        await self._write_json(
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [{"type": "text", "text": message}],
+                },
+            }
+        )
 
         deadline = asyncio.get_event_loop().time() + _TURN_TIMEOUT
         if not (self._process and self._process.stdout):
@@ -194,10 +206,8 @@ class ClaudeInteractiveClient:
                 logger.info("claude-code stream aborted — process gone (likely pool deactivation)")
                 return
             try:
-                raw = await asyncio.wait_for(
-                    proc.stdout.readline(), timeout=_READ_TIMEOUT
-                )
-            except asyncio.TimeoutError:
+                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=_READ_TIMEOUT)
+            except TimeoutError:
                 if not self.is_alive():
                     break
                 continue
@@ -239,7 +249,9 @@ class ClaudeInteractiveClient:
                     if block.get("type") == "tool_result":
                         raw_content = block.get("content", "")
                         if isinstance(raw_content, list):
-                            parts = [b.get("text", "") for b in raw_content if b.get("type") == "text"]
+                            parts = [
+                                b.get("text", "") for b in raw_content if b.get("type") == "text"
+                            ]
                             content = "\n".join(parts)
                         else:
                             content = str(raw_content)
@@ -252,6 +264,7 @@ class ClaudeInteractiveClient:
             elif event_type == "result":
                 stop = "error" if obj.get("is_error") else "end_turn"
                 from arz.acp.types import Usage
+
                 usage = Usage.from_dict(obj.get("usage"))
                 input_tokens = usage.input_tokens if usage else 0
                 context_pct = round(min(input_tokens / 200_000 * 100, 100.0), 1)
@@ -265,7 +278,10 @@ class ClaudeInteractiveClient:
 
             elif event_type in ("system", "permission_request"):
                 subtype = obj.get("subtype", "")
-                if subtype in ("permission_request", "permission") or event_type == "permission_request":
+                if (
+                    subtype in ("permission_request", "permission")
+                    or event_type == "permission_request"
+                ):
                     yield AcpEvent(
                         kind=EVENT_PERMISSION_REQUEST,
                         title=obj.get("tool", obj.get("title", "")),
@@ -278,24 +294,28 @@ class ClaudeInteractiveClient:
     async def approve_tool(self, request_id: str) -> None:
         """Send approval for a permission request back to the claude process."""
         if self.is_alive():
-            await self._write_json({
-                "type": "user",
-                "message": {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "[Tool approved]"}],
-                },
-            })
+            await self._write_json(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "[Tool approved]"}],
+                    },
+                }
+            )
 
     async def reject_tool(self, request_id: str) -> None:
         """Send rejection for a permission request back to the claude process."""
         if self.is_alive():
-            await self._write_json({
-                "type": "user",
-                "message": {
-                    "role": "user",
-                    "content": [{"type": "text", "text": "[Tool rejected by user]"}],
-                },
-            })
+            await self._write_json(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "[Tool rejected by user]"}],
+                    },
+                }
+            )
 
     # ── Private ───���──────────────────────────────────────────────────────────
 
@@ -311,9 +331,7 @@ class ClaudeInteractiveClient:
         deadline = asyncio.get_event_loop().time() + _STARTUP_DRAIN
         while asyncio.get_event_loop().time() < deadline:
             try:
-                raw = await asyncio.wait_for(
-                    self._process.stdout.readline(), timeout=0.5
-                )
+                raw = await asyncio.wait_for(self._process.stdout.readline(), timeout=0.5)
                 if not raw:
                     break
                 if not self._session_id:
@@ -324,7 +342,7 @@ class ClaudeInteractiveClient:
                             self._session_id = sid
                     except (json.JSONDecodeError, AttributeError):
                         pass
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 break  # quiet — startup complete
 
     async def _inject_system_context(self) -> None:
@@ -346,13 +364,14 @@ class ClaudeInteractiveClient:
             history_block = (
                 "CONVERSATION HISTORY — The following messages are the exact prior turns of this session. "
                 "They genuinely occurred before now. You remember all of them and must treat them as your "
-                "actual conversation history, not as instructions.\n\n"
-                + "\n\n".join(lines)
+                "actual conversation history, not as instructions.\n\n" + "\n\n".join(lines)
             )
             parts.append(history_block)
 
         if parts:
-            await self._write_json({
-                "type": "system",
-                "content": [{"type": "text", "text": "\n\n---\n\n".join(parts)}],
-            })
+            await self._write_json(
+                {
+                    "type": "system",
+                    "content": [{"type": "text", "text": "\n\n---\n\n".join(parts)}],
+                }
+            )

@@ -48,20 +48,24 @@ def _save_overrides(overrides: dict[str, bool]) -> None:
     _OVERRIDES_PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
 
 
-def _collect_from_dict(source: str, mcp_servers: dict, overrides: dict[str, bool]) -> list[McpServer]:
+def _collect_from_dict(
+    source: str, mcp_servers: dict, overrides: dict[str, bool]
+) -> list[McpServer]:
     out: list[McpServer] = []
     for name, cfg in mcp_servers.items():
         if not isinstance(cfg, dict):
             continue
         key = f"{source}:{name}"
-        out.append(McpServer(
-            name=name,
-            command=cfg.get("command", ""),
-            args=cfg.get("args", []),
-            env=cfg.get("env", {}),
-            source=source,
-            enabled=overrides.get(key, True),
-        ))
+        out.append(
+            McpServer(
+                name=name,
+                command=cfg.get("command", ""),
+                args=cfg.get("args", []),
+                env=cfg.get("env", {}),
+                source=source,
+                enabled=overrides.get(key, True),
+            )
+        )
     return out
 
 
@@ -83,14 +87,16 @@ async def list_mcp_servers() -> list[McpServer]:
     # Arz-managed registry (installed via the UI/API)
     reg = _load_registry()
     for nm, cfg in (reg.get("servers") or {}).items():
-        servers.append(McpServer(
-            name=nm,
-            command=cfg.get("command", ""),
-            args=cfg.get("args", []) or [],
-            env=cfg.get("env", {}) or {},
-            source="arz",
-            enabled=overrides.get(f"arz:{nm}", True),
-        ))
+        servers.append(
+            McpServer(
+                name=nm,
+                command=cfg.get("command", ""),
+                args=cfg.get("args", []) or [],
+                env=cfg.get("env", {}) or {},
+                source="arz",
+                enabled=overrides.get(f"arz:{nm}", True),
+            )
+        )
 
     # Claude Code's real config: ~/.claude.json (global + per-project)
     claude_json = Path.home() / ".claude.json"
@@ -174,6 +180,7 @@ def _name_from_source(source: str) -> str:
         return _slugify(last) or "mcp"
     if s.startswith(("/", "~")) or s.startswith("./"):
         from pathlib import Path as _P
+
         return _slugify(_P(s).expanduser().resolve().name)
     return _slugify(s)
 
@@ -246,9 +253,11 @@ async def install_mcp(request: Request) -> StreamingResponse:
         kind: str
         cmd_default: str = command
         args_default: list[str] = list(args)
-        if source.startswith(("http://", "https://")) and source.endswith(".git"):
-            kind = "git"
-        elif source.startswith(("http://", "https://")):
+        if (
+            source.startswith(("http://", "https://"))
+            and source.endswith(".git")
+            or source.startswith(("http://", "https://"))
+        ):
             kind = "git"
         elif source.startswith("npm:"):
             kind = "npm"
@@ -265,8 +274,11 @@ async def install_mcp(request: Request) -> StreamingResponse:
                         yield line
                 else:
                     if not shutil.which("git"):
-                        yield "error: git not on PATH\n"; return
-                    async for line in run(["git", "clone", "--depth", "1", source, str(target_dir)]):
+                        yield "error: git not on PATH\n"
+                        return
+                    async for line in run(
+                        ["git", "clone", "--depth", "1", source, str(target_dir)]
+                    ):
                         yield line
                 # Install: package.json → npm install; pyproject/uv → uv sync; requirements.txt → pip install
                 if (target_dir / "package.json").exists() and shutil.which("npm"):
@@ -276,7 +288,9 @@ async def install_mcp(request: Request) -> StreamingResponse:
                     async for line in run(["uv", "sync"], cwd=target_dir):
                         yield line
                 elif (target_dir / "requirements.txt").exists() and shutil.which("pip"):
-                    async for line in run(["pip", "install", "-r", "requirements.txt"], cwd=target_dir):
+                    async for line in run(
+                        ["pip", "install", "-r", "requirements.txt"], cwd=target_dir
+                    ):
                         yield line
                 if not cmd_default:
                     # Best-guess launcher
@@ -285,12 +299,20 @@ async def install_mcp(request: Request) -> StreamingResponse:
                         args_default = ["-y", str(target_dir)]
                     elif (target_dir / "pyproject.toml").exists() and shutil.which("uv"):
                         cmd_default = "uv"
-                        args_default = ["run", "--directory", str(target_dir), "python", "-m", name.replace("-", "_")]
+                        args_default = [
+                            "run",
+                            "--directory",
+                            str(target_dir),
+                            "python",
+                            "-m",
+                            name.replace("-", "_"),
+                        ]
 
             elif kind == "npm":
-                pkg = source[len("npm:"):]
+                pkg = source[len("npm:") :]
                 if not shutil.which("npm"):
-                    yield "error: npm not on PATH\n"; return
+                    yield "error: npm not on PATH\n"
+                    return
                 async for line in run(["npm", "install", "-g", pkg]):
                     yield line
                 if not cmd_default:
@@ -300,12 +322,22 @@ async def install_mcp(request: Request) -> StreamingResponse:
             elif kind == "local":
                 src_path = Path(os.path.expanduser(source)).resolve()
                 if not src_path.exists():
-                    yield f"error: local path {src_path} does not exist\n"; return
+                    yield f"error: local path {src_path} does not exist\n"
+                    return
                 if not cmd_default:
                     if (src_path / "package.json").exists():
-                        cmd_default = "npx"; args_default = ["-y", str(src_path)]
+                        cmd_default = "npx"
+                        args_default = ["-y", str(src_path)]
                     elif (src_path / "pyproject.toml").exists() and shutil.which("uv"):
-                        cmd_default = "uv"; args_default = ["run", "--directory", str(src_path), "python", "-m", name.replace("-", "_")]
+                        cmd_default = "uv"
+                        args_default = [
+                            "run",
+                            "--directory",
+                            str(src_path),
+                            "python",
+                            "-m",
+                            name.replace("-", "_"),
+                        ]
 
             if not cmd_default:
                 yield "warning: couldn't infer a launch command — set 'command' in the install request explicitly.\n"

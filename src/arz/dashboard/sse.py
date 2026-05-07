@@ -41,26 +41,32 @@ def sse_error(message: str) -> str:
 
 
 def sse_tool_call(tool_name: str, tool_input: str, request_id: str | int) -> str:
-    return sse_event({
-        "type": "tool_call",
-        "tool_name": tool_name,
-        "tool_input": tool_input,
-        "request_id": str(request_id),
-    })
+    return sse_event(
+        {
+            "type": "tool_call",
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "request_id": str(request_id),
+        }
+    )
 
 
 def sse_tool_result(tool_call_id: str, content: str) -> str:
-    return sse_event({
-        "type": "tool_result",
-        "tool_call_id": tool_call_id,
-        "content": content,
-    })
+    return sse_event(
+        {
+            "type": "tool_result",
+            "tool_call_id": tool_call_id,
+            "content": content,
+        }
+    )
 
 
 def sse_permission_request(title: str, tool_input: str, request_id: str) -> str:
-    return sse_event({
-        "type": "permission_request",
-        "title": title,
-        "tool_input": tool_input,
-        "request_id": request_id,
-    })
+    return sse_event(
+        {
+            "type": "permission_request",
+            "title": title,
+            "tool_input": tool_input,
+            "request_id": request_id,
+        }
+    )

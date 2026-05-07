@@ -20,7 +20,13 @@ import shutil
 from collections.abc import AsyncIterator
 from pathlib import Path
 
-from arz.acp.types import AcpEvent, EVENT_COMPLETE, EVENT_TEXT_CHUNK, EVENT_TOOL_CALL, EVENT_TOOL_RESULT
+from arz.acp.types import (
+    EVENT_COMPLETE,
+    EVENT_TEXT_CHUNK,
+    EVENT_TOOL_CALL,
+    EVENT_TOOL_RESULT,
+    AcpEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +80,8 @@ class ClaudePipeClient:
         argv: list[str] = [
             resolved,
             "--print",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
             "--verbose",
             "--include-partial-messages",
         ]
@@ -117,7 +124,7 @@ class ClaudePipeClient:
         while asyncio.get_event_loop().time() < deadline:
             try:
                 raw = await asyncio.wait_for(process.stdout.readline(), timeout=60.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 if process.returncode is not None:
                     break
                 continue

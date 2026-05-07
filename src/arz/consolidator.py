@@ -22,12 +22,11 @@ logs and skips — never crashes the gateway.
 from __future__ import annotations
 
 import json
-import logging
 import re
 import time
-from datetime import date, datetime, timedelta
+from collections.abc import Awaitable, Callable
+from datetime import date
 from pathlib import Path
-from typing import Awaitable, Callable
 
 import structlog
 
@@ -35,7 +34,7 @@ log = structlog.get_logger(__name__)
 
 _STATE_PATH = Path.home() / ".arz" / "consolidator_state.json"
 _RECENT_WINDOW_HOURS = 24  # only consolidate sessions touched in the last 24h
-_MIN_NEW_MESSAGES = 4      # skip sessions with too little to learn from
+_MIN_NEW_MESSAGES = 4  # skip sessions with too little to learn from
 _MAX_TRANSCRIPT_CHARS = 12000  # cap per-session transcript sent to LLM
 
 # Runner: takes a single user prompt, returns assistant text. The gateway
@@ -186,11 +185,7 @@ def _format_transcript(session) -> str:
         scrubbed = _scrub(m.text or "")[:1500]
         if not scrubbed:
             continue
-        block = (
-            f"--- BEGIN MESSAGE {i} role={m.role} ---\n"
-            f"{scrubbed}\n"
-            f"--- END MESSAGE {i} ---"
-        )
+        block = f"--- BEGIN MESSAGE {i} role={m.role} ---\n{scrubbed}\n--- END MESSAGE {i} ---"
         if used + len(block) + 1 > _MAX_TRANSCRIPT_CHARS:
             break
         out.append(block)
@@ -222,7 +217,11 @@ def _append_unique_lines(path: Path, new_lines: list[str], max_chars: int) -> No
         additions.append(line)
     if not additions:
         return
-    new_content = (existing.rstrip() + "\n" + "\n".join(additions) + "\n") if existing else "\n".join(additions) + "\n"
+    new_content = (
+        (existing.rstrip() + "\n" + "\n".join(additions) + "\n")
+        if existing
+        else "\n".join(additions) + "\n"
+    )
     if len(new_content) > max_chars:
         # Trim from the top of the bullet list, keeping any header.
         lines = new_content.splitlines()
@@ -243,8 +242,9 @@ def _append_unique_lines(path: Path, new_lines: list[str], max_chars: int) -> No
 class Consolidator:
     """Walk recent sessions, ask the LLM to extract memory signals, persist them."""
 
-    def __init__(self, session_manager, runner: ConsolidationRunner | None = None,
-                 agent: str = "general") -> None:
+    def __init__(
+        self, session_manager, runner: ConsolidationRunner | None = None, agent: str = "general"
+    ) -> None:
         self._mgr = session_manager
         self._runner = runner
         self._agent = agent
@@ -341,13 +341,15 @@ class Consolidator:
                 except Exception as e:
                     log.warning("history append failed", error=str(e))
 
-            row.update({
-                "ok": True,
-                "preferences": len(prefs),
-                "projects": len(projs),
-                "lessons": len(lessons),
-                "summarised": bool(summary),
-            })
+            row.update(
+                {
+                    "ok": True,
+                    "preferences": len(prefs),
+                    "projects": len(projs),
+                    "lessons": len(lessons),
+                    "summarised": bool(summary),
+                }
+            )
             report["preferences_added"] += len(prefs)
             report["projects_added"] += len(projs)
             report["sessions"].append(row)

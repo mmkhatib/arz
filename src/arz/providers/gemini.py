@@ -37,9 +37,7 @@ def _resolve_binary() -> str:
     found = shutil.which(_GEMINI_BIN)
     if found:
         return found
-    raise FileNotFoundError(
-        "gemini CLI not found. Install it: npm i -g @google/gemini-cli"
-    )
+    raise FileNotFoundError("gemini CLI not found. Install it: npm i -g @google/gemini-cli")
 
 
 async def _drain_stderr(stream: asyncio.StreamReader) -> None:
@@ -145,8 +143,10 @@ class GeminiProvider(LLMProvider):
         # ARG_MAX truncation that bites long prompts when passed via argv.
         argv = [
             self._binary,
-            "--output-format", "stream-json",
-            "--approval-mode", approval,
+            "--output-format",
+            "stream-json",
+            "--approval-mode",
+            approval,
             "--skip-trust",
         ]
         if self._model:
@@ -168,9 +168,7 @@ class GeminiProvider(LLMProvider):
             )
         transcript = self._format_history()
         if transcript:
-            parts.append(
-                "Recent conversation (context only — do not repeat):\n" + transcript
-            )
+            parts.append("Recent conversation (context only — do not repeat):\n" + transcript)
         parts.append("USER MESSAGE:\n" + message)
         # Trailer: the model is instructed to begin its reply with the
         # sentinel string verbatim. Everything before the sentinel in
@@ -209,7 +207,7 @@ class GeminiProvider(LLMProvider):
         # is emitted live. If the sentinel never arrives we fall back
         # to "drop OPERATOR INSTRUCTIONS marker" filtering.
         sentinel_seen = False
-        carry = ""           # rolling buffer used until sentinel found
+        carry = ""  # rolling buffer used until sentinel found
 
         # The sentinel appears at LEAST twice in any echoed scenario:
         # once in the prompt's "Begin your reply with..." trailer and
@@ -241,7 +239,7 @@ class GeminiProvider(LLMProvider):
                         carry = carry[last:]
                         sentinel_hits = 1
                     else:
-                        carry = carry[-(len(sentinel) - 1):]
+                        carry = carry[-(len(sentinel) - 1) :]
                         sentinel_hits = 0
                 return []
             # Reached target — find the Nth occurrence index.
@@ -255,7 +253,7 @@ class GeminiProvider(LLMProvider):
             if idx < 0:
                 return []
             sentinel_seen = True
-            after = carry[idx + len(sentinel):].lstrip("\n")
+            after = carry[idx + len(sentinel) :].lstrip("\n")
             carry = ""
             return [after] if after else []
 
@@ -263,7 +261,7 @@ class GeminiProvider(LLMProvider):
             while asyncio.get_event_loop().time() < deadline:
                 try:
                     line = await asyncio.wait_for(process.stdout.readline(), timeout=60.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     if process.returncode is not None:
                         break
                     continue
@@ -333,7 +331,7 @@ class GeminiProvider(LLMProvider):
         if not sentinel_seen:
             last = carry.rfind(sentinel)
             if last >= 0:
-                after = carry[last + len(sentinel):].lstrip("\n").rstrip()
+                after = carry[last + len(sentinel) :].lstrip("\n").rstrip()
                 if after:
                     yield LLMEvent(kind="text_chunk", text=after + "\n")
             else:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -29,12 +28,15 @@ def _build_provider(cfg_path: Path | None = None) -> LLMProvider:
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider
+
         return ClaudeCodeProvider(model=model, work_dir=work_dir)
     elif provider_name == "kiro-cli":
         from arz.providers.kiro_cli import KiroCliProvider
+
         return KiroCliProvider(model=model, work_dir=work_dir)
     elif provider_name == "codex":
         from arz.providers.codex import CodexProvider
+
         return CodexProvider(model=model, work_dir=work_dir)
     elif provider_name == "anthropic":
         raise typer.BadParameter("anthropic direct provider not yet implemented (Phase 3)")
@@ -62,14 +64,12 @@ async def _chat_loop(provider: LLMProvider, auto_approve: bool) -> None:
                 break
 
             print()
-            pending_approval: str | int | None = None
 
             async for event in provider.stream(message):
                 if event.kind == EVENT_TEXT_CHUNK and event.text:
                     print(event.text, end="", flush=True)
 
                 elif event.kind == EVENT_PERMISSION_REQUEST:
-                    pending_approval = event.request_id
                     print(f"\n\n[Tool: {event.title}]")
                     if event.tool_input:
                         print(f"Input: {event.tool_input[:300]}")
@@ -95,7 +95,9 @@ async def _chat_loop(provider: LLMProvider, auto_approve: bool) -> None:
 @app.command()
 def chat(
     config: Annotated[Path | None, typer.Option("--config", "-c", help="Config file path")] = None,
-    auto_approve: Annotated[bool, typer.Option("--auto-approve", help="Auto-approve all tool calls")] = False,
+    auto_approve: Annotated[
+        bool, typer.Option("--auto-approve", help="Auto-approve all tool calls")
+    ] = False,
 ) -> None:
     """Start an interactive chat session with Arzeh."""
     provider = _build_provider(config)
@@ -113,6 +115,7 @@ def gateway(
 ) -> None:
     """Run the Arz dashboard gateway (FastAPI + uvicorn)."""
     import uvicorn
+
     from arz.dashboard.server import create_app
 
     cfg = load_config(config)
@@ -122,6 +125,7 @@ def gateway(
         cfg.dashboard.port = port
 
     from arz.providers.pool import ProviderPool
+
     pool = ProviderPool(max_size=cfg.dashboard.max_active_sessions)
     web_app = create_app(cfg, pool)
 
@@ -135,9 +139,10 @@ def gateway(
             "/api/sessions",
             "/api/memory/stats",
             "/api/installer/status",
-            "/api/chat/" ,  # SSE reattach + polling status
+            "/api/chat/",  # SSE reattach + polling status
             "/api/settings",
         )
+
         def filter(self, record: logging.LogRecord) -> bool:
             msg = record.getMessage()
             return not any(p in msg for p in self._SKIP)
@@ -171,8 +176,10 @@ def setup() -> None:
             return
 
     provider = typer.prompt(
-        "LLM provider", default="claude-code", show_choices=True,
-        prompt_suffix=f" [claude-code/kiro-cli]: "
+        "LLM provider",
+        default="claude-code",
+        show_choices=True,
+        prompt_suffix=" [claude-code/kiro-cli]: ",
     )
     model = typer.prompt("Model", default="claude-opus-4-7")
 
@@ -225,8 +232,8 @@ def restore(
 ) -> None:
     """Restore a snapshot. ``merge`` adds files (skipping conflicts);
     ``replace`` overwrites existing files."""
-    import tarfile
     import shutil
+    import tarfile
 
     if not archive.exists():
         raise typer.BadParameter(f"{archive} not found")
@@ -268,7 +275,9 @@ def eval_cmd(
     from arz.eval import run_eval
 
     cfg = load_config(config)
-    chosen = None if scenarios.strip().lower() == "all" else [s.strip() for s in scenarios.split(",")]
+    chosen = (
+        None if scenarios.strip().lower() == "all" else [s.strip() for s in scenarios.split(",")]
+    )
     asyncio.run(run_eval(cfg, scenarios=chosen))
 
 

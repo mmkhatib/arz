@@ -8,7 +8,6 @@ Token auth is optional — disabled when dashboard.token_auth = false.
 from __future__ import annotations
 
 import hashlib
-import os
 import secrets
 from pathlib import Path
 

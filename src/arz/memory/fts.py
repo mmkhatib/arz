@@ -19,9 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-import time
 from pathlib import Path
-from typing import Iterable
 
 _DB_PATH = Path.home() / ".arz" / "memory_fts.db"
 _MEMORY_DIR = Path.home() / ".arz" / "memory"
@@ -190,7 +188,7 @@ class MemoryFTS:
                         (
                             "lessons",
                             str(l.get("id", "")),
-                            f"[{l.get('category','knowledge')}] lesson #{l.get('id','')}",
+                            f"[{l.get('category', 'knowledge')}] lesson #{l.get('id', '')}",
                             l.get("text", ""),
                         ),
                     )

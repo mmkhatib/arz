@@ -103,9 +103,7 @@ class AuditLog:
         session_id: str | None = None,
         since: float | None = None,
     ) -> list[AuditEvent]:
-        sql = (
-            "SELECT id, ts, kind, session_id, actor, summary, details FROM audit WHERE 1=1"
-        )
+        sql = "SELECT id, ts, kind, session_id, actor, summary, details FROM audit WHERE 1=1"
         params: list = []
         if kind:
             sql += " AND kind = ?"
@@ -141,4 +139,7 @@ class AuditLog:
 
     def kinds(self) -> list[str]:
         with self._connect() as conn:
-            return [r[0] for r in conn.execute("SELECT DISTINCT kind FROM audit ORDER BY kind").fetchall()]
+            return [
+                r[0]
+                for r in conn.execute("SELECT DISTINCT kind FROM audit ORDER BY kind").fetchall()
+            ]

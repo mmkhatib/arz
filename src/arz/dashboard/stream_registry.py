@@ -29,13 +29,13 @@ from dataclasses import dataclass, field
 log = logging.getLogger(__name__)
 
 _MAX_BUFFERED_EVENTS = 4000  # ring-buffer cap per turn
-_QUEUE_CAP = 1000             # per-subscriber backpressure
+_QUEUE_CAP = 1000  # per-subscriber backpressure
 
 
 @dataclass
 class StreamState:
     session_id: str
-    status: str = "running"   # running | complete | failed | cancelled
+    status: str = "running"  # running | complete | failed | cancelled
     started_at: float = field(default_factory=time.time)
     finished_at: float = 0.0
     # SSE event strings (already-formatted "data: ...\n\n").
@@ -85,11 +85,15 @@ class StreamRegistry:
                 elif age > self._MAX_TURN_AGE_S:
                     log.warning(
                         "Force-cancelling stuck turn for %s (age=%.0fs > %.0fs cap)",
-                        session_id, age, self._MAX_TURN_AGE_S,
+                        session_id,
+                        age,
+                        self._MAX_TURN_AGE_S,
                     )
                     if existing.task is not None and not existing.task.done():
                         existing.task.cancel()
-                    self._mark_finished(existing, "cancelled", f"turn exceeded {self._MAX_TURN_AGE_S}s budget")
+                    self._mark_finished(
+                        existing, "cancelled", f"turn exceeded {self._MAX_TURN_AGE_S}s budget"
+                    )
                 else:
                     raise RuntimeError(f"session {session_id} already has a running turn")
             state = StreamState(session_id=session_id)
@@ -102,11 +106,15 @@ class StreamRegistry:
         state.finished_at = time.time()
         state.error = error
         for q in state.subscribers:
-            try: q.put_nowait(None)
-            except asyncio.QueueFull: pass
+            try:
+                q.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
         state.subscribers.clear()
 
-    async def finish(self, session_id: str, *, status: str = "complete", error: str | None = None) -> None:
+    async def finish(
+        self, session_id: str, *, status: str = "complete", error: str | None = None
+    ) -> None:
         """Mark a turn done and close all subscriber queues."""
         async with self._lock:
             state = self._states.get(session_id)
@@ -125,10 +133,12 @@ class StreamRegistry:
     def discard(self, session_id: str, *, after_seconds: float = 60.0) -> None:
         """Drop the StreamState after a delay so late clients can still
         replay (e.g. user reloaded just as the turn finished)."""
+
         async def _bg():
             await asyncio.sleep(after_seconds)
             async with self._lock:
                 self._states.pop(session_id, None)
+
         try:
             asyncio.create_task(_bg())
         except RuntimeError:
@@ -149,12 +159,18 @@ class StreamRegistry:
                     q.put_nowait(sse_chunk)
                 except asyncio.QueueFull:
                     # Backpressure: drop oldest in this subscriber's queue
-                    try: q.get_nowait()
-                    except Exception: pass
-                    try: q.put_nowait(sse_chunk)
-                    except Exception: pass
+                    try:
+                        q.get_nowait()
+                    except Exception:
+                        pass
+                    try:
+                        q.put_nowait(sse_chunk)
+                    except Exception:
+                        pass
 
-    async def subscribe(self, session_id: str) -> tuple[StreamState | None, asyncio.Queue[str | None]]:
+    async def subscribe(
+        self, session_id: str
+    ) -> tuple[StreamState | None, asyncio.Queue[str | None]]:
         """Return the current state plus a fresh queue. The queue is added
         to the state's subscriber list. Caller is responsible for replaying
         state.events to the client before consuming new ones from the queue.

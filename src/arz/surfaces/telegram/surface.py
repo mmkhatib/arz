@@ -42,17 +42,21 @@ class TelegramSurface(MessagingSurface):
             if not self.is_authorized(sender):
                 log.info("Telegram: ignoring message from unauthorized sender %s", sender)
                 return
-            await self._queue.put(IncomingMessage(
-                surface="telegram",
-                chat_id=str(message.chat.id),
-                thread_id=str(message.message_thread_id) if message.message_thread_id else None,
-                message_id=str(message.message_id),
-                sender_id=sender,
-                sender_display_name=message.from_user.full_name if message.from_user else sender,
-                text=message.text or message.caption or "",
-                attachments=[],
-                raw=message.model_dump(),
-            ))
+            await self._queue.put(
+                IncomingMessage(
+                    surface="telegram",
+                    chat_id=str(message.chat.id),
+                    thread_id=str(message.message_thread_id) if message.message_thread_id else None,
+                    message_id=str(message.message_id),
+                    sender_id=sender,
+                    sender_display_name=message.from_user.full_name
+                    if message.from_user
+                    else sender,
+                    text=message.text or message.caption or "",
+                    attachments=[],
+                    raw=message.model_dump(),
+                )
+            )
 
         self._poll_task = asyncio.create_task(self._dp.start_polling(self._bot))
         log.info("Telegram surface started")
@@ -86,7 +90,9 @@ class TelegramSurface(MessagingSurface):
 
     async def edit(self, chat_id: str, message_id: str, text: str) -> None:
         assert self._bot is not None
-        await self._bot.edit_message_text(chat_id=int(chat_id), message_id=int(message_id), text=text)
+        await self._bot.edit_message_text(
+            chat_id=int(chat_id), message_id=int(message_id), text=text
+        )
 
     async def react(self, chat_id: str, message_id: str, emoji: str) -> None:
         # Bot API supports message reactions via setMessageReaction (Telegram >= 7.0)

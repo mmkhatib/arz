@@ -22,6 +22,7 @@ class _FakeProvider(LLMProvider):
 
     async def stream(self, message: str):  # type: ignore[override]
         from arz.acp.types import EVENT_COMPLETE
+
         yield LLMEvent(kind=EVENT_COMPLETE, text="")
 
     async def approve_tool(self, request_id: str | int) -> None:
@@ -45,6 +46,7 @@ def client() -> TestClient:
 
 # ── /api/health ──────────────────────────────────────────────────────────────
 
+
 def test_health(client: TestClient) -> None:
     r = client.get("/api/health")
     assert r.status_code == 200
@@ -55,6 +57,7 @@ def test_health(client: TestClient) -> None:
 
 # ── GET /api/sessions ─────────────────────────────────────────────────────────
 
+
 def test_list_sessions_empty(client: TestClient) -> None:
     r = client.get("/api/sessions")
     assert r.status_code == 200
@@ -62,6 +65,7 @@ def test_list_sessions_empty(client: TestClient) -> None:
 
 
 # ── POST /api/sessions ────────────────────────────────────────────────────────
+
 
 def test_create_session(client: TestClient) -> None:
     r = client.post("/api/sessions", json={})
@@ -80,6 +84,7 @@ def test_create_session_appears_in_list(client: TestClient) -> None:
 
 # ── GET /api/sessions/{id} ────────────────────────────────────────────────────
 
+
 def test_get_session(client: TestClient) -> None:
     created = client.post("/api/sessions", json={}).json()
     r = client.get(f"/api/sessions/{created['id']}")
@@ -95,6 +100,7 @@ def test_get_session_not_found(client: TestClient) -> None:
 
 
 # ── DELETE /api/sessions/{id} ─────────────────────────────────────────────────
+
 
 def test_delete_session(client: TestClient) -> None:
     created = client.post("/api/sessions", json={}).json()

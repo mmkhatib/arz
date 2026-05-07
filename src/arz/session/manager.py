@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from arz.session.session import Session
 
@@ -39,6 +39,7 @@ def _migrate_strip_injection(session: Session) -> bool:
             m.text = cleaned
             changed = True
     return changed
+
 
 log = logging.getLogger(__name__)
 

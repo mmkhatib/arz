@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from arz.acp.types import (
-    AcpEvent,
     EVENT_TEXT_CHUNK,
+    AcpEvent,
     JsonRpcMessage,
     JsonRpcRequest,
 )

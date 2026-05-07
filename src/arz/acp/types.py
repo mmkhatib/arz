@@ -53,7 +53,12 @@ class JsonRpcRequest:
     jsonrpc: str = "2.0"
 
     def to_dict(self) -> dict[str, Any]:
-        return {"jsonrpc": self.jsonrpc, "id": self.id, "method": self.method, "params": self.params}
+        return {
+            "jsonrpc": self.jsonrpc,
+            "id": self.id,
+            "method": self.method,
+            "params": self.params,
+        }
 
 
 @dataclass
@@ -107,7 +112,7 @@ class Usage:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any] | None) -> "Usage | None":
+    def from_dict(cls, d: dict[str, Any] | None) -> Usage | None:
         if not d:
             return None
         return cls(
@@ -135,5 +140,5 @@ class AcpEvent:
     request_id: str | int = ""
     options: list[dict[str, str]] = field(default_factory=list)
     context_usage_pct: float = 0.0
-    usage: "Usage | None" = None
+    usage: Usage | None = None
     extra: dict[str, Any] = field(default_factory=dict)

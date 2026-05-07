@@ -41,8 +41,8 @@ class SlackSurface(MessagingSurface):
 
     async def start(self) -> None:
         # Lazy-import slack-bolt so the rest of the runtime works without it.
-        from slack_bolt.async_app import AsyncApp
         from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+        from slack_bolt.async_app import AsyncApp
 
         app = AsyncApp(token=self._bot_token)
 
@@ -63,7 +63,9 @@ class SlackSurface(MessagingSurface):
                 sender_id=sender,
                 sender_display_name=event.get("user", ""),
                 text=event.get("text", ""),
-                attachments=[f.get("url_private", "") for f in event.get("files", []) if f.get("url_private")],
+                attachments=[
+                    f.get("url_private", "") for f in event.get("files", []) if f.get("url_private")
+                ],
                 raw=event,
             )
             await self._queue.put(msg)
@@ -108,7 +110,9 @@ class SlackSurface(MessagingSurface):
     async def react(self, chat_id: str, message_id: str, emoji: str) -> None:
         assert self._client is not None
         try:
-            await self._client.reactions_add(channel=chat_id, timestamp=message_id, name=emoji.strip(":"))
+            await self._client.reactions_add(
+                channel=chat_id, timestamp=message_id, name=emoji.strip(":")
+            )
         except Exception:
             # Reacting twice with the same emoji is a 200-with-error from Slack
             log.debug("Slack react failed (%s)", emoji)

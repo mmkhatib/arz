@@ -20,8 +20,8 @@ import hashlib
 import json
 import logging
 import math
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import Protocol
 
 log = logging.getLogger(__name__)
@@ -116,7 +116,9 @@ class OllamaEmbedder:
                     return False
                 data = json.loads(resp.read().decode("utf-8"))
             models = {m.get("name", "") for m in (data.get("models") or [])}
-            return self._model in models or any(m.startswith(self._model.split(":")[0]) for m in models)
+            return self._model in models or any(
+                m.startswith(self._model.split(":")[0]) for m in models
+            )
         except Exception:
             return False
 
@@ -141,7 +143,7 @@ class OllamaEmbedder:
         raise ValueError(f"unexpected /api/embed response shape: {list(data.keys())}")
 
 
-def embedder_from_config(spec: str | None) -> "Embedder":
+def embedder_from_config(spec: str | None) -> Embedder:
     """Build an embedder from a config string.
 
     Examples:
@@ -155,7 +157,7 @@ def embedder_from_config(spec: str | None) -> "Embedder":
     spec = (spec or "hash").strip().lower()
     if spec.startswith("ollama"):
         # ollama, ollama:<model>, ollama:<model>@<url>
-        rest = spec[len("ollama"):].lstrip(":")
+        rest = spec[len("ollama") :].lstrip(":")
         url = None
         model = rest
         if rest and "@" in rest:

@@ -17,10 +17,36 @@ _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 _MAX_FILES = 500
 _UPLOAD_MAX_BYTES = 25 * 1024 * 1024  # 25 MB per upload
 _UPLOAD_ALLOWED_EXTS = {
-    "txt", "md", "json", "yaml", "yml", "toml", "csv", "tsv",
-    "py", "js", "ts", "tsx", "jsx", "html", "css", "sh", "go", "rs",
-    "rb", "java", "c", "cpp", "h", "log",
-    "png", "jpg", "jpeg", "gif", "webp", "svg",
+    "txt",
+    "md",
+    "json",
+    "yaml",
+    "yml",
+    "toml",
+    "csv",
+    "tsv",
+    "py",
+    "js",
+    "ts",
+    "tsx",
+    "jsx",
+    "html",
+    "css",
+    "sh",
+    "go",
+    "rs",
+    "rb",
+    "java",
+    "c",
+    "cpp",
+    "h",
+    "log",
+    "png",
+    "jpg",
+    "jpeg",
+    "gif",
+    "webp",
+    "svg",
     "pdf",
 }
 _UNSAFE_NAME = re.compile(r"[^A-Za-z0-9._-]")
@@ -98,13 +124,15 @@ async def list_session_files(session_id: str, request: Request) -> list[dict]:
         if any(part.startswith(".") for part in p.relative_to(workspace).parts):
             continue
         rel = p.relative_to(workspace)
-        results.append({
-            "path": str(p),
-            "rel_path": str(rel),
-            "name": p.name,
-            "ext": p.suffix.lstrip(".").lower(),
-            "size": p.stat().st_size,
-        })
+        results.append(
+            {
+                "path": str(p),
+                "rel_path": str(rel),
+                "name": p.name,
+                "ext": p.suffix.lstrip(".").lower(),
+                "size": p.stat().st_size,
+            }
+        )
         if len(results) >= _MAX_FILES:
             break
 
@@ -154,11 +182,13 @@ async def upload_files(
                     raise HTTPException(status_code=413, detail="file too large (max 25MB)")
                 out.write(chunk)
 
-        saved.append({
-            "path": str(dest),
-            "rel_path": str(dest.relative_to(workspace)),
-            "name": dest.name,
-            "ext": dest.suffix.lstrip(".").lower(),
-            "size": total,
-        })
+        saved.append(
+            {
+                "path": str(dest),
+                "rel_path": str(dest.relative_to(workspace)),
+                "name": dest.name,
+                "ext": dest.suffix.lstrip(".").lower(),
+                "size": total,
+            }
+        )
     return saved

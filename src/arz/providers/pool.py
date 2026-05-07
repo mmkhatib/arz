@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
-from collections.abc import Callable, Coroutine
-from typing import Any, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 import structlog
 

@@ -1,8 +1,12 @@
 """Approval resolution routes."""
+
 from __future__ import annotations
+
 import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
+
 from arz.dashboard.token_auth import require_token
 
 router = APIRouter(dependencies=[Depends(require_token)])
@@ -52,6 +56,7 @@ VALID_MODES = {"normal", "trust_reads", "trust", "yolo"}
 async def evict_session(session_id: str, request: Request) -> None:
     """Shut down and remove the active provider for this session (model switch helper)."""
     from arz.providers.pool import ProviderPool
+
     pool: ProviderPool = request.app.state.provider_pool
     await pool.deactivate(session_id)
 
@@ -66,6 +71,7 @@ async def set_session_mode(session_id: str, body: ModeBody, request: Request) ->
         raise HTTPException(status_code=404, detail="Session not found")
     # Persist on the session itself so it survives server restarts.
     from arz.session.session import Session
+
     assert isinstance(session, Session)
     session.approval_mode = body.mode
     mgr.save(session)
@@ -78,6 +84,8 @@ async def set_session_mode(session_id: str, body: ModeBody, request: Request) ->
         yolo.discard(session_id)
     # Evict the pool entry so the next chat turn rebuilds the provider with the
     # right --permission-mode flag for claude-code.
+    from arz.providers.pool import ProviderPool
+
     pool: ProviderPool = request.app.state.provider_pool
     await pool.deactivate(session_id)
     return {"mode": body.mode}

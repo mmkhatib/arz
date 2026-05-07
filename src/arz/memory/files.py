@@ -119,7 +119,11 @@ class MemoryFiles:
     def _safe_path(self, name: str) -> Path:
         if name in ("preferences.md", "projects.md", "memory.md"):
             return self._dir / name
-        if name.startswith("history/") and name.endswith(".md") and "/" not in name[len("history/"):]:
+        if (
+            name.startswith("history/")
+            and name.endswith(".md")
+            and "/" not in name[len("history/") :]
+        ):
             return self._dir / name
         raise ValueError(f"refusing to access memory file {name!r}")
 
