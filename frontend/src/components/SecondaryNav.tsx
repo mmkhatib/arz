@@ -23,17 +23,22 @@ export interface SecondaryNavItem<T extends string> {
 
 interface Props<T extends string> {
   title?: string;
+  /** Icon shown next to the title — when set, the SecondaryNav header
+   *  doubles as the page identity, letting callers drop the redundant
+   *  top-of-page PageHeader. */
+  icon?: ReactNode;
   items: SecondaryNavItem<T>[];
   value: T;
   onChange: (id: T) => void;
   /** Optional footer slot for actions (refresh, settings shortcut, etc). */
   footer?: ReactNode;
-  /** Width class — defaults to w-48; use "w-44" or similar for tighter pages. */
+  /** Width class — defaults to w-56; use "w-44" or similar for tighter modals. */
   widthClass?: string;
 }
 
 export default function SecondaryNav<T extends string>({
   title,
+  icon,
   items,
   value,
   onChange,
@@ -54,8 +59,9 @@ export default function SecondaryNav<T extends string>({
       ].join(" ")}
     >
       {title && (
-        <div className="flex items-center px-4 py-3 border-b border-[var(--border)] max-md:hidden">
-          <span className="text-[var(--accent)] font-semibold tracking-wide text-[13px]">{title}</span>
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)] max-md:hidden">
+          {icon && <span className="text-[var(--cedar)] shrink-0">{icon}</span>}
+          <span className="text-[15px] font-semibold text-[var(--text)] tracking-wide truncate">{title}</span>
         </div>
       )}
       <div className="flex-1 overflow-y-auto py-2 max-md:flex max-md:flex-row max-md:py-1 max-md:px-1">

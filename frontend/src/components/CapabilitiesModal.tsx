@@ -41,14 +41,13 @@ export default function CapabilitiesModal({ onClose, variant = "modal" }: Props)
 
   return (
     <PageShell variant={variant} maxWidth="max-w-4xl" onClose={handleClose}>
-      <PageHeader
-        icon={<Puzzle size={16} />}
-        title="Capabilities"
-        onClose={variant === "modal" ? handleClose : undefined}
-      />
+      {variant === "modal" && (
+        <PageHeader icon={<Puzzle size={16} />} title="Capabilities" onClose={handleClose} />
+      )}
       <div className="flex flex-1 min-h-0">
         <SecondaryNav<Tab>
           title={variant === "page" ? "Capabilities" : undefined}
+          icon={variant === "page" ? <Puzzle size={16} /> : undefined}
           value={tab}
           onChange={setTab}
           items={navItems}

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, Users, Heart, ListChecks, Save, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import SecondaryNav from "@/components/SecondaryNav";
-import { PageShell, PageHeader } from "@/components/PageShell";
+import { PageShell } from "@/components/PageShell";
 
 type Tab = "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -11,10 +11,10 @@ export default function AutonomyPage() {
 
   return (
     <PageShell variant="page">
-      <PageHeader icon={<Activity size={16} />} title="Autonomy" />
       <div className="flex flex-1 min-h-0">
         <SecondaryNav<Tab>
           title="Autonomy"
+          icon={<Activity size={16} />}
           value={tab}
           onChange={setTab}
           items={[

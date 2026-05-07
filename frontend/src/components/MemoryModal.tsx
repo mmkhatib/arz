@@ -42,16 +42,18 @@ export default function MemoryModal({ onClose, variant = "modal" }: Props) {
     </>
   );
 
+  // Page variant: SecondaryNav itself carries the page identity (icon +
+  // "Memory" title), so we drop the redundant PageHeader. Modal variant
+  // keeps the PageHeader because the modal frame has no other anchor.
   return (
     <PageShell variant={variant} maxWidth="max-w-4xl" onClose={handleClose}>
-      <PageHeader
-        icon={<Brain size={16} />}
-        title="Memory"
-        onClose={variant === "modal" ? handleClose : undefined}
-      />
+      {variant === "modal" && (
+        <PageHeader icon={<Brain size={16} />} title="Memory" onClose={handleClose} />
+      )}
       <div className="flex flex-1 min-h-0">
         <SecondaryNav<Tab>
           title={variant === "page" ? "Memory" : undefined}
+          icon={variant === "page" ? <Brain size={16} /> : undefined}
           value={tab}
           onChange={setTab}
           items={navItems}
