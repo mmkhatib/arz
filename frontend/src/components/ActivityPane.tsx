@@ -467,7 +467,7 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
       <div className="flex-1 flex flex-col border-l border-[var(--border)] bg-[var(--surface)] min-w-0">
         {/* FileViewer takes over the full pane when a file is selected */}
         {selectedFile ? (
-          <FileViewer path={selectedFile} onClose={() => setSelectedFile(null)} />
+          <FileViewer path={selectedFile} onClose={() => setSelectedFile(null)} sessionId={sessionId} />
         ) : (
           <>
             {/* Header */}

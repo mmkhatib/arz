@@ -104,6 +104,67 @@ async def read_file(path: str = Query(...)) -> dict:
     }
 
 
+@router.post("/api/files/edit")
+async def edit_file_with_comments(request: Request) -> dict:
+    """Hand a file + a batch of inline comments to a subagent for editing.
+
+    Body shape:
+        {
+          "path": "/abs/path/to/doc.md",
+          "comments": [
+              {"selection": "...", "comment": "make this terser"},
+              {"selection": "...", "comment": "expand with an example"},
+          ],
+          "session_id": "..."   # parent session for the spawn
+        }
+
+    The subagent receives the comments as a single instruction prompt
+    that says "edit the file in place per these comments". Returns
+    the spawn record so the caller can poll it.
+    """
+    body = await request.json()
+    path = (body.get("path") or "").strip()
+    comments = body.get("comments") or []
+    session_id = (body.get("session_id") or "").strip()
+    agent = (body.get("agent") or "general").strip()
+    if not path or not os.path.isabs(path):
+        raise HTTPException(status_code=422, detail="path must be an absolute filename")
+    if not isinstance(comments, list) or not comments:
+        raise HTTPException(status_code=422, detail="comments must be a non-empty list")
+    if not session_id:
+        raise HTTPException(status_code=422, detail="session_id required")
+
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+
+    blocks = []
+    for i, c in enumerate(comments, 1):
+        if not isinstance(c, dict):
+            continue
+        sel = (c.get("selection") or "").strip()
+        com = (c.get("comment") or "").strip()
+        if not com:
+            continue
+        if sel:
+            blocks.append(f"### Comment {i}\nOn this text:\n```\n{sel}\n```\nFeedback: {com}")
+        else:
+            blocks.append(f"### Comment {i}\nGeneral feedback: {com}")
+    if not blocks:
+        raise HTTPException(status_code=422, detail="no usable comments")
+
+    prompt = (
+        f"Edit the file `{path}` in place per the inline comments below.\n"
+        f"Make the smallest set of changes needed; preserve unrelated sections.\n"
+        f"After editing, briefly summarise what you changed.\n\n" + "\n\n".join(blocks)
+    )
+
+    from arz.subagents import get_subagent_manager
+
+    rec = get_subagent_manager().spawn(session_id, agent, prompt)
+    return {"id": rec.id, "status": rec.status}
+
+
 @router.get("/api/sessions/{session_id}/files")
 async def list_session_files(session_id: str, request: Request) -> list[dict]:
     """List all files in a session's workspace directory."""

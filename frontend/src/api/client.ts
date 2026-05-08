@@ -626,6 +626,21 @@ export const api = {
   cancelTask: (id: string) =>
     request<{ cancelled: boolean }>(`/taskrun/${id}/cancel`, { method: "POST" }),
 
+  /** Hand off a markdown file + batch of selection-anchored comments to a
+   *  subagent for in-place editing. */
+  editFileWithComments: (
+    body: {
+      path: string;
+      comments: { selection: string; comment: string }[];
+      session_id: string;
+      agent?: string;
+    },
+  ) =>
+    request<{ id: string; status: string }>("/files/edit", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   uploadFiles: async (sessionId: string, files: File[]): Promise<UploadedFile[]> => {
     const fd = new FormData();
     for (const f of files) fd.append("files", f);
