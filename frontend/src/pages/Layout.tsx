@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import NavBar, { type NavSection } from "@/components/NavBar";
+import TopBar from "@/components/TopBar";
 
 const PATH_TO_SECTION: Record<string, NavSection> = {
   "/": "chat",
@@ -100,8 +101,11 @@ export default function Layout() {
           navigate(SECTION_TO_PATH[s]);
         }}
       />
-      <div className="relative flex flex-1 min-w-0 h-full overflow-hidden">
-        <Outlet />
+      <div className="flex flex-col flex-1 min-w-0 h-full overflow-hidden">
+        <TopBar />
+        <div className="relative flex flex-1 min-w-0 min-h-0 overflow-hidden">
+          <Outlet />
+        </div>
       </div>
     </div>
   );

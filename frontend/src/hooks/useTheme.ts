@@ -1,32 +1,51 @@
+// Theme + mode + density.
+//
+// data-theme   = "cedar" | alt palette name
+// data-mode    = "dark" | "light"   (single source of truth, never "system" on the DOM)
+// data-density = "compact" | "cozy" | "airy"
+//
+// Mode preference can be "system" — we resolve to dark/light on read +
+// re-resolve when the OS preference changes. Theme is always concrete.
+// Cedar is the brand default; alt themes recolor only the cedar
+// variables (—cedar, —cedar-glow, —user-bg, —accent) so surfaces stay
+// neutral across themes.
+
 import { useState, useCallback, useEffect } from "react";
 
 export type ModePreference = "dark" | "light" | "system";
 export type ResolvedMode = "dark" | "light";
 export type ColorTheme = string;
+export type Density = "compact" | "cozy" | "airy";
 
 export interface ThemeEntry {
   value: string;
   label: string;
+  /** A representative seed colour for theme-picker swatches. */
+  swatch: string;
 }
 
-// Arz-original theme names. Most are riffs on classic palettes but with
-// our own colour shifts so they read as Arz themes, not direct ports.
 export const THEMES: ThemeEntry[] = [
-  { value: "cedar", label: "Cedar" },          // signature green/forest
-  { value: "saffron", label: "Saffron" },      // warm citrine + olive
-  { value: "twilight", label: "Twilight" },    // dusty violet
-  { value: "glacier", label: "Glacier" },      // pale arctic blue
-  { value: "driftwood", label: "Driftwood" },  // muted teal on cream
-  { value: "inkwell", label: "Inkwell" },      // deep navy + indigo
-  { value: "ember", label: "Ember" },          // burnt orange + ochre
-  { value: "lavender", label: "Lavender" },    // soft mauve
-  { value: "petal", label: "Petal" },          // rose + dusk
-  { value: "glass", label: "Glass" },          // crisp cyan
-  { value: "obsidian", label: "Obsidian" },    // pure-black AMOLED
+  { value: "cedar",     label: "Cedar",     swatch: "#4a8a6a" },
+  { value: "saffron",   label: "Saffron",   swatch: "#9fbf2f" },
+  { value: "twilight",  label: "Twilight",  swatch: "#a884e8" },
+  { value: "glacier",   label: "Glacier",   swatch: "#6fa6bb" },
+  { value: "driftwood", label: "Driftwood", swatch: "#34b0a4" },
+  { value: "inkwell",   label: "Inkwell",   swatch: "#6a8df0" },
+  { value: "ember",     label: "Ember",     swatch: "#ff8c2a" },
+  { value: "lavender",  label: "Lavender",  swatch: "#b894ed" },
+  { value: "petal",     label: "Petal",     swatch: "#e598a3" },
+  { value: "glass",     label: "Glass",     swatch: "#1cc8e8" },
+  { value: "obsidian",  label: "Obsidian",  swatch: "#1a8aff" },
 ];
 
-// One-shot remap: anyone with the old theme keys in localStorage from
-// a prior version gets transparently switched to the renamed equivalent.
+export const DENSITIES: { value: Density; label: string }[] = [
+  { value: "compact", label: "Compact" },
+  { value: "cozy",    label: "Cozy"    },
+  { value: "airy",    label: "Airy"    },
+];
+
+// Migrate old theme keys to current ones. Lets folks who picked
+// "monokai" before the rename keep their selection.
 const THEME_MIGRATION: Record<string, string> = {
   monokai: "saffron",
   dracula: "twilight",
@@ -52,9 +71,11 @@ function resolveMode(pref: ModePreference): ResolvedMode {
   return pref === "system" ? getSystemMode() : pref;
 }
 
-function applyTheme(colorTheme: ColorTheme, mode: ResolvedMode) {
-  document.documentElement.dataset.theme = `${colorTheme}-${mode}`;
-  document.documentElement.dataset.mode = mode;
+function applyDom(theme: ColorTheme, mode: ResolvedMode, density: Density) {
+  const html = document.documentElement;
+  html.dataset.theme = theme;
+  html.dataset.mode = mode;
+  html.dataset.density = density;
 }
 
 const SYNC_EVENT = "arz-theme-sync";
@@ -69,14 +90,18 @@ export function useTheme() {
     if (migrated !== raw) localStorage.setItem("arz-color-theme", migrated);
     return migrated;
   });
+  const [density, setDensityState] = useState<Density>(
+    () => (localStorage.getItem("arz-density") as Density) || "cozy"
+  );
   const [resolved, setResolved] = useState<ResolvedMode>(() =>
     resolveMode((localStorage.getItem("arz-mode") as ModePreference) || "system")
   );
 
   useEffect(() => {
-    applyTheme(colorTheme, resolved);
-  }, [resolved, colorTheme]);
+    applyDom(colorTheme, resolved, density);
+  }, [resolved, colorTheme, density]);
 
+  // Track OS preference when in system mode.
   useEffect(() => {
     if (mode !== "system") return;
     const mql = window.matchMedia("(prefers-color-scheme: dark)");
@@ -85,40 +110,57 @@ export function useTheme() {
     return () => mql.removeEventListener("change", handler);
   }, [mode]);
 
-  // Sync across multiple useTheme() instances on the same page
+  // Sync across multiple useTheme() instances on the same page.
   useEffect(() => {
     const handler = (e: Event) => {
-      const { mode: m, colorTheme: ct } = (e as CustomEvent).detail;
-      setMode(m);
-      setResolved(resolveMode(m));
-      setColorThemeState(ct);
+      const detail = (e as CustomEvent).detail;
+      setMode(detail.mode);
+      setResolved(resolveMode(detail.mode));
+      setColorThemeState(detail.colorTheme);
+      setDensityState(detail.density);
     };
     window.addEventListener(SYNC_EVENT, handler);
     return () => window.removeEventListener(SYNC_EVENT, handler);
   }, []);
 
+  const broadcast = (next: { mode?: ModePreference; theme?: ColorTheme; density?: Density }) => {
+    const m = next.mode ?? mode;
+    const t = next.theme ?? colorTheme;
+    const d = next.density ?? density;
+    window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { mode: m, colorTheme: t, density: d } }));
+  };
+
   const setColorTheme = useCallback((t: ColorTheme) => {
     localStorage.setItem("arz-color-theme", t);
     setColorThemeState(t);
-    const m = (localStorage.getItem("arz-mode") as ModePreference) || "system";
-    window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { mode: m, colorTheme: t } }));
-  }, []);
+    broadcast({ theme: t });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, density]);
 
   const setThemeMode = useCallback((pref: ModePreference) => {
     localStorage.setItem("arz-mode", pref);
     setMode(pref);
-    const newResolved = resolveMode(pref);
-    setResolved(newResolved);
-    const ct = (localStorage.getItem("arz-color-theme") as ColorTheme) || "cedar";
-    window.dispatchEvent(new CustomEvent(SYNC_EVENT, { detail: { mode: pref, colorTheme: ct } }));
-  }, []);
+    setResolved(resolveMode(pref));
+    broadcast({ mode: pref });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [colorTheme, density]);
+
+  const setDensity = useCallback((d: Density) => {
+    localStorage.setItem("arz-density", d);
+    setDensityState(d);
+    broadcast({ density: d });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, colorTheme]);
 
   return {
     mode,
     resolved,
     colorTheme,
+    density,
     setColorTheme,
     setMode: setThemeMode,
+    setDensity,
     themes: THEMES,
+    densities: DENSITIES,
   };
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import ShortcutsOverlay from "./ShortcutsOverlay";
+import CedarMark from "./CedarMark";
 import { api } from "@/api/client";
 import {
   MessageSquare,
@@ -37,31 +38,60 @@ interface NavEntry {
   badge?: (badge?: number) => React.ReactNode | null;
 }
 
-const ENTRIES: NavEntry[] = [
-  { id: "overview", label: "Overview", icon: <LayoutDashboard size={16} /> },
-  { id: "chat", label: "Chat", icon: <MessageSquare size={16} /> },
-  { id: "board", label: "Board", icon: <Columns3 size={16} /> },
-  { id: "autopilot", label: "Autopilot", icon: <Wand2 size={16} /> },
-  { id: "channels", label: "Channels", icon: <Layers size={16} /> },
-  { id: "agents", label: "Agents", icon: <Bot size={16} /> },
-  { id: "memory", label: "Memory", icon: <Brain size={16} /> },
+// Information architecture — 5 zones, flat within each. Mirrors the
+// Cedar redesign spec.
+const NAV_ZONES: { zone: string; items: NavEntry[] }[] = [
   {
-    id: "schedule",
-    label: "Schedule",
-    icon: <Clock size={16} />,
-    badge: (b) =>
-      b && b > 0 ? (
-        <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] rounded-full bg-[var(--cedar)] text-white text-[9px] font-mono flex items-center justify-center px-1 leading-none">
-          {b > 9 ? "9+" : b}
-        </span>
-      ) : null,
+    zone: "Today",
+    items: [
+      { id: "overview", label: "Overview", icon: <LayoutDashboard size={16} /> },
+      { id: "chat",     label: "Chat",     icon: <MessageSquare size={16} /> },
+    ],
   },
-  { id: "analytics", label: "Analytics", icon: <BarChart3 size={16} /> },
-  { id: "capabilities", label: "Capabilities", icon: <Puzzle size={16} /> },
-  { id: "autonomy", label: "Autonomy", icon: <Activity size={16} /> },
-  { id: "models", label: "Models", icon: <Cpu size={16} /> },
-  { id: "settings", label: "Settings", icon: <SettingsIcon size={16} /> },
+  {
+    zone: "Mind",
+    items: [
+      { id: "memory",       label: "Memory",       icon: <Brain size={16} /> },
+      { id: "capabilities", label: "Capabilities", icon: <Puzzle size={16} /> },
+    ],
+  },
+  {
+    zone: "Work",
+    items: [
+      {
+        id: "schedule",
+        label: "Schedule",
+        icon: <Clock size={16} />,
+        badge: (b) =>
+          b && b > 0 ? (
+            <span className="absolute top-0.5 right-0.5 min-w-[14px] h-[14px] rounded-full bg-[var(--cedar)] text-white text-[9px] font-mono flex items-center justify-center px-1 leading-none">
+              {b > 9 ? "9+" : b}
+            </span>
+          ) : null,
+      },
+      { id: "autopilot", label: "Autopilot", icon: <Wand2 size={16} /> },
+      { id: "autonomy",  label: "Autonomy",  icon: <Activity size={16} /> },
+      { id: "board",     label: "Operations", icon: <Columns3 size={16} /> },
+      { id: "agents",    label: "Agents",    icon: <Bot size={16} /> },
+    ],
+  },
+  {
+    zone: "Reach",
+    items: [
+      { id: "channels", label: "Channels", icon: <Layers size={16} /> },
+      { id: "models",   label: "Models",   icon: <Cpu size={16} /> },
+    ],
+  },
+  {
+    zone: "System",
+    items: [
+      { id: "analytics", label: "Analytics", icon: <BarChart3 size={16} /> },
+      { id: "settings",  label: "Settings",  icon: <SettingsIcon size={16} /> },
+    ],
+  },
 ];
+
+// (kept to avoid an empty file region; flat list reachable via NAV_ZONES.)
 
 export default function NavBar({ active, cronBadge, onSelect }: Props) {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem(STORAGE_KEY) === "1");
@@ -97,38 +127,53 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
       ].join(" ")}
     >
       {/* Brand + collapse toggle */}
-      <div className="flex items-center justify-between px-2 py-3 border-b border-[var(--border)]">
+      <div className="flex items-center justify-between px-3 py-3 border-b border-[var(--border)]">
         {!collapsed && (
-          <span className="text-[var(--accent)] font-semibold tracking-wide text-[13px] pl-1">
-            🌲 Arz
-          </span>
+          <div className="flex items-center gap-2">
+            <CedarMark size={22} />
+            <span
+              className="font-display tracking-wide text-[18px] text-[var(--text)]"
+              style={{ fontStyle: "italic", letterSpacing: ".01em" }}
+            >
+              arz
+            </span>
+          </div>
         )}
         <button
           onClick={() => setCollapsed((c) => !c)}
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          className="w-7 h-7 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors mx-auto"
+          className="w-7 h-7 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
         >
           {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
         </button>
       </div>
 
-      <div className="flex flex-col gap-0.5 p-1.5 flex-1">
-        {ENTRIES.map((entry) => {
-          const isActive = entry.id === active;
-          const badge = entry.id === "schedule" ? entry.badge?.(cronBadge) : null;
-          return (
-            <NavItem
-              key={entry.id}
-              label={entry.label}
-              icon={entry.icon}
-              active={isActive}
-              collapsed={collapsed}
-              badge={badge}
-              onClick={() => onSelect(entry.id)}
-            />
-          );
-        })}
+      <div className="flex flex-col p-1.5 flex-1 overflow-y-auto">
+        {NAV_ZONES.map((zone, zi) => (
+          <div key={zone.zone} className={zi > 0 ? "mt-3" : ""}>
+            {!collapsed && (
+              <div className="px-2.5 pt-1 pb-1 eyebrow text-[var(--muted)]">{zone.zone}</div>
+            )}
+            <div className="flex flex-col gap-0.5">
+              {zone.items.map((entry) => {
+                const isActive = entry.id === active;
+                const badge = entry.id === "schedule" ? entry.badge?.(cronBadge) : null;
+                return (
+                  <NavItem
+                    key={entry.id}
+                    label={entry.label}
+                    icon={entry.icon}
+                    active={isActive}
+                    collapsed={collapsed}
+                    badge={badge}
+                    onClick={() => onSelect(entry.id)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       <MemoryStatsRow collapsed={collapsed} />
