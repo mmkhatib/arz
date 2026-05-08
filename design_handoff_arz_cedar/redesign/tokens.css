@@ -1,0 +1,166 @@
+/* ─── Arz Cedar — Design Tokens ───────────────────────────────── */
+
+:root, [data-theme="dark"] {
+  /* Surfaces — forest floor at dusk */
+  --bg:        #0b1210;
+  --surface:   #111a16;
+  --s2:        #16211c;
+  --s3:        #1c2922;
+  --border:    #243228;
+  --border2:   #2d3e33;
+  --hairline:  rgba(228,222,204,.06);
+
+  /* Cedar greens */
+  --cedar:     #4a8a6a;
+  --cedar-2:   #5fa080;
+  --cedar-deep:#2d6a4f;
+  --cedar-glow:#76c89c;
+  --cedar-dim: rgba(74,138,106,.12);
+  --cedar-line:rgba(74,138,106,.35);
+
+  /* Text */
+  --text:      #e6dfd1;
+  --text2:     #a4b3a8;
+  --text3:     #758578;
+  --muted:     #5a6c63;
+
+  /* Accent palette (use sparingly) */
+  --dawn:      #d9986e;
+  --dawn-dim:  rgba(217,152,110,.12);
+  --stone:     #7090a8;
+  --stone-dim: rgba(112,144,168,.12);
+  --ember:     #c0654a;
+  --ember-dim: rgba(192,101,74,.12);
+  --pine:      #88a890;
+  --pine-dim:  rgba(136,168,144,.12);
+
+  /* User bubble */
+  --user-bg:   rgba(74,138,106,.13);
+  --user-bd:   rgba(74,138,106,.28);
+
+  /* Effects */
+  --topo:      rgba(118,200,156,.04);
+  --shadow-1:  0 1px 2px rgba(0,0,0,.4);
+  --shadow-2:  0 8px 24px -8px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
+}
+
+[data-theme="light"] {
+  --bg:        #f5f1e6;
+  --surface:   #fbf8ef;
+  --s2:        #ede8d8;
+  --s3:        #e3dcc7;
+  --border:    #d6cdb5;
+  --border2:   #c8bfa6;
+  --hairline:  rgba(40,46,38,.07);
+
+  --cedar:     #2d6a4f;
+  --cedar-2:   #3d8567;
+  --cedar-deep:#1f4e39;
+  --cedar-glow:#4a8a6a;
+  --cedar-dim: rgba(45,106,79,.10);
+  --cedar-line:rgba(45,106,79,.30);
+
+  --text:      #1a2620;
+  --text2:     #4d5b53;
+  --text3:     #6f7d74;
+  --muted:     #8a9890;
+
+  --dawn:      #b46f3e;
+  --dawn-dim:  rgba(180,111,62,.12);
+  --stone:     #4d6c84;
+  --stone-dim: rgba(77,108,132,.12);
+  --ember:     #9c4a30;
+  --ember-dim: rgba(156,74,48,.12);
+  --pine:      #5a7c63;
+  --pine-dim:  rgba(90,124,99,.12);
+
+  --user-bg:   rgba(45,106,79,.12);
+  --user-bd:   rgba(45,106,79,.30);
+
+  --topo:      rgba(45,106,79,.045);
+  --shadow-1:  0 1px 2px rgba(40,46,38,.08);
+  --shadow-2:  0 8px 24px -8px rgba(40,46,38,.12), 0 2px 6px rgba(40,46,38,.06);
+}
+
+/* ── density modes ──────────────────────────────────────────── */
+[data-density="compact"] { --pad: 4px; --pad2: 8px; --pad3: 12px; --row: 28px; --gap: 6px; }
+[data-density="cozy"]    { --pad: 6px; --pad2: 10px; --pad3: 16px; --row: 34px; --gap: 8px; }
+[data-density="airy"]    { --pad: 8px; --pad2: 14px; --pad3: 22px; --row: 40px; --gap: 12px; }
+
+/* ── type ───────────────────────────────────────────────────── */
+:root {
+  --fd: "Instrument Serif", "Cormorant Garamond", Georgia, serif;
+  --fn: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --fm: "JetBrains Mono", "DM Mono", ui-monospace, monospace;
+  --r:  8px;
+  --r2: 12px;
+  --r3: 18px;
+}
+
+/* ── reset ──────────────────────────────────────────────────── */
+*,*::before,*::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--fn);
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+#root { display: flex; }
+
+button { font-family: inherit; cursor: pointer; }
+input, textarea { font-family: inherit; }
+
+/* ── scrollbars ─────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+/* ── utility selection ──────────────────────────────────────── */
+::selection { background: var(--cedar-line); color: var(--text); }
+
+/* ── animations ─────────────────────────────────────────────── */
+@keyframes bounce { 0%,80%,100% { transform: translateY(0); opacity: .3 } 40% { transform: translateY(-3px); opacity: 1 } }
+@keyframes spin { to { transform: rotate(360deg) } }
+@keyframes fadeUp { from { opacity:0; transform: translateY(4px) } to { opacity:1; transform: translateY(0) } }
+@keyframes fadeIn { from { opacity:0 } to { opacity:1 } }
+@keyframes pulse { 0%,100% { opacity:.6 } 50% { opacity:1 } }
+@keyframes slideRight { from { transform: translateX(-8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
+@keyframes grow { from { transform: scaleY(0); opacity: 0 } to { transform: scaleY(1); opacity: 1 } }
+
+.fade-up { animation: fadeUp .22s ease forwards; }
+.fade-in { animation: fadeIn .25s ease forwards; }
+.slide-right { animation: slideRight .25s cubic-bezier(.2,.7,.3,1) forwards; }
+
+/* ── topographic background pattern ────────────────────────── */
+.topo-bg {
+  background-image:
+    radial-gradient(circle at 20% 30%, var(--topo) 0, transparent 35%),
+    radial-gradient(circle at 80% 70%, var(--topo) 0, transparent 40%);
+}
+
+/* ── focus ───────────────────────────────────────────────────── */
+:focus-visible {
+  outline: 1.5px solid var(--cedar-glow);
+  outline-offset: 1px;
+  border-radius: 4px;
+}
+button:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 1.5px solid var(--cedar-glow);
+  outline-offset: 1px;
+}
+
+/* ── dialog / overlay ────────────────────────────────────────── */
+.scrim {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,.5);
+  backdrop-filter: blur(3px);
+  z-index: 100;
+}
+[data-theme="light"] .scrim { background: rgba(40,46,38,.35); }
