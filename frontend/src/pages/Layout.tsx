@@ -5,6 +5,7 @@ import NavBar, { type NavSection } from "@/components/NavBar";
 
 const PATH_TO_SECTION: Record<string, NavSection> = {
   "/": "chat",
+  "/chat": "chat",
   "/board": "board",
   "/autopilot": "autopilot",
   "/overview": "overview",
@@ -36,7 +37,12 @@ const SECTION_TO_PATH: Record<NavSection, string> = {
 export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const active = (PATH_TO_SECTION[location.pathname] ?? "chat") as NavSection;
+  // Match longest-prefix so /chat/<slug> resolves to "chat" too.
+  const path = location.pathname;
+  const matchedKey = Object.keys(PATH_TO_SECTION)
+    .sort((a, b) => b.length - a.length)
+    .find((p) => p === path || (p !== "/" && path.startsWith(p + "/")));
+  const active = (matchedKey ? PATH_TO_SECTION[matchedKey] : "chat") as NavSection;
 
   // Cron badge: same poll cadence and visibility logic as ChatPage had,
   // hoisted up so the badge is visible on every page (not just /).

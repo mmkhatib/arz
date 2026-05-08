@@ -114,7 +114,13 @@ function ExportMenu({ sessionId }: { sessionId: string }) {
   }, [open]);
 
   const copyLink = () => {
-    const url = `${window.location.origin}${window.location.pathname}#session=${sessionId}`;
+    // Prefer the current path (already /chat/<slug>?sid=...), so what
+    // we put on the clipboard matches what's in the address bar. Falls
+    // back to a /chat/<sid> shape if for some reason there's no slug.
+    const path = window.location.pathname.startsWith("/chat/")
+      ? window.location.pathname + window.location.search
+      : `/chat/session?sid=${encodeURIComponent(sessionId)}`;
+    const url = `${window.location.origin}${path}`;
     void navigator.clipboard.writeText(url).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);

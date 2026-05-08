@@ -7,6 +7,7 @@ import ChatPanel from "@/components/ChatPanel";
 import NewSessionModal from "@/components/NewSessionModal";
 import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { chatPath, readSessionIdFromUrl } from "@/utils/sessionUrl";
 
 interface SseLogEntry {
   type: string;
@@ -60,10 +61,11 @@ export default function ChatPage() {
         }
         if (prev) return prev;
         if (data.length === 0) return null;
-        const hash = window.location.hash;
-        const m = hash.match(/session=([^&]+)/);
-        const deepId = m && data.find((s) => s.id === m[1]) ? m[1] : null;
-        return deepId ?? data[0].id;
+        // Check the URL — supports /chat/<slug>?sid=ID (current),
+        // ?session=ID, ?slot=ID, and the legacy #session=ID hash.
+        const fromUrl = readSessionIdFromUrl();
+        if (fromUrl && data.find((s) => s.id === fromUrl)) return fromUrl;
+        return data[0].id;
       });
     } catch (e) {
       console.error("Failed to load sessions:", e);
@@ -71,6 +73,20 @@ export default function ChatPage() {
       setLoading(false);
     }
   };
+
+  // Keep the URL in sync with the active session — produces the
+  // bookmarkable /chat/<slug>?sid=<id> shape. Title-driven slug means
+  // a rename updates the URL automatically. We use replace (not push)
+  // to avoid spamming browser history on tab switches.
+  useEffect(() => {
+    if (!activeId) return;
+    const sess = sessions.find((s) => s.id === activeId);
+    const target = chatPath(sess?.title, activeId);
+    const current = window.location.pathname + window.location.search;
+    if (current !== target) {
+      navigate(target, { replace: true });
+    }
+  }, [activeId, sessions, navigate]);
 
   // Load global provider for use as default in NewSessionModal
   useEffect(() => {

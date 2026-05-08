@@ -21,6 +21,7 @@ export default function App() {
       <Routes>
         <Route element={<Layout />}>
           <Route path="/" element={<ChatPage />} />
+          <Route path="/chat/:slug" element={<ChatPage />} />
           <Route path="/board" element={<BoardPage />} />
           <Route path="/autopilot" element={<AutopilotPage />} />
           <Route path="/overview" element={<OverviewPage />} />
