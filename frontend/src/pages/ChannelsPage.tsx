@@ -329,11 +329,20 @@ function CreateChannelDialog({ onClose, onCreated }: { onClose: () => void; onCr
     setError(null);
     try {
       const memberList = members.split(",").map((s) => s.trim()).filter(Boolean);
+      const finalName = name.trim() || (presetId !== "custom" ? presetId.replace("_", "-") : "");
+      if (!finalName) {
+        setError("Channel name is required.");
+        setCreating(false);
+        return;
+      }
       const r = await api.createChannelApp({
-        name: name.trim() || undefined,
+        name: finalName,
         topic: topic.trim() || undefined,
         preset: presetId,
-        members: presetId === "custom" ? memberList.map((a, i) => ({ agent: a, role: i === 0 ? "orchestrator" : "specialist" })) : undefined,
+        members:
+          presetId === "custom"
+            ? memberList.map((a, i) => ({ agent: a, role: i === 0 ? "orchestrator" : "specialist" }))
+            : undefined,
       });
       onCreated(r.id);
     } catch (e) {
@@ -414,7 +423,7 @@ function CreateChannelDialog({ onClose, onCreated }: { onClose: () => void; onCr
             </button>
             <button
               onClick={submit}
-              disabled={creating || (presetId === "custom" && !name.trim())}
+              disabled={creating}
               className="px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]"
             >
               {creating ? "Creating…" : "Create"}

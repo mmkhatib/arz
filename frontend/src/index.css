@@ -71,8 +71,13 @@
   --shadow-2: 0 8px 24px -8px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.3);
 }
 
-/* ─── Cedar — light ─────────────────────────────────────────── */
-[data-theme="cedar"][data-mode="light"] {
+/* ─── Light mode — applies to ANY theme ─────────────────────────
+ * Surface tokens flip to parchment regardless of which color theme
+ * is active. Theme-specific rules below only override the cedar*
+ * accent vars, so light mode + saffron (or any alt) still gets the
+ * warm light surfaces.
+ */
+[data-mode="light"] {
   --bg:        #f5f1e6;
   --surface:   #fbf8ef;
   --s2:        #ede8d8;
@@ -80,14 +85,6 @@
   --border:    #d6cdb5;
   --border2:   #c8bfa6;
   --hairline:  rgba(40,46,38,.07);
-
-  --cedar:      #2d6a4f;
-  --cedar-2:    #3d8567;
-  --cedar-deep: #1f4e39;
-  --cedar-glow: #4a8a6a;
-  --cedar-lt:   #3d8567;
-  --cedar-dim:  rgba(45,106,79,.10);
-  --cedar-line: rgba(45,106,79,.30);
 
   --text:  #1a2620;
   --text2: #4d5b53;
@@ -98,15 +95,26 @@
   --stone: #4d6c84;
   --ember: #9c4a30;
   --pine:  #5a7c63;
-  --accent: var(--cedar-glow);
 
-  --user-bg: rgba(45,106,79,.12);
-  --user-bd: rgba(45,106,79,.30);
   --asst-bg: var(--surface);
 
   --topo:     rgba(45,106,79,.045);
   --shadow-1: 0 1px 2px rgba(40,46,38,.08);
   --shadow-2: 0 8px 24px -8px rgba(40,46,38,.12), 0 2px 6px rgba(40,46,38,.06);
+}
+
+/* ─── Cedar light accents ───────────────────────────────────── */
+[data-theme="cedar"][data-mode="light"] {
+  --cedar:      #2d6a4f;
+  --cedar-2:    #3d8567;
+  --cedar-deep: #1f4e39;
+  --cedar-glow: #4a8a6a;
+  --cedar-lt:   #3d8567;
+  --cedar-dim:  rgba(45,106,79,.10);
+  --cedar-line: rgba(45,106,79,.30);
+  --accent:     var(--cedar-glow);
+  --user-bg:    rgba(45,106,79,.12);
+  --user-bd:    rgba(45,106,79,.30);
 }
 
 /* ─── Alt themes — recolor cedar variables only ─────────────── */
@@ -221,6 +229,7 @@ pre, code {
 @keyframes arz-pulse  { 0%,100% { opacity:.6 } 50% { opacity:1 } }
 @keyframes arz-slide  { from { transform: translateX(-8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
 @keyframes arz-grow   { from { transform: scaleY(0); opacity: 0 } to { transform: scaleY(1); opacity: 1 } }
+@keyframes cedarShimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
 
 .fade-up    { animation: arz-fadeup .22s ease forwards; }
 .fade-in    { animation: arz-fadein .25s ease forwards; }

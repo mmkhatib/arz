@@ -6,7 +6,7 @@
 //   notifications button, avatar.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Search } from "lucide-react";
+import { Bell, Palette, Search, Check } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "@/api/client";
 import { useTheme } from "@/hooks/useTheme";
@@ -53,12 +53,12 @@ export default function TopBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const { mode, setMode } = useTheme();
+  const [themeOpen, setThemeOpen] = useState(false);
+  const { resolved, setMode, colorTheme, setColorTheme, themes } = useTheme();
 
-  // Keep mode toggle binary — collapse "system" to whichever is active.
   const onSelectMode = (v: "light" | "dark") => setMode(v);
-  const isLight = mode === "light";
-  const isDark = mode === "dark" || mode === "system";
+  const isLight = resolved === "light";
+  const isDark = resolved === "dark";
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -157,6 +157,96 @@ export default function TopBar() {
       >
         <ModeBtn active={isLight} onClick={() => onSelectMode("light")} kind="light" />
         <ModeBtn active={isDark} onClick={() => onSelectMode("dark")} kind="dark" />
+      </div>
+
+      {/* Theme picker */}
+      <div style={{ position: "relative" }}>
+        <button
+          title="Color theme"
+          onClick={() => setThemeOpen((o) => !o)}
+          style={{
+            width: 30,
+            height: 30,
+            borderRadius: 7,
+            border: "1px solid var(--border)",
+            background: "var(--s2)",
+            color: "var(--cedar-glow)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: "pointer",
+          }}
+        >
+          <Palette size={13} />
+        </button>
+        {themeOpen && (
+          <>
+            <div onClick={() => setThemeOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 80 }} />
+            <div
+              style={{
+                position: "absolute",
+                top: "calc(100% + 6px)",
+                right: 0,
+                background: "var(--surface)",
+                border: "1px solid var(--border2)",
+                borderRadius: 10,
+                boxShadow: "var(--shadow-2)",
+                padding: 6,
+                zIndex: 90,
+                minWidth: 180,
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 9.5,
+                  fontFamily: "var(--fm)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".14em",
+                  color: "var(--muted)",
+                  padding: "6px 10px 4px",
+                }}
+              >
+                Theme
+              </div>
+              {themes.map((t) => {
+                const active = t.value === colorTheme;
+                return (
+                  <button
+                    key={t.value}
+                    onClick={() => { setColorTheme(t.value); setThemeOpen(false); }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 10,
+                      width: "100%",
+                      padding: "6px 10px",
+                      border: "none",
+                      borderRadius: 6,
+                      background: active ? "var(--cedar-dim)" : "transparent",
+                      cursor: "pointer",
+                      fontFamily: "var(--fn)",
+                      fontSize: 12,
+                      color: active ? "var(--cedar-glow)" : "var(--text)",
+                      textAlign: "left",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: "50%",
+                        background: t.swatch,
+                        border: "1px solid var(--border2)",
+                      }}
+                    />
+                    <span style={{ flex: 1 }}>{t.label}</span>
+                    {active && <Check size={11} />}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Notifications */}

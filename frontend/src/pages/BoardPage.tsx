@@ -30,13 +30,15 @@ function providerLabel(p: string | null | undefined): string {
 function AgentOpCard({
   session,
   lane,
+  stage,
   onOpen,
 }: {
   session: SessionSummary;
   lane: Lane;
+  stage: Stage | null;
   onOpen: () => void;
 }) {
-  const who = `${session.title?.slice(0, 30) || "untitled"}`;
+  const who = `${session.title?.slice(0, 50) || "untitled"}`;
   const model = session.model || providerLabel(session.provider);
   return (
     <div
@@ -62,30 +64,60 @@ function AgentOpCard({
 
       {lane === "waiting" && (
         <>
-          <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 6, fontStyle: "italic" }}>
-            assistant replied — your turn
-          </div>
+          {stage?.lastAssistantText && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--text2)",
+                marginTop: 6,
+                lineHeight: 1.4,
+                maxHeight: 36,
+                overflow: "hidden",
+                fontStyle: "italic",
+              }}
+            >
+              "{stage.lastAssistantText}…"
+            </div>
+          )}
           <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
             <Btn size="sm" kind="solid" icon={<Check size={11} />} onClick={onOpen} style={{ flex: 1 }}>
               Open
             </Btn>
           </div>
           <div style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)", marginTop: 6 }}>
-            session {session.id.slice(0, 8)}
+            waiting {fmtAge(stage?.ageSecs ?? 0)} · {session.message_count} msgs
+            {stage?.elapsedMs != null && ` · ${(stage.elapsedMs / 1000).toFixed(1)}s last reply`}
           </div>
         </>
       )}
 
       {lane === "running" && (
         <>
+          {stage?.lastTool && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--cedar-2)",
+                marginTop: 6,
+                fontFamily: "var(--fm)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={stage.lastToolInput ?? ""}
+            >
+              ⚒ {stage.lastTool}{stage.lastToolInput ? ` · ${stage.lastToolInput.slice(0, 40)}` : ""}
+            </div>
+          )}
           <div style={{ marginTop: 9, height: 3, background: "var(--s2)", borderRadius: 2, overflow: "hidden" }}>
             <div
-              className="cedar-progress"
               style={{
-                width: "60%",
+                width: "100%",
                 height: "100%",
-                background: "var(--cedar-glow)",
-                boxShadow: "0 0 6px var(--cedar-glow)",
+                background:
+                  "linear-gradient(90deg, transparent, var(--cedar-glow), transparent)",
+                animation: "cedarShimmer 1.6s linear infinite",
+                backgroundSize: "200% 100%",
               }}
             />
           </div>
@@ -99,13 +131,29 @@ function AgentOpCard({
       )}
 
       {lane === "idle" && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
-          <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
-            idle · {session.message_count} msgs
-          </span>
-          <div style={{ flex: 1 }} />
-          <Btn size="sm" kind="outline" icon={<Play size={10} />} onClick={onOpen}>Open</Btn>
-        </div>
+        <>
+          {stage?.lastAssistantText && (
+            <div
+              style={{
+                fontSize: 11,
+                color: "var(--text3)",
+                marginTop: 6,
+                lineHeight: 1.4,
+                maxHeight: 36,
+                overflow: "hidden",
+              }}
+            >
+              {stage.lastAssistantText}…
+            </div>
+          )}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+            <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+              idle {fmtAge(stage?.ageSecs ?? 0)} · {session.message_count} msgs
+            </span>
+            <div style={{ flex: 1 }} />
+            <Btn size="sm" kind="outline" icon={<Play size={10} />} onClick={onOpen}>Open</Btn>
+          </div>
+        </>
       )}
 
       {lane === "failed" && (
@@ -121,12 +169,15 @@ function AgentOpCard({
               color: "var(--text2)",
               fontFamily: "var(--fm)",
               display: "flex",
-              alignItems: "center",
+              alignItems: "flex-start",
               gap: 6,
+              lineHeight: 1.4,
             }}
           >
-            <AlertTriangle size={11} style={{ color: "var(--ember)", flexShrink: 0 }} />
-            session errored
+            <AlertTriangle size={11} style={{ color: "var(--ember)", flexShrink: 0, marginTop: 2 }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+              {stage?.lastAssistantText?.slice(0, 80) || "session errored"}
+            </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
             <Btn size="sm" kind="outline" icon={<Play size={10} />} onClick={onOpen} style={{ flex: 1 }}>
@@ -147,16 +198,28 @@ const LANE_DEFS: { id: Lane; label: string; dot: string; sub: string }[] = [
   { id: "failed",  label: "Failed",         dot: "var(--ember)",      sub: "needs attention" },
 ];
 
-function classify(s: SessionSummary, hint: { lastRole: string | null }): Lane {
-  if (s.streaming) return "running";
-  if (hint.lastRole === "assistant") return "waiting";
-  return "idle";
+function fmtAge(secs: number): string {
+  if (!secs) return "—";
+  if (secs < 60) return `${secs}s`;
+  if (secs < 3600) return `${Math.round(secs / 60)}m`;
+  if (secs < 86400) return `${Math.round(secs / 3600)}h`;
+  return `${Math.round(secs / 86400)}d`;
 }
+
+type Stage = {
+  lastRole: string | null;
+  lastTool: string | null;
+  lastToolInput: string | null;
+  lastAssistantText: string | null;
+  errored: boolean;
+  elapsedMs: number | null;
+  ageSecs: number;
+};
 
 export default function BoardPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<SessionSummary[]>([]);
-  const [lastRoles, setLastRoles] = useState<Record<string, string | null>>({});
+  const [stages, setStages] = useState<Record<string, Stage>>({});
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
   const [filter, setFilter] = useState<"all" | "open" | "done">("open");
   const [draft, setDraft] = useState("");
@@ -166,17 +229,37 @@ export default function BoardPage() {
       const data = await api.fetchSessions();
       setItems(data);
       const subset = data.slice(0, 30);
-      const roles = await Promise.all(
+      const stagesArr = await Promise.all(
         subset.map(async (s) => {
           try {
             const d = await api.getSession(s.id);
-            return [s.id, d.messages.length ? d.messages[d.messages.length - 1].role : null] as const;
+            const last = d.messages[d.messages.length - 1];
+            const lastAssistant = [...d.messages].reverse().find((m) => m.role === "assistant");
+            const tc = (last?.tool_calls?.[last.tool_calls.length - 1] || lastAssistant?.tool_calls?.[lastAssistant.tool_calls.length - 1]) as
+              | { name?: string; input?: unknown }
+              | undefined;
+            const ageSecs =
+              last?.created_at != null
+                ? Math.round((Date.now() - new Date(last.created_at).getTime()) / 1000)
+                : 0;
+            const stage: Stage = {
+              lastRole: last?.role ?? null,
+              lastTool: tc?.name ?? null,
+              lastToolInput: typeof tc?.input === "string" ? tc.input : tc?.input != null ? JSON.stringify(tc.input).slice(0, 80) : null,
+              lastAssistantText: lastAssistant?.text?.slice(0, 120) ?? null,
+              errored: /error|failed|exception|traceback/i.test(lastAssistant?.text ?? ""),
+              elapsedMs: lastAssistant?.elapsed_ms ?? null,
+              ageSecs,
+            };
+            return [s.id, stage] as const;
           } catch {
             return [s.id, null] as const;
           }
         }),
       );
-      setLastRoles(Object.fromEntries(roles));
+      const map: Record<string, Stage> = {};
+      for (const [id, st] of stagesArr) if (st) map[id] = st;
+      setStages(map);
     } catch {}
     try {
       setActionItems(await api.listActionItems());
@@ -191,7 +274,13 @@ export default function BoardPage() {
 
   const lanes: Record<Lane, SessionSummary[]> = { waiting: [], running: [], idle: [], failed: [] };
   for (const s of items.filter((s) => !s.archived)) {
-    lanes[classify(s, { lastRole: lastRoles[s.id] ?? null })].push(s);
+    const st = stages[s.id];
+    let lane: Lane;
+    if (s.streaming) lane = "running";
+    else if (st?.errored) lane = "failed";
+    else if (st?.lastRole === "assistant") lane = "waiting";
+    else lane = "idle";
+    lanes[lane].push(s);
   }
 
   const submitDraft = async () => {
@@ -297,6 +386,7 @@ export default function BoardPage() {
                       key={s.id}
                       session={s}
                       lane={lane.id}
+                      stage={stages[s.id] ?? null}
                       onOpen={() => navigate(`/?sid=${encodeURIComponent(s.id)}`)}
                     />
                   ))}

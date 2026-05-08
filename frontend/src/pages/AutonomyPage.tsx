@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
-import { Activity, Users, Heart, ListChecks, Save, Plus, Trash2, RefreshCw } from "lucide-react";
+import { Save, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api, type AuditEntryPub } from "@/api/client";
-import SecondaryNav from "@/components/SecondaryNav";
-import { CedarPage, CedarPageHeader, CedarCard, Tag, TopoLines } from "@/components/CedarUI";
+import { CedarPage, CedarPageHeader, CedarCard, Tag, SegSeg, TopoLines } from "@/components/CedarUI";
 
 type Tab = "decisions" | "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -40,29 +39,27 @@ export default function AutonomyPage() {
             </>
           }
           sub={`${auto} auto-approved · ${asked} asked first. Adjust the trust dial to bring more decisions back to you.`}
+          right={
+            <SegSeg<Tab>
+              value={tab}
+              onChange={setTab}
+              options={[
+                { value: "decisions", label: "Decisions" },
+                { value: "subagents", label: "Subagents" },
+                { value: "channels", label: "Channels" },
+                { value: "heartbeat", label: "Heartbeat" },
+                { value: "tasks", label: "Tasks" },
+              ]}
+            />
+          }
         />
       </div>
-      <div className="flex flex-1 min-h-0">
-        <SecondaryNav<Tab>
-          title="Autonomy"
-          icon={<Activity size={16} />}
-          value={tab}
-          onChange={setTab}
-          items={[
-            { id: "decisions", label: "Decisions", icon: <Activity size={13} /> },
-            { id: "subagents", label: "Subagents", icon: <Activity size={13} /> },
-            { id: "channels",  label: "Channels",  icon: <Users size={13} /> },
-            { id: "heartbeat", label: "Heartbeat", icon: <Heart size={13} /> },
-            { id: "tasks",     label: "Tasks",     icon: <ListChecks size={13} /> },
-          ]}
-        />
-        <div className="overflow-y-auto px-8 py-6 flex-1">
-          {tab === "decisions" && <DecisionsTab audits={audits} trust={trust} setTrust={setTrust} />}
-          {tab === "subagents" && <SubagentsTab />}
-          {tab === "channels" && <ChannelsTab />}
-          {tab === "heartbeat" && <HeartbeatTab />}
-          {tab === "tasks" && <TasksTab />}
-        </div>
+      <div style={{ padding: "24px 32px 32px" }}>
+        {tab === "decisions" && <DecisionsTab audits={audits} trust={trust} setTrust={setTrust} />}
+        {tab === "subagents" && <SubagentsTab />}
+        {tab === "channels" && <ChannelsTab />}
+        {tab === "heartbeat" && <HeartbeatTab />}
+        {tab === "tasks" && <TasksTab />}
       </div>
     </CedarPage>
   );
