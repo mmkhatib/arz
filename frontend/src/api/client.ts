@@ -604,16 +604,27 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   },
 
-  // ── Task runner ──
+  // ── Task runner / Autopilot ──
   listTasks: () =>
     request<{ id: string; spec: string; agent: string; status: string;
               steps: { n: number; text: string; status: string; result: string }[];
               verdict: string; started_at: number; finished_at: number }[]>("/taskrun"),
-  kickoffTask: (spec: string, agent = "general") =>
+  getTask: (id: string) =>
+    request<{ id: string; spec: string; agent: string; status: string;
+              steps: { n: number; text: string; status: string; result: string }[];
+              verdict: string; started_at: number; finished_at: number }>(`/taskrun/${id}`),
+  kickoffTask: (spec: string, agent = "general", steps?: string[]) =>
     request<{ id: string; status: string }>("/taskrun", {
+      method: "POST",
+      body: JSON.stringify({ spec, agent, steps }),
+    }),
+  planTask: (spec: string, agent = "general") =>
+    request<{ steps: string[] }>("/taskrun/plan", {
       method: "POST",
       body: JSON.stringify({ spec, agent }),
     }),
+  cancelTask: (id: string) =>
+    request<{ cancelled: boolean }>(`/taskrun/${id}/cancel`, { method: "POST" }),
 
   uploadFiles: async (sessionId: string, files: File[]): Promise<UploadedFile[]> => {
     const fd = new FormData();

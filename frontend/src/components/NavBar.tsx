@@ -16,11 +16,12 @@ import {
   Cpu,
   Activity,
   Columns3,
+  Wand2,
 } from "lucide-react";
 
 const STORAGE_KEY = "arz:nav-collapsed";
 
-export type NavSection = "overview" | "chat" | "board" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
+export type NavSection = "overview" | "chat" | "board" | "autopilot" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
 
 interface Props {
   active: NavSection;
@@ -39,6 +40,7 @@ const ENTRIES: NavEntry[] = [
   { id: "overview", label: "Overview", icon: <LayoutDashboard size={16} /> },
   { id: "chat", label: "Chat", icon: <MessageSquare size={16} /> },
   { id: "board", label: "Board", icon: <Columns3 size={16} /> },
+  { id: "autopilot", label: "Autopilot", icon: <Wand2 size={16} /> },
   { id: "agents", label: "Agents", icon: <Bot size={16} /> },
   { id: "memory", label: "Memory", icon: <Brain size={16} /> },
   {

@@ -98,6 +98,8 @@ class TaskRunner:
         self._dir = _DIR
         self._dir.mkdir(parents=True, exist_ok=True)
         self._runner = runner
+        # Tracks running asyncio tasks so cancel() can target them.
+        self._tasks: dict[str, asyncio.Task] = {}
 
     def set_runner(self, runner: SubagentRunner) -> None:
         self._runner = runner
@@ -129,20 +131,60 @@ class TaskRunner:
         except Exception:
             return None
 
-    async def kick_off(self, spec: str, agent: str = _DEFAULT_AGENT) -> TaskRecord:
+    async def kick_off(
+        self,
+        spec: str,
+        agent: str = _DEFAULT_AGENT,
+        steps: list[str] | None = None,
+    ) -> TaskRecord:
+        """Start a task. If *steps* is provided, decomposition is skipped
+        and the runner uses those step texts directly — that's the path
+        the Autopilot UI uses after the user previewed/edited the plan."""
         if self._runner is None:
             raise RuntimeError("TaskRunner has no runner — set one at startup")
+        initial_steps = (
+            [TaskStep(n=i + 1, text=t) for i, t in enumerate(steps or []) if t.strip()]
+            if steps
+            else []
+        )
         rec = TaskRecord(
             id=uuid.uuid4().hex,
             spec=spec.strip(),
             agent=agent or _DEFAULT_AGENT,
-            status="decomposing",
+            status="running" if initial_steps else "decomposing",
+            steps=initial_steps,
             started_at=time.time(),
         )
         self._persist(rec)
-        # Run in background so the HTTP request returns immediately.
-        asyncio.create_task(self._execute(rec))
+        task = asyncio.create_task(self._execute(rec))
+        self._tasks[rec.id] = task
         return rec
+
+    async def plan(self, spec: str, agent: str = _DEFAULT_AGENT) -> list[str]:
+        """Generate a plan from a spec without running anything.
+
+        Used by the Autopilot UI: user previews + edits before run.
+        """
+        if self._runner is None:
+            raise RuntimeError("TaskRunner has no runner — set one at startup")
+        decomposition = await self._runner(
+            agent or _DEFAULT_AGENT, _DECOMPOSE_PROMPT.format(spec=spec.strip())
+        )
+        return _parse_steps(decomposition)
+
+    def cancel(self, task_id: str) -> bool:
+        """Cancel a running task. Returns True if a task was cancelled."""
+        t = self._tasks.get(task_id)
+        if t is None or t.done():
+            return False
+        t.cancel()
+        rec = self.get(task_id)
+        if rec and rec.status not in ("done", "failed"):
+            rec.status = "failed"
+            rec.verdict = "(cancelled by user)"
+            rec.finished_at = time.time()
+            self._persist(rec)
+        return True
 
     # ── internals ───────────────────────────────────────────────────────────
 
@@ -166,28 +208,52 @@ class TaskRunner:
 
     async def _execute(self, rec: TaskRecord) -> None:
         try:
-            # 1. decompose
+            # 1. decompose (skipped when caller supplied steps already —
+            # that's the Autopilot path, where the user reviewed + edited
+            # the plan before clicking Run).
             assert self._runner is not None
-            decomposition = await self._runner(rec.agent, _DECOMPOSE_PROMPT.format(spec=rec.spec))
-            step_texts = _parse_steps(decomposition)
+            if rec.steps:
+                step_texts = [s.text for s in rec.steps]
+            else:
+                decomposition = await self._runner(
+                    rec.agent, _DECOMPOSE_PROMPT.format(spec=rec.spec)
+                )
+                step_texts = _parse_steps(decomposition)
             if not step_texts:
                 rec.status = "failed"
                 rec.verdict = "decomposition produced no parseable steps"
                 rec.finished_at = time.time()
                 self._persist(rec)
                 return
-            rec.steps = [TaskStep(n=i + 1, text=t) for i, t in enumerate(step_texts)]
+            if not rec.steps:
+                rec.steps = [TaskStep(n=i + 1, text=t) for i, t in enumerate(step_texts)]
             rec.status = "running"
             self._persist(rec)
 
-            # 2. execute each step with retries
+            # 2. execute each step with retries. Prior step results are
+            # fed forward as context so later stages know what's done.
             for step in rec.steps:
+                if step.status == "done":
+                    continue  # resume-aware: don't re-run finished steps
+                prior = "\n\n".join(
+                    f"## Step {s.n} — {s.status}\n{s.text}\n\n{(s.result or '').strip()[:1500]}"
+                    for s in rec.steps
+                    if s.n < step.n and s.status == "done"
+                )
+                prompt = step.text
+                if prior:
+                    prompt = (
+                        f"You are working on stage {step.n} of a multi-step plan.\n\n"
+                        f"GOAL:\n{rec.spec.strip()[:1500]}\n\n"
+                        f"PRIOR STAGES:\n{prior}\n\n"
+                        f"YOUR STAGE:\n{step.text}"
+                    )
                 for attempt in range(1, _MAX_RETRIES_PER_STEP + 1):
                     step.status = "running"
                     step.attempts = attempt
                     self._persist(rec)
                     try:
-                        out = await self._runner(rec.agent, step.text)
+                        out = await self._runner(rec.agent, prompt)
                         step.result = out or ""
                         step.status = "done"
                         self._persist(rec)

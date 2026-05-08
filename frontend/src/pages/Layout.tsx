@@ -6,6 +6,7 @@ import NavBar, { type NavSection } from "@/components/NavBar";
 const PATH_TO_SECTION: Record<string, NavSection> = {
   "/": "chat",
   "/board": "board",
+  "/autopilot": "autopilot",
   "/overview": "overview",
   "/agents": "agents",
   "/memory": "memory",
@@ -21,6 +22,7 @@ const SECTION_TO_PATH: Record<NavSection, string> = {
   overview: "/overview",
   chat: "/",
   board: "/board",
+  autopilot: "/autopilot",
   agents: "/agents",
   memory: "/memory",
   schedule: "/schedule",
