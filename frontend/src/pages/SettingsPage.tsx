@@ -1,33 +1,44 @@
-// Settings — Cedar-styled sectioned form.
+// Settings — Cedar design: 200px nav rail + content with SettingRow.
+//   General · Providers · Memory · Security · Appearance · Advanced
 
 import { useEffect, useState } from "react";
-import { Save, Settings as Cog } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
-  Btn,
+  Toggle,
+  SegSeg,
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type Settings } from "@/api/client";
 import { useTheme } from "@/hooks/useTheme";
 
+type Section = "general" | "providers" | "memory" | "security" | "appearance" | "advanced";
+
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "general",    label: "General" },
+  { id: "providers",  label: "Providers" },
+  { id: "memory",     label: "Memory" },
+  { id: "security",   label: "Security" },
+  { id: "appearance", label: "Appearance" },
+  { id: "advanced",   label: "Advanced" },
+];
+
 export default function SettingsPage() {
+  const [section, setSection] = useState<Section>("general");
   const [s, setS] = useState<Settings | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
-  const { mode, setMode, colorTheme, setColorTheme, density, setDensity, themes, densities } = useTheme();
 
   useEffect(() => { api.getSettings().then(setS).catch(() => {}); }, []);
 
-  const save = async () => {
+  const update = (patch: Partial<Settings>) => {
     if (!s) return;
-    try {
-      await api.saveSettings(s);
+    const next = { ...s, ...patch };
+    setS(next);
+    api.saveSettings(patch).then(() => {
       setSavedAt(Date.now());
-      setTimeout(() => setSavedAt(null), 2000);
-    } catch (e) {
-      alert(`Save failed: ${e}`);
-    }
+      setTimeout(() => setSavedAt(null), 1500);
+    }).catch(() => {});
   };
 
   return (
@@ -35,226 +46,251 @@ export default function SettingsPage() {
       <div style={{ position: "relative", overflow: "hidden" }}>
         <TopoLines height={120} opacity={0.5} />
         <CedarPageHeader
-          eyebrow="preferences"
-          title={
-            <>
-              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>settings</em>.
-            </>
-          }
-          sub="Tune the runtime, theme, and behavior."
-          right={
-            <Btn kind="solid" icon={<Save size={13} />} onClick={save} disabled={!s}>
-              {savedAt ? "Saved!" : "Save"}
-            </Btn>
-          }
+          eyebrow="bones"
+          title={<>Settings.</>}
+          sub="Preferences live at ~/.arz/config.yaml — every change here writes there."
+          right={savedAt ? (
+            <span style={{ fontSize: 11, fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>
+              ✓ saved
+            </span>
+          ) : null}
         />
       </div>
 
-      <div style={{ padding: "24px 32px 32px", display: "flex", flexDirection: "column", gap: 18, maxWidth: 800, margin: "0 auto", width: "100%" }}>
-        {/* Appearance */}
-        <CedarCard padding={20}>
-          <SectionTitle>Appearance</SectionTitle>
-          <FieldRow label="Mode">
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as "light" | "dark" | "system")}
-              style={selStyle}
-            >
-              <option value="light">Light</option>
-              <option value="dark">Dark</option>
-              <option value="system">System</option>
-            </select>
-          </FieldRow>
-          <FieldRow label="Theme">
-            <select value={colorTheme} onChange={(e) => setColorTheme(e.target.value as never)} style={selStyle}>
-              {themes.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-          </FieldRow>
-          <FieldRow label="Density">
-            <select value={density} onChange={(e) => setDensity(e.target.value as never)} style={selStyle}>
-              {densities.map((d) => (
-                <option key={d.value} value={d.value}>{d.label}</option>
-              ))}
-            </select>
-          </FieldRow>
-        </CedarCard>
-
-        {/* Provider */}
-        {s && (
-          <CedarCard padding={20}>
-            <SectionTitle>Default provider</SectionTitle>
-            <FieldRow label="Provider">
-              <select
-                value={s.provider}
-                onChange={(e) => setS({ ...s, provider: e.target.value as Settings["provider"] })}
-                style={selStyle}
-              >
-                {(["claude-code", "kiro-cli", "codex", "anthropic"] as const).map((p) => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
-            </FieldRow>
-            <FieldRow label="Model">
-              <input
-                value={s.model}
-                onChange={(e) => setS({ ...s, model: e.target.value })}
-                style={inpStyle}
-              />
-            </FieldRow>
-            <FieldRow label="Bot name">
-              <input
-                value={s.bot_name}
-                onChange={(e) => setS({ ...s, bot_name: e.target.value })}
-                style={inpStyle}
-              />
-            </FieldRow>
-          </CedarCard>
-        )}
-
-        {/* Memory */}
-        {s && (
-          <CedarCard padding={20}>
-            <SectionTitle>Memory recall</SectionTitle>
-            <FieldRow label="Auto recall">
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={s.auto_recall}
-                  onChange={(e) => setS({ ...s, auto_recall: e.target.checked })}
-                />
-                <span style={{ fontSize: 12.5, color: "var(--text2)" }}>
-                  Auto-inject memory on every chat turn
-                </span>
-              </label>
-            </FieldRow>
-            <FieldRow label="Recall K">
-              <input
-                type="number"
-                value={s.recall_k}
-                min={0}
-                max={20}
-                onChange={(e) => setS({ ...s, recall_k: Number(e.target.value) })}
-                style={{ ...inpStyle, width: 100 }}
-              />
-            </FieldRow>
-          </CedarCard>
-        )}
-
-        {/* Server */}
-        {s && (
-          <CedarCard padding={20}>
-            <SectionTitle>Server</SectionTitle>
-            <FieldRow label="Host">
-              <input value={s.host} onChange={(e) => setS({ ...s, host: e.target.value })} style={inpStyle} />
-            </FieldRow>
-            <FieldRow label="Port">
-              <input
-                type="number"
-                value={s.port}
-                onChange={(e) => setS({ ...s, port: Number(e.target.value) })}
-                style={{ ...inpStyle, width: 120 }}
-              />
-            </FieldRow>
-            <FieldRow label="Token auth">
-              <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={s.token_auth}
-                  onChange={(e) => setS({ ...s, token_auth: e.target.checked })}
-                />
-                <span style={{ fontSize: 12.5, color: "var(--text2)" }}>Require bearer token</span>
-              </label>
-            </FieldRow>
-            <FieldRow label="Log level">
-              <select value={s.log_level} onChange={(e) => setS({ ...s, log_level: e.target.value })} style={selStyle}>
-                {["DEBUG", "INFO", "WARNING", "ERROR"].map((l) => (
-                  <option key={l} value={l}>{l}</option>
-                ))}
-              </select>
-            </FieldRow>
-          </CedarCard>
-        )}
-
-        {/* System prompt */}
-        {s && (
-          <CedarCard padding={20}>
-            <SectionTitle>System prompt</SectionTitle>
-            <textarea
-              value={s.system_prompt}
-              onChange={(e) => setS({ ...s, system_prompt: e.target.value })}
-              rows={10}
+      <div
+        style={{
+          padding: "20px 32px",
+          display: "grid",
+          gridTemplateColumns: "200px 1fr",
+          gap: 24,
+          maxWidth: 1100,
+        }}
+      >
+        <nav style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          {SECTIONS.map((sec) => (
+            <button
+              key={sec.id}
+              onClick={() => setSection(sec.id)}
               style={{
-                width: "100%",
-                padding: 12,
-                background: "var(--bg)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                color: "var(--text)",
-                fontSize: 12.5,
-                fontFamily: "var(--fm)",
-                lineHeight: 1.6,
-                resize: "vertical",
+                padding: "8px 12px",
+                textAlign: "left",
+                border: "none",
+                background: section === sec.id ? "var(--cedar-dim)" : "transparent",
+                color: section === sec.id ? "var(--cedar-glow)" : "var(--text2)",
+                fontSize: 13,
+                fontWeight: section === sec.id ? 500 : 400,
+                borderRadius: 7,
+                cursor: "pointer",
+                fontFamily: "var(--fn)",
+                transition: "all .12s",
               }}
-            />
-          </CedarCard>
-        )}
+            >
+              {sec.label}
+            </button>
+          ))}
+        </nav>
 
-        {!s && (
-          <CedarCard padding={32}>
-            <div style={{ textAlign: "center", color: "var(--muted)" }}>
-              <Cog size={26} />
-              <div style={{ marginTop: 12, fontSize: 13 }}>Loading settings…</div>
-            </div>
-          </CedarCard>
-        )}
+        <div>
+          {section === "general" && s && (
+            <CedarCard padding={24}>
+              <SettingRow label="Default provider" desc="Used when a session doesn't specify one.">
+                <SegSeg<Settings["provider"]>
+                  value={s.provider}
+                  onChange={(v) => update({ provider: v })}
+                  options={[
+                    { value: "claude-code", label: "Claude Code" },
+                    { value: "kiro-cli", label: "Kiro" },
+                    { value: "codex", label: "Codex" },
+                    { value: "anthropic", label: "Anthropic SDK" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow label="Bot name" desc="Used as your assistant's name across surfaces.">
+                <input value={s.bot_name} onChange={(e) => update({ bot_name: e.target.value })} style={inp} />
+              </SettingRow>
+              <SettingRow label="Default model" desc="Empty for provider default.">
+                <input value={s.model} onChange={(e) => update({ model: e.target.value })} style={inp} />
+              </SettingRow>
+              <SettingRow label="Log level" desc="Gateway log verbosity.">
+                <SegSeg<string>
+                  value={s.log_level}
+                  onChange={(v) => update({ log_level: v })}
+                  options={["DEBUG", "INFO", "WARNING", "ERROR"].map((l) => ({ value: l, label: l }))}
+                />
+              </SettingRow>
+            </CedarCard>
+          )}
+
+          {section === "providers" && s && (
+            <CedarCard padding={24}>
+              <SettingRow label="Provider" desc="Active provider for new sessions.">
+                <SegSeg<Settings["provider"]>
+                  value={s.provider}
+                  onChange={(v) => update({ provider: v })}
+                  options={[
+                    { value: "claude-code", label: "Claude Code" },
+                    { value: "kiro-cli", label: "Kiro" },
+                    { value: "codex", label: "Codex" },
+                    { value: "anthropic", label: "Anthropic SDK" },
+                  ]}
+                />
+              </SettingRow>
+              <SettingRow label="Model" desc="Provider-specific model identifier.">
+                <input value={s.model} onChange={(e) => update({ model: e.target.value })} style={inp} />
+              </SettingRow>
+              <SettingRow
+                label="System prompt"
+                desc="Prepended to every session."
+              >
+                <textarea
+                  value={s.system_prompt}
+                  onChange={(e) => update({ system_prompt: e.target.value })}
+                  rows={6}
+                  style={{ ...inp, fontFamily: "var(--fm)", resize: "vertical", width: 360 }}
+                />
+              </SettingRow>
+            </CedarCard>
+          )}
+
+          {section === "memory" && s && (
+            <CedarCard padding={24}>
+              <SettingRow label="Auto recall" desc="Inject memory matches at the top of every chat turn.">
+                <Toggle on={s.auto_recall} onClick={() => update({ auto_recall: !s.auto_recall })} />
+              </SettingRow>
+              <SettingRow label="Recall K" desc="How many memory items to inject per turn.">
+                <input
+                  type="number"
+                  value={s.recall_k}
+                  min={0}
+                  max={20}
+                  onChange={(e) => update({ recall_k: Number(e.target.value) })}
+                  style={{ ...inp, width: 100 }}
+                />
+              </SettingRow>
+            </CedarCard>
+          )}
+
+          {section === "security" && s && (
+            <CedarCard padding={24}>
+              <SettingRow label="Token auth" desc="Require a bearer token for all API requests.">
+                <Toggle on={s.token_auth} onClick={() => update({ token_auth: !s.token_auth })} />
+              </SettingRow>
+              <SettingRow label="Bind address" desc="0.0.0.0 requires token auth.">
+                <input value={s.host} onChange={(e) => update({ host: e.target.value })} style={inp} />
+              </SettingRow>
+              <SettingRow label="Port" desc="Gateway listening port.">
+                <input
+                  type="number"
+                  value={s.port}
+                  onChange={(e) => update({ port: Number(e.target.value) })}
+                  style={{ ...inp, width: 120 }}
+                />
+              </SettingRow>
+            </CedarCard>
+          )}
+
+          {section === "appearance" && (
+            <CedarCard padding={24}>
+              <AppearanceSettings />
+            </CedarCard>
+          )}
+
+          {section === "advanced" && (
+            <CedarCard padding={24}>
+              <SettingRow label="Settings file" desc="Read-only — edit values above.">
+                <code style={{ fontFamily: "var(--fm)", fontSize: 12, color: "var(--text3)" }}>~/.arz/config.yaml</code>
+              </SettingRow>
+              <SettingRow label="Memory store" desc="Where lessons + notes are persisted.">
+                <code style={{ fontFamily: "var(--fm)", fontSize: 12, color: "var(--text3)" }}>~/.arz/memory.db</code>
+              </SettingRow>
+            </CedarCard>
+          )}
+
+          {!s && section !== "appearance" && (
+            <CedarCard padding={32} style={{ textAlign: "center", color: "var(--muted)" }}>
+              Loading settings…
+            </CedarCard>
+          )}
+        </div>
       </div>
     </CedarPage>
   );
 }
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
+function AppearanceSettings() {
+  const { mode, setMode, colorTheme, setColorTheme, density, setDensity, themes, densities } = useTheme();
+  return (
+    <>
+      <SettingRow label="Mode" desc="Dark, light, or follow system.">
+        <SegSeg<typeof mode>
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "light", label: "Light" },
+            { value: "dark", label: "Dark" },
+            { value: "system", label: "System" },
+          ]}
+        />
+      </SettingRow>
+      <SettingRow label="Theme" desc="Color palette. Cedar is the brand default.">
+        <select
+          value={colorTheme}
+          onChange={(e) => setColorTheme(e.target.value)}
+          style={{ ...inp, width: 180 }}
+        >
+          {themes.map((t) => (
+            <option key={t.value} value={t.value}>{t.label}</option>
+          ))}
+        </select>
+      </SettingRow>
+      <SettingRow label="Density" desc="Spacing scale across the UI.">
+        <SegSeg<typeof density>
+          value={density}
+          onChange={setDensity}
+          options={densities.map((d) => ({ value: d.value, label: d.label }))}
+        />
+      </SettingRow>
+    </>
+  );
+}
+
+function SettingRow({
+  label,
+  desc,
+  children,
+}: {
+  label: string;
+  desc: string;
+  children: React.ReactNode;
+}) {
   return (
     <div
       style={{
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
         alignItems: "center",
-        gap: 10,
-        marginBottom: 14,
-        fontFamily: "var(--fm)",
-        fontSize: 10.5,
-        color: "var(--muted)",
-        textTransform: "uppercase",
-        letterSpacing: ".14em",
+        gap: 24,
+        padding: "14px 0",
+        borderBottom: "1px solid var(--hairline)",
       }}
     >
-      <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
-      {children}
+      <div>
+        <div style={{ fontSize: 13, color: "var(--text)" }}>{label}</div>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 2 }}>{desc}</div>
+      </div>
+      <div>{children}</div>
     </div>
   );
 }
 
-function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "8px 0", borderBottom: "1px solid var(--hairline)" }}>
-      <span style={{ width: 130, fontSize: 12.5, color: "var(--text2)" }}>{label}</span>
-      <div style={{ flex: 1 }}>{children}</div>
-    </div>
-  );
-}
-
-const inpStyle: React.CSSProperties = {
-  width: "100%",
-  padding: "8px 10px",
+const inp: React.CSSProperties = {
   background: "var(--bg)",
   border: "1px solid var(--border)",
   borderRadius: 7,
-  color: "var(--text)",
+  padding: "7px 10px",
   fontSize: 13,
+  color: "var(--text)",
   fontFamily: "var(--fn)",
-};
-
-const selStyle: React.CSSProperties = {
-  ...inpStyle,
+  outline: "none",
+  minWidth: 240,
 };

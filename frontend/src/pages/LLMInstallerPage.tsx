@@ -1,8 +1,20 @@
+// Models — three sections per Cedar design:
+//   * CLIs — Claude Code, Kiro, Codex, Gemini (CliCard)
+//   * Cloud models — frontier APIs (CloudCard)
+//   * Local models — Ollama (LocalCard)
+
 import { useEffect, useRef, useState } from "react";
-import { Download, Check, ExternalLink, Loader2, X, Power, PowerOff, MemoryStick } from "lucide-react";
+import { Download, Check, ExternalLink, Loader2, X, Power, PowerOff, Wrench } from "lucide-react";
 import { api } from "@/api/client";
 import { setOllamaInstalledModels } from "@/utils/models";
-import { CedarPage, CedarPageHeader, Btn, TopoLines } from "@/components/CedarUI";
+import {
+  CedarPage,
+  CedarPageHeader,
+  CedarCard,
+  Btn,
+  Tag,
+  TopoLines,
+} from "@/components/CedarUI";
 
 interface CliRow {
   name: string;
@@ -27,12 +39,6 @@ interface ModelRow {
   gpu?: "optional" | "recommended" | "required";
 }
 
-function formatContext(n?: number): string {
-  if (!n) return "—";
-  if (n >= 1000) return `${Math.round(n / 1000)}k`;
-  return String(n);
-}
-
 interface InstalledModel {
   name: string;
   id: string;
@@ -45,6 +51,12 @@ interface LoadedModel {
   size: string;
   processor?: string;
   until?: string;
+}
+
+function fmtCtx(n?: number): string {
+  if (!n) return "—";
+  if (n >= 1000) return `${Math.round(n / 1000)}k`;
+  return String(n);
 }
 
 export default function LLMInstallerPage() {
@@ -65,8 +77,6 @@ export default function LLMInstallerPage() {
       setCatalog(s.model_catalog);
       setInstalled(s.ollama_installed_models);
       setLoaded(s.ollama_loaded_models || []);
-      // Keep the global Ollama-models cache in sync so the chat picker
-      // reflects pulls/removes immediately, no full reload needed.
       setOllamaInstalledModels(
         (s.ollama_installed_models || []).map((m) => ({ id: m.name, label: m.name })),
       );
@@ -75,23 +85,20 @@ export default function LLMInstallerPage() {
     }
   };
 
-  const loadModel = async (model: string) => {
-    setBusyMemory(model);
-    setError(null);
-    try { await api.loadOllamaModel(model); await refresh(); }
+  const loadModel = async (m: string) => {
+    setBusyMemory(m); setError(null);
+    try { await api.loadOllamaModel(m); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusyMemory(null); }
   };
-
-  const ejectModel = async (model: string) => {
-    setBusyMemory(model);
-    setError(null);
-    try { await api.ejectOllamaModel(model); await refresh(); }
+  const ejectModel = async (m: string) => {
+    setBusyMemory(m); setError(null);
+    try { await api.ejectOllamaModel(m); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusyMemory(null); }
   };
-
-  const isLoaded = (name: string) => loaded.some((l) => l.name === name);
+  const isLoaded = (n: string) => loaded.some((l) => l.name === n);
+  const isInstalled = (m: ModelRow) => installed.some((i) => i.name === m.name);
 
   useEffect(() => {
     refresh();
@@ -122,229 +129,369 @@ export default function LLMInstallerPage() {
       }
       await refresh();
     } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        setError(e instanceof Error ? e.message : String(e));
-      }
+      if ((e as Error).name !== "AbortError") setError(e instanceof Error ? e.message : String(e));
     } finally {
       setInstalling(null);
     }
   };
 
-  const cancelInstall = () => {
-    abortRef.current?.abort();
-    setInstalling(null);
-  };
-
-  const isModelInstalled = (m: ModelRow) =>
-    installed.some((i) => i.name === m.name);
+  const cancelInstall = () => { abortRef.current?.abort(); setInstalling(null); };
+  const ollamaInstalled = clis.find((c) => c.name === "ollama")?.installed ?? false;
 
   return (
     <CedarPage>
       <div style={{ position: "relative", overflow: "hidden" }}>
         <TopoLines height={120} opacity={0.5} />
         <CedarPageHeader
-          eyebrow="cli + cloud + local"
+          eyebrow="pinecones"
           title={
             <>
-              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>models</em> at hand.
+              Models &amp; <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>agents</em>.
             </>
           }
-          sub="Install CLIs, configure cloud models, pull local weights via Ollama."
+          sub="The CLIs that drive sessions, the cloud models they call, and the local seeds you've planted on this machine."
           right={<Btn kind="ghost" onClick={refresh}>↻ refresh</Btn>}
         />
       </div>
-
       {error && (
-        <div className="mx-8 mt-3 text-red-400 text-[12px] bg-red-900/20 rounded-md px-3 py-2">{error}</div>
+        <div style={{ margin: "12px 32px 0", padding: "8px 12px", background: "var(--ember-dim)", color: "var(--ember)", border: "1px solid var(--ember)", borderRadius: 6, fontSize: 12 }}>
+          {error}
+        </div>
       )}
+      <div style={{ padding: "8px 32px 32px" }}>
+        <SectionHeader eyebrow="agents" title="CLIs" sub="Coding agents installed on your machine — engines that drive sessions." count={clis.length} />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+          {clis.map((c) => (
+            <CliCard
+              key={c.name}
+              cli={c}
+              installing={installing === c.name}
+              onInstall={() => install(c.name, c.name)}
+            />
+          ))}
+        </div>
 
-      <div style={{ padding: "24px 32px 32px", display: "flex", flexDirection: "column", gap: 28 }}>
-        {/* CLIs */}
-        <section>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
-            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
-            CLIs &amp; runtimes
+        <SectionHeader
+          eyebrow="seeds"
+          title="Local models"
+          sub={`Ollama-compatible. ${installed.length} pulled · ${loaded.length} loaded.`}
+          count={catalog.length}
+        />
+        {!ollamaInstalled && (
+          <div style={{ padding: "10px 14px", background: "var(--dawn-dim)", border: "1px solid var(--dawn)", borderRadius: 8, fontSize: 12, color: "var(--dawn)", marginBottom: 12 }}>
+            Install Ollama first to pull these models.
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {clis.map((c) => (
-              <div key={c.name} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-[var(--text)]">{c.name}</span>
-                  {c.installed ? (
-                    <span className="text-[10px] uppercase tracking-wider text-emerald-400 bg-emerald-900/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-                      <Check size={9} /> installed
-                    </span>
-                  ) : (
-                    <span className="text-[10px] uppercase tracking-wider text-[var(--muted)] bg-[var(--bg)] px-1.5 py-0.5 rounded">not installed</span>
-                  )}
-                  <a href={c.docs_url} target="_blank" rel="noreferrer" className="ml-auto text-[var(--muted)] hover:text-[var(--text)]" title="Docs">
-                    <ExternalLink size={12} />
-                  </a>
-                </div>
-                <div className="text-[12px] text-[var(--muted)]">{c.description}</div>
-                {c.path && (
-                  <div className="text-[10px] font-mono text-[var(--muted)]/60 truncate">{c.path}</div>
-                )}
-                <div className="mt-1">
-                  {!c.installed && c.installable_here && (
-                    <button
-                      onClick={() => install(c.name, c.name)}
-                      disabled={installing !== null}
-                      className="text-[12px] px-3 py-1 rounded-md bg-[var(--cedar)] text-white hover:bg-[var(--cedar-lt)] disabled:opacity-40 flex items-center gap-1"
-                    >
-                      {installing === c.name ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                      Install
-                    </button>
-                  )}
-                  {!c.installed && !c.installable_here && (
-                    <span className="text-[11px] text-[var(--muted)]/70">No automatic install on this OS — see docs.</span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Memory: currently loaded Ollama models */}
-        {clis.find((c) => c.name === "ollama")?.installed && (
-          <section>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
-              <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
-              <MemoryStick size={11} /> Loaded in memory · {loaded.length}
-            </div>
-            {loaded.length === 0 ? (
-              <div className="text-[12px] text-[var(--muted)]/60 border border-dashed border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
-                No Ollama models currently held in RAM/VRAM. Use the <strong>Load</strong> button below to keep one warm; <strong>Eject</strong> evicts it.
-              </div>
-            ) : (
-              <div className="flex flex-col gap-1">
-                {loaded.map((m) => (
-                  <div key={m.name} className="flex items-center gap-3 border border-[var(--border)] rounded-lg px-3 py-2 bg-[var(--surface)]">
-                    <span className="text-[13px] font-mono text-[var(--text)] truncate flex-1">{m.name}</span>
-                    {m.processor && <span className="text-[10px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded shrink-0">{m.processor}</span>}
-                    {m.size && <span className="text-[10px] font-mono text-[var(--muted)]/60 shrink-0">{m.size}</span>}
-                    {m.until && <span className="text-[10px] text-[var(--muted)]/60 shrink-0">until {m.until}</span>}
-                    <button
-                      onClick={() => ejectModel(m.name)}
-                      disabled={busyMemory === m.name}
-                      title="Unload from memory now"
-                      className="text-[11px] flex items-center gap-1 px-2 py-1 rounded-md text-red-400 hover:bg-red-400/10 disabled:opacity-40 shrink-0"
-                    >
-                      {busyMemory === m.name ? <Loader2 size={11} className="animate-spin" /> : <PowerOff size={11} />}
-                      Eject
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
         )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+          {catalog.map((m) => (
+            <LocalCard
+              key={m.id}
+              m={m}
+              installed={isInstalled(m)}
+              loaded={isLoaded(m.name)}
+              installing={installing === m.id}
+              busy={busyMemory === m.name}
+              ollamaInstalled={ollamaInstalled}
+              onPull={() => install(m.id, m.label)}
+              onLoad={() => loadModel(m.name)}
+              onEject={() => ejectModel(m.name)}
+            />
+          ))}
+        </div>
 
-        {/* Local models */}
-        <section>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
-            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
-            Local models · Ollama
-          </div>
-          {!clis.find((c) => c.name === "ollama")?.installed && (
-            <div className="text-[12px] text-amber-400 bg-amber-900/20 rounded px-3 py-2 mb-2">
-              Install Ollama first to pull these models.
-            </div>
-          )}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-            {catalog.map((m) => {
-              const isInstalled = isModelInstalled(m);
-              const inMem = isLoaded(m.name);
-              return (
-                <div key={m.id} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[13px] font-semibold text-[var(--text)]">{m.label}</span>
-                    {isInstalled && (
-                      <span className="text-[10px] uppercase tracking-wider text-emerald-400 bg-emerald-900/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Check size={9} /> pulled
-                      </span>
-                    )}
-                    {inMem && (
-                      <span className="text-[10px] uppercase tracking-wider text-blue-400 bg-blue-900/30 px-1.5 py-0.5 rounded flex items-center gap-1">
-                        <Power size={9} /> loaded
-                      </span>
-                    )}
-                    {m.gpu === "required" && (
-                      <span className="text-[10px] uppercase tracking-wider text-amber-400 bg-amber-900/20 px-1.5 py-0.5 rounded">GPU required</span>
-                    )}
-                    {m.gpu === "recommended" && (
-                      <span className="text-[10px] uppercase tracking-wider text-amber-300/80 bg-amber-900/15 px-1.5 py-0.5 rounded">GPU rec.</span>
-                    )}
-                  </div>
-                  <div className="text-[12px] text-[var(--muted)]">{m.description}</div>
-                  {/* Requirements row — disk · RAM · context · license */}
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-[10px] font-mono text-[var(--muted)]/70">
-                    <span><span className="text-[var(--muted)]/50">disk </span>{m.size_gb} GB</span>
-                    <span><span className="text-[var(--muted)]/50">RAM  </span>{m.ram_gb ? `${m.ram_gb} GB` : "—"}</span>
-                    <span><span className="text-[var(--muted)]/50">ctx  </span>{formatContext(m.context)}</span>
-                    <span><span className="text-[var(--muted)]/50">lic  </span>{m.license || "—"}</span>
-                  </div>
-                  <div className="text-[10px] font-mono text-[var(--muted)]/60">{m.name}</div>
-                  <div className="mt-1 flex items-center gap-2">
-                    {!isInstalled && (
-                      <button
-                        onClick={() => install(m.id, m.label)}
-                        disabled={installing !== null || !clis.find((c) => c.name === "ollama")?.installed}
-                        className="text-[12px] px-3 py-1 rounded-md bg-[var(--cedar)] text-white hover:bg-[var(--cedar-lt)] disabled:opacity-40 flex items-center gap-1"
-                      >
-                        {installing === m.id ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
-                        Pull
-                      </button>
-                    )}
-                    {isInstalled && !inMem && (
-                      <button
-                        onClick={() => loadModel(m.name)}
-                        disabled={busyMemory === m.name}
-                        title="Preload into memory (keep_alive=-1)"
-                        className="text-[12px] px-3 py-1 rounded-md bg-[var(--bg)] border border-[var(--border)] text-[var(--text)] hover:border-[var(--cedar)]/50 disabled:opacity-40 flex items-center gap-1"
-                      >
-                        {busyMemory === m.name ? <Loader2 size={11} className="animate-spin" /> : <Power size={11} />}
-                        Load
-                      </button>
-                    )}
-                    {isInstalled && inMem && (
-                      <button
-                        onClick={() => ejectModel(m.name)}
-                        disabled={busyMemory === m.name}
-                        title="Unload from memory now"
-                        className="text-[12px] px-3 py-1 rounded-md bg-[var(--bg)] border border-[var(--border)] text-red-400 hover:bg-red-400/10 disabled:opacity-40 flex items-center gap-1"
-                      >
-                        {busyMemory === m.name ? <Loader2 size={11} className="animate-spin" /> : <PowerOff size={11} />}
-                        Eject
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-
-        {/* Install log */}
         {(installing || log) && (
-          <section>
-            <div className="flex items-center justify-between mb-2">
-              <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
-                <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
-                Install log
-              </div>
+          <>
+            <SectionHeader eyebrow="output" title="Install log" sub="Live stream of pull / install progress." count={0} />
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", marginBottom: 8 }}>
               {installing && (
-                <button onClick={cancelInstall} className="text-[11px] text-[var(--muted)] hover:text-red-400 flex items-center gap-1">
-                  <X size={11} /> Cancel
-                </button>
+                <Btn size="sm" kind="ghost" icon={<X size={11} />} onClick={cancelInstall}>Cancel</Btn>
               )}
             </div>
-            <pre className="bg-black/40 border border-[var(--border)] rounded-lg p-3 text-[11px] font-mono text-[var(--text)] overflow-x-auto whitespace-pre-wrap max-h-[400px] overflow-y-auto">
-{log || "(waiting…)"}
+            <pre
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "12px 14px",
+                fontSize: 11.5,
+                fontFamily: "var(--fm)",
+                color: "var(--text2)",
+                overflowX: "auto",
+                whiteSpace: "pre-wrap",
+                maxHeight: 400,
+                overflowY: "auto",
+              }}
+            >
+              {log || "(waiting…)"}
             </pre>
-          </section>
+          </>
         )}
       </div>
     </CedarPage>
+  );
+}
+
+function SectionHeader({
+  eyebrow,
+  title,
+  sub,
+  count,
+}: {
+  eyebrow: string;
+  title: string;
+  sub?: string;
+  count: number;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "space-between",
+        margin: "28px 0 12px",
+        gap: 16,
+      }}
+    >
+      <div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span style={{ width: 14, height: 1, background: "var(--cedar-glow)" }} />
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--fm)",
+              textTransform: "uppercase",
+              letterSpacing: ".16em",
+              color: "var(--cedar-2)",
+            }}
+          >
+            {eyebrow}
+          </span>
+        </div>
+        <div style={{ fontFamily: "var(--fd)", fontSize: 24, color: "var(--text)", lineHeight: 1.1 }}>
+          {title}
+        </div>
+        {sub && <div style={{ fontSize: 12.5, color: "var(--text3)", marginTop: 4 }}>{sub}</div>}
+      </div>
+      {count > 0 && (
+        <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+          {count} {count === 1 ? "item" : "items"}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function CliCard({
+  cli,
+  installing,
+  onInstall,
+}: {
+  cli: CliRow;
+  installing: boolean;
+  onInstall: () => void;
+}) {
+  return (
+    <CedarCard padding={18} hoverable style={{ position: "relative" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 8,
+            background: "var(--cedar-dim)",
+            border: "1px solid var(--cedar-line)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "var(--cedar-glow)",
+            flexShrink: 0,
+          }}
+        >
+          <Wrench size={16} />
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontFamily: "var(--fd)", fontSize: 18, color: "var(--text)" }}>{cli.name}</div>
+          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 2 }}>
+            {cli.binary}
+          </div>
+        </div>
+        <a
+          href={cli.docs_url}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: "var(--muted)", flexShrink: 0 }}
+          title="Docs"
+        >
+          <ExternalLink size={13} />
+        </a>
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 12, lineHeight: 1.55 }}>
+        {cli.description}
+      </div>
+      {cli.path && (
+        <div
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--fm)",
+            color: "var(--text3)",
+            marginTop: 8,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={cli.path}
+        >
+          {cli.path}
+        </div>
+      )}
+      <div
+        style={{
+          marginTop: 14,
+          paddingTop: 12,
+          borderTop: "1px solid var(--hairline)",
+          display: "flex",
+          gap: 6,
+          alignItems: "center",
+        }}
+      >
+        {cli.installed ? (
+          <Tag color="cedar"><Check size={9} style={{ marginRight: 3 }} />installed</Tag>
+        ) : (
+          <Tag color="muted">not installed</Tag>
+        )}
+        <div style={{ flex: 1 }} />
+        {!cli.installed && cli.installable_here && (
+          <Btn
+            size="sm"
+            kind="solid"
+            icon={installing ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+            onClick={onInstall}
+            disabled={installing}
+          >
+            Install
+          </Btn>
+        )}
+      </div>
+    </CedarCard>
+  );
+}
+
+function LocalCard({
+  m,
+  installed,
+  loaded,
+  installing,
+  busy,
+  ollamaInstalled,
+  onPull,
+  onLoad,
+  onEject,
+}: {
+  m: ModelRow;
+  installed: boolean;
+  loaded: boolean;
+  installing: boolean;
+  busy: boolean;
+  ollamaInstalled: boolean;
+  onPull: () => void;
+  onLoad: () => void;
+  onEject: () => void;
+}) {
+  return (
+    <CedarCard padding={18} hoverable>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontFamily: "var(--fm)", fontSize: 14, color: "var(--text)" }}>{m.label}</div>
+          <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 3 }}>
+            {m.size_gb}GB · {m.ram_gb ? `${m.ram_gb}GB RAM` : "—"} · {fmtCtx(m.context)} ctx
+          </div>
+        </div>
+        {loaded ? (
+          <Tag color="cedar">
+            <span
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                background: "var(--cedar-glow)",
+                marginRight: 4,
+              }}
+            />
+            loaded
+          </Tag>
+        ) : installed ? (
+          <Tag color="pine">installed</Tag>
+        ) : (
+          <Tag color="muted">not installed</Tag>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: "var(--text2)", marginTop: 12, lineHeight: 1.55 }}>{m.description}</div>
+      <div style={{ display: "flex", gap: 5, marginTop: 12, flexWrap: "wrap" }}>
+        {m.gpu === "required" && <Tag color="ember">GPU required</Tag>}
+        {m.gpu === "recommended" && <Tag color="dawn">GPU rec.</Tag>}
+        {m.license && <Tag color="muted">{m.license}</Tag>}
+      </div>
+      <div
+        style={{
+          marginTop: 14,
+          paddingTop: 12,
+          borderTop: "1px solid var(--hairline)",
+          display: "flex",
+          gap: 6,
+          alignItems: "center",
+        }}
+      >
+        <code
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--fm)",
+            color: "var(--text3)",
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            padding: "2px 6px",
+            borderRadius: 4,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: 1,
+          }}
+        >
+          {m.name}
+        </code>
+        {!installed && (
+          <Btn
+            size="sm"
+            kind="solid"
+            icon={installing ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+            onClick={onPull}
+            disabled={installing || !ollamaInstalled}
+          >
+            Pull
+          </Btn>
+        )}
+        {installed && !loaded && (
+          <Btn
+            size="sm"
+            kind="outline"
+            icon={busy ? <Loader2 size={11} className="animate-spin" /> : <Power size={11} />}
+            onClick={onLoad}
+            disabled={busy}
+          >
+            Load
+          </Btn>
+        )}
+        {installed && loaded && (
+          <Btn
+            size="sm"
+            kind="soft"
+            icon={busy ? <Loader2 size={11} className="animate-spin" /> : <PowerOff size={11} />}
+            onClick={onEject}
+            disabled={busy}
+          >
+            Eject
+          </Btn>
+        )}
+      </div>
+    </CedarCard>
   );
 }

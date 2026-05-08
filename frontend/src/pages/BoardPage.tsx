@@ -5,18 +5,140 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Check, X as XIcon, Trash2 } from "lucide-react";
+import { Plus, Check, X as XIcon, Trash2, Pause, Play, AlertTriangle } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
   Btn,
-  Tag,
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type SessionSummary, type ActionItem } from "@/api/client";
 
 type Lane = "waiting" | "running" | "idle" | "failed";
+
+function providerLabel(p: string | null | undefined): string {
+  if (!p) return "?";
+  if (p === "kiro-cli") return "Kiro";
+  if (p === "codex") return "Codex";
+  if (p === "gemini") return "Gemini";
+  if (p === "claude-code") return "CC";
+  if (p === "ollama") return "Ollama";
+  return p;
+}
+
+function AgentOpCard({
+  session,
+  lane,
+  onOpen,
+}: {
+  session: SessionSummary;
+  lane: Lane;
+  onOpen: () => void;
+}) {
+  const who = `${session.title?.slice(0, 30) || "untitled"}`;
+  const model = session.model || providerLabel(session.provider);
+  return (
+    <div
+      style={{
+        background: "var(--surface)",
+        border: "1px solid var(--border)",
+        borderRadius: 10,
+        padding: 12,
+        transition: "all .12s",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--cedar-line)")}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>
+          {providerLabel(session.provider)}{session.agent ? ` · ${session.agent}` : ""}
+        </span>
+        <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+          {model.length > 16 ? model.slice(0, 16) + "…" : model}
+        </span>
+      </div>
+      <div style={{ fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>{who}</div>
+
+      {lane === "waiting" && (
+        <>
+          <div style={{ fontSize: 11, color: "var(--text3)", marginTop: 6, fontStyle: "italic" }}>
+            assistant replied — your turn
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+            <Btn size="sm" kind="solid" icon={<Check size={11} />} onClick={onOpen} style={{ flex: 1 }}>
+              Open
+            </Btn>
+          </div>
+          <div style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)", marginTop: 6 }}>
+            session {session.id.slice(0, 8)}
+          </div>
+        </>
+      )}
+
+      {lane === "running" && (
+        <>
+          <div style={{ marginTop: 9, height: 3, background: "var(--s2)", borderRadius: 2, overflow: "hidden" }}>
+            <div
+              className="cedar-progress"
+              style={{
+                width: "60%",
+                height: "100%",
+                background: "var(--cedar-glow)",
+                boxShadow: "0 0 6px var(--cedar-glow)",
+              }}
+            />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
+            <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+              streaming · {session.message_count} msgs
+            </span>
+            <Btn size="sm" kind="ghost" icon={<Pause size={10} />} onClick={onOpen} />
+          </div>
+        </>
+      )}
+
+      {lane === "idle" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+          <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+            idle · {session.message_count} msgs
+          </span>
+          <div style={{ flex: 1 }} />
+          <Btn size="sm" kind="outline" icon={<Play size={10} />} onClick={onOpen}>Open</Btn>
+        </div>
+      )}
+
+      {lane === "failed" && (
+        <>
+          <div
+            style={{
+              marginTop: 8,
+              padding: "7px 9px",
+              background: "var(--ember-dim)",
+              borderLeft: "2px solid var(--ember)",
+              borderRadius: 3,
+              fontSize: 11,
+              color: "var(--text2)",
+              fontFamily: "var(--fm)",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <AlertTriangle size={11} style={{ color: "var(--ember)", flexShrink: 0 }} />
+            session errored
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
+            <Btn size="sm" kind="outline" icon={<Play size={10} />} onClick={onOpen} style={{ flex: 1 }}>
+              Retry
+            </Btn>
+            <Btn size="sm" kind="ghost" onClick={onOpen}>Trace</Btn>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 const LANE_DEFS: { id: Lane; label: string; dot: string; sub: string }[] = [
   { id: "waiting", label: "Waiting on you", dot: "var(--cedar-glow)", sub: "blocked on your decision" },
@@ -164,42 +286,19 @@ export default function BoardPage() {
                     {lanes[lane.id].length}
                   </span>
                 </div>
-                <div style={{ display: "flex", flexDirection: "column" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8 }}>
                   {lanes[lane.id].length === 0 && (
                     <div style={{ padding: "18px 14px", fontSize: 11.5, color: "var(--muted)", textAlign: "center" }}>
                       empty
                     </div>
                   )}
                   {lanes[lane.id].map((s) => (
-                    <div
+                    <AgentOpCard
                       key={s.id}
-                      onClick={() => navigate(`/?sid=${encodeURIComponent(s.id)}`)}
-                      style={{
-                        padding: "12px 14px",
-                        borderBottom: "1px solid var(--hairline)",
-                        cursor: "pointer",
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--s2)")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                    >
-                      <div style={{ fontSize: 12.5, color: "var(--text)", lineHeight: 1.4, marginBottom: 4 }}>
-                        {s.title || "untitled"}
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          fontSize: 10.5,
-                          fontFamily: "var(--fm)",
-                          color: "var(--muted)",
-                        }}
-                      >
-                        <span>{s.message_count} msgs</span>
-                        {s.provider && <Tag color={s.provider === "kiro-cli" ? "stone" : "cedar"}>{s.provider === "kiro-cli" ? "Kiro" : s.provider === "codex" ? "Codex" : s.provider === "gemini" ? "Gemini" : "CC"}</Tag>}
-                        {s.autonudge_goal && <Tag color="dawn">auto</Tag>}
-                      </div>
-                    </div>
+                      session={s}
+                      lane={lane.id}
+                      onOpen={() => navigate(`/?sid=${encodeURIComponent(s.id)}`)}
+                    />
                   ))}
                 </div>
               </CedarCard>

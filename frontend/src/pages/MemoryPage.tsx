@@ -1,10 +1,8 @@
 // Memory — what Arzeh remembers.
-// Three layouts: Rings (default), List, Forest. Rings is a radial SVG of
-// memory items by strength, List is a sortable dense table, Forest is
-// tag-grouped tree clusters.
+// Three layouts per design: Rings (default) / List / Forest.
 
 import { useEffect, useMemo, useState } from "react";
-import { Brain } from "lucide-react";
+import { Plus } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
@@ -36,9 +34,8 @@ function lessonToMemory(l: Lesson): Memory {
   const lines = (l.text || "").split("\n");
   const title = lines[0]?.slice(0, 90) || "(untitled)";
   const body = lines.slice(1).join(" ").trim() || lines[0] || "";
-  // Heuristic strength: pinned = 0.95, else falls off with age.
   const ageDays = (Date.now() / 1000 - (l.created_at || 0)) / 86400;
-  const strength = l.pinned ? 0.95 : Math.max(0.4, Math.min(0.9, 1 - ageDays / 60));
+  const strength = l.pinned ? 0.95 : Math.max(0.45, Math.min(0.92, 1 - ageDays / 60));
   return { id: String(l.id), kind, title, body, tags: [cat], strength, created: l.created_at };
 }
 
@@ -53,20 +50,23 @@ const KIND_TAG: Record<Memory["kind"], "cedar" | "stone" | "dawn"> = {
   preference: "dawn",
 };
 
+function relTime(epoch: number): string {
+  if (!epoch) return "—";
+  const d = Math.round((Date.now() / 1000 - epoch) / 86400);
+  if (d < 1) return "today";
+  if (d < 7) return `${d}d ago`;
+  if (d < 60) return `${Math.round(d / 7)}w ago`;
+  return `${Math.round(d / 30)}mo ago`;
+}
+
 export default function MemoryPage() {
-  const [variant, setVariant] = useState<Variant>(() => {
-    return (localStorage.getItem("arz:memory-variant") as Variant) || "rings";
-  });
+  const [variant, setVariant] = useState<Variant>(
+    () => (localStorage.getItem("arz:memory-variant") as Variant) || "rings",
+  );
   useEffect(() => { localStorage.setItem("arz:memory-variant", variant); }, [variant]);
 
   const [lessons, setLessons] = useState<Lesson[]>([]);
-  const [stats, setStats] = useState<{ markdown: number; lessons: number; vectors: number } | null>(null);
-
-  useEffect(() => {
-    api.listLessons().then(setLessons).catch(() => {});
-    api.memoryStats().then(setStats).catch(() => {});
-  }, []);
-
+  useEffect(() => { api.listLessons().then(setLessons).catch(() => {}); }, []);
   const memories = useMemo(() => lessons.map(lessonToMemory), [lessons]);
 
   return (
@@ -74,27 +74,26 @@ export default function MemoryPage() {
       <div style={{ position: "relative", overflow: "hidden" }}>
         <TopoLines height={120} opacity={0.5} />
         <CedarPageHeader
-          eyebrow="what arzeh holds"
+          eyebrow="rooted memory"
           title={
             <>
-              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>memory grove</em>.
+              <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>Rings</em> of what Arzeh remembers.
             </>
           }
-          sub={
-            stats
-              ? `${stats.lessons} lessons · ${stats.markdown} notes · ${stats.vectors} vectors. Strength fades with disuse.`
-              : "Loading memory…"
-          }
+          sub={`${memories.length} memories across lessons, facts, and preferences. Older rings are paler — durable lessons stay near the core.`}
           right={
-            <SegSeg<Variant>
-              value={variant}
-              onChange={setVariant}
-              options={[
-                { value: "rings", label: "Rings" },
-                { value: "list", label: "List" },
-                { value: "forest", label: "Forest" },
-              ]}
-            />
+            <>
+              <SegSeg<Variant>
+                value={variant}
+                onChange={setVariant}
+                options={[
+                  { value: "rings", label: "Rings" },
+                  { value: "list", label: "List" },
+                  { value: "forest", label: "Forest" },
+                ]}
+              />
+              <Btn kind="solid" icon={<Plus size={13} />}>Remember…</Btn>
+            </>
           }
         />
       </div>
@@ -107,150 +106,147 @@ export default function MemoryPage() {
   );
 }
 
+// ── Rings ───────────────────────────────────────────────────
 function RingsView({ memories }: { memories: Memory[] }) {
-  const [hovered, setHovered] = useState<Memory | null>(null);
-  if (memories.length === 0) {
-    return <Empty />;
-  }
+  const [hov, setHov] = useState<string | null>(null);
 
-  // Layout: 3 strength bands (Recent, Strong, Core) — concentric circles.
-  // Each memory is a dot whose distance from center inverts strength.
-  const W = 520;
-  const H = 520;
-  const cx = W / 2;
-  const cy = H / 2;
-  const bands = [
-    { label: "Core", min: 0.85, r: 80 },
-    { label: "Strong", min: 0.65, r: 145 },
-    { label: "Recent", min: 0, r: 220 },
+  const groups = [
+    { gi: 0, label: "Core",   r: 100, items: memories.filter((m) => m.strength >= 0.85) },
+    { gi: 1, label: "Strong", r: 140, items: memories.filter((m) => m.strength >= 0.7 && m.strength < 0.85) },
+    { gi: 2, label: "Recent", r: 180, items: memories.filter((m) => m.strength < 0.7) },
   ];
 
-  const placed = memories.map((m, i) => {
-    const band = bands.find((b) => m.strength >= b.min) ?? bands[bands.length - 1];
-    const angle = (i / memories.length) * Math.PI * 2;
-    const r = band.r * (0.6 + Math.random() * 0.35);
-    return {
-      m,
-      x: cx + Math.cos(angle) * r,
-      y: cy + Math.sin(angle) * r,
-    };
-  });
+  if (memories.length === 0) {
+    return (
+      <CedarCard padding={48}>
+        <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+          The grove is bare. Have a conversation — Arzeh remembers what matters.
+        </div>
+      </CedarCard>
+    );
+  }
+
+  const inspector = hov ? memories.find((m) => m.id === hov) : memories[0];
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: `${W}px 1fr`, gap: 28, alignItems: "start" }}>
-      <CedarCard padding={0} style={{ position: "relative", overflow: "hidden" }}>
-        <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`}>
-          {/* Concentric guide rings */}
-          {bands.map((b) => (
-            <g key={b.label}>
-              <circle cx={cx} cy={cy} r={b.r} fill="none" stroke="var(--cedar-line)" strokeDasharray="2 4" />
-              <text
-                x={cx + b.r + 6}
-                y={cy + 4}
-                fontFamily="var(--fm)"
-                fontSize="9"
-                fill="var(--muted)"
-                style={{ textTransform: "uppercase", letterSpacing: ".12em" }}
-              >
-                {b.label}
-              </text>
-            </g>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 360px", gap: 24 }}>
+      {/* Rings viz */}
+      <div style={{ position: "relative", aspectRatio: "1", maxWidth: 520, margin: "0 auto", width: "100%" }}>
+        <svg viewBox="0 0 400 400" style={{ width: "100%", height: "100%" }}>
+          {[180, 140, 100].map((r, i) => (
+            <circle
+              key={i}
+              cx="200"
+              cy="200"
+              r={r}
+              fill="none"
+              stroke="var(--cedar-line)"
+              strokeWidth={i === 2 ? 2 : 1}
+              opacity={0.3 + i * 0.2}
+              strokeDasharray={i === 0 ? "2 4" : undefined}
+            />
           ))}
-          {/* Memory dots */}
-          {placed.map(({ m, x, y }) => {
-            const isHovered = hovered?.id === m.id;
-            return (
-              <circle
-                key={m.id}
-                cx={x}
-                cy={y}
-                r={isHovered ? 9 : 5}
-                fill={KIND_COLOR[m.kind]}
-                opacity={0.4 + m.strength * 0.6}
-                onMouseEnter={() => setHovered(m)}
-                onMouseLeave={() => setHovered(null)}
-                style={{ cursor: "pointer", transition: "r .15s" }}
-              />
-            );
-          })}
-          {/* Center mark */}
-          <circle cx={cx} cy={cy} r="4" fill="var(--cedar)" />
-        </svg>
-      </CedarCard>
-
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <CedarCard padding={18}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-            <Brain size={14} />
-            <span style={{ fontSize: 13, fontWeight: 500 }}>Inspector</span>
-          </div>
-          {hovered ? (
-            <>
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <Tag color={KIND_TAG[hovered.kind]}>{hovered.kind}</Tag>
-                <span style={{ fontSize: 11, fontFamily: "var(--fm)", color: "var(--muted)" }}>
-                  strength {Math.round(hovered.strength * 100)}%
-                </span>
-              </div>
-              <h3
-                style={{
-                  fontFamily: "var(--fd)",
-                  fontSize: 20,
-                  margin: "6px 0 6px",
-                  color: "var(--text)",
-                  lineHeight: 1.25,
-                }}
-              >
-                {hovered.title}
-              </h3>
-              {hovered.body && (
-                <p style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.6, margin: 0 }}>
-                  {hovered.body}
-                </p>
-              )}
-            </>
-          ) : (
-            <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
-              Hover a dot to inspect. Closer to center = stronger memory.
-            </div>
+          <circle cx="200" cy="200" r="8" fill="var(--cedar-glow)" />
+          {groups.flatMap((g) =>
+            g.items.map((m, mi) => {
+              const total = Math.max(1, g.items.length);
+              const a = (mi / total) * Math.PI * 2 - Math.PI / 2 + g.gi * 0.3;
+              const x = 200 + g.r * Math.cos(a);
+              const y = 200 + g.r * Math.sin(a);
+              const isH = hov === m.id;
+              const c = KIND_COLOR[m.kind];
+              return (
+                <g
+                  key={m.id}
+                  onMouseEnter={() => setHov(m.id)}
+                  onMouseLeave={() => setHov(null)}
+                  style={{ cursor: "pointer" }}
+                >
+                  <circle cx={x} cy={y} r={isH ? 9 : 6} fill={c} opacity={0.5 + m.strength * 0.4} />
+                  {isH && <circle cx={x} cy={y} r="14" fill="none" stroke={c} strokeWidth="1" opacity="0.5" />}
+                </g>
+              );
+            }),
           )}
-        </CedarCard>
+          <text x="200" y="50"  textAnchor="middle" fontFamily="var(--fm)" fontSize="10" fill="var(--muted)" letterSpacing=".1em">RECENT</text>
+          <text x="200" y="100" textAnchor="middle" fontFamily="var(--fm)" fontSize="10" fill="var(--muted)" letterSpacing=".1em">STRONG</text>
+          <text x="200" y="150" textAnchor="middle" fontFamily="var(--fm)" fontSize="10" fill="var(--muted)" letterSpacing=".1em">CORE</text>
+        </svg>
+      </div>
 
-        <CedarCard padding={18}>
+      {/* Inspector */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <CedarCard padding={16}>
           <div
             style={{
               fontSize: 10.5,
-              color: "var(--muted)",
               fontFamily: "var(--fm)",
+              color: "var(--muted)",
+              letterSpacing: ".1em",
               textTransform: "uppercase",
-              letterSpacing: ".12em",
+            }}
+          >
+            Inspector
+          </div>
+          {inspector && (
+            <>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 8, marginBottom: 6 }}>
+                <Tag color={KIND_TAG[inspector.kind]}>{inspector.kind}</Tag>
+                <span style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+                  {relTime(inspector.created)}
+                </span>
+                <span style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+                  · strength {Math.round(inspector.strength * 100)}%
+                </span>
+              </div>
+              <div
+                style={{
+                  fontFamily: "var(--fd)",
+                  fontSize: 18,
+                  color: "var(--text)",
+                  lineHeight: 1.3,
+                  marginBottom: 6,
+                }}
+              >
+                {inspector.title}
+              </div>
+              {inspector.body && (
+                <div style={{ fontSize: 13, color: "var(--text2)", lineHeight: 1.6 }}>{inspector.body}</div>
+              )}
+              {inspector.tags.length > 0 && (
+                <div style={{ display: "flex", gap: 5, marginTop: 12, flexWrap: "wrap" }}>
+                  {inspector.tags.map((t) => (
+                    <Tag key={t} color="muted">#{t}</Tag>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </CedarCard>
+        <CedarCard padding={16}>
+          <div
+            style={{
+              fontSize: 10.5,
+              fontFamily: "var(--fm)",
+              color: "var(--muted)",
+              letterSpacing: ".1em",
+              textTransform: "uppercase",
               marginBottom: 10,
             }}
           >
             Legend
           </div>
-          {(["lesson", "fact", "preference"] as const).map((k) => (
-            <div key={k} style={{ display: "flex", alignItems: "center", gap: 10, padding: "4px 0" }}>
-              <span
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: "50%",
-                  background: KIND_COLOR[k],
-                  flexShrink: 0,
-                }}
-              />
-              <span style={{ fontSize: 12, color: "var(--text)" }}>{k}</span>
-              <span
-                style={{
-                  marginLeft: "auto",
-                  fontFamily: "var(--fm)",
-                  fontSize: 10.5,
-                  color: "var(--muted)",
-                }}
-              >
-                {memories.filter((m) => m.kind === k).length}
-              </span>
+          {[
+            { c: "cedar-glow", l: "Lesson — durable patterns" },
+            { c: "stone", l: "Fact — checkable knowledge" },
+            { c: "dawn", l: "Preference — your taste" },
+          ].map((x) => (
+            <div
+              key={x.l}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12, color: "var(--text2)" }}
+            >
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: `var(--${x.c})` }} />
+              {x.l}
             </div>
           ))}
         </CedarCard>
@@ -259,164 +255,181 @@ function RingsView({ memories }: { memories: Memory[] }) {
   );
 }
 
+// ── List ─────────────────────────────────────────────────────
 function ListView({ memories }: { memories: Memory[] }) {
-  if (memories.length === 0) return <Empty />;
+  const [filter, setFilter] = useState<"all" | "lesson" | "fact" | "preference">("all");
+  const items = filter === "all" ? memories : memories.filter((m) => m.kind === filter);
+  if (memories.length === 0) {
+    return (
+      <CedarCard padding={48}>
+        <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No memories yet.</div>
+      </CedarCard>
+    );
+  }
   return (
-    <CedarCard padding={0}>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "100px 1fr 80px 100px",
-          gap: 14,
-          padding: "10px 18px",
-          borderBottom: "1px solid var(--border)",
-          fontFamily: "var(--fm)",
-          fontSize: 10.5,
-          color: "var(--muted)",
-          textTransform: "uppercase",
-          letterSpacing: ".12em",
-        }}
-      >
-        <span>Kind</span>
-        <span>Memory</span>
-        <span>Strength</span>
-        <span>Created</span>
+    <>
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, alignItems: "center" }}>
+        <SegSeg<typeof filter>
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: "all", label: "All" },
+            { value: "lesson", label: "Lesson" },
+            { value: "fact", label: "Fact" },
+            { value: "preference", label: "Preference" },
+          ]}
+        />
       </div>
-      {memories.map((m) => (
-        <div
-          key={m.id}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "100px 1fr 80px 100px",
-            gap: 14,
-            padding: "12px 18px",
-            borderBottom: "1px solid var(--hairline)",
-            alignItems: "center",
-          }}
-        >
-          <Tag color={KIND_TAG[m.kind]}>{m.kind}</Tag>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{m.title}</div>
-            {m.body && (
+      <CedarCard padding={0}>
+        {items.map((m) => (
+          <div
+            key={m.id}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "auto 1fr auto auto auto",
+              gap: 14,
+              alignItems: "center",
+              padding: "14px 18px",
+              borderBottom: "1px solid var(--hairline)",
+              cursor: "pointer",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "var(--s2)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            <Tag color={KIND_TAG[m.kind]}>{m.kind}</Tag>
+            <div style={{ minWidth: 0 }}>
               <div
                 style={{
-                  fontSize: 11.5,
-                  color: "var(--text3)",
-                  marginTop: 3,
+                  fontSize: 13.5,
+                  color: "var(--text)",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                 }}
               >
-                {m.body}
+                {m.title}
               </div>
-            )}
-          </div>
-          <div
-            style={{
-              height: 6,
-              borderRadius: 99,
-              background: "var(--s2)",
-              border: "1px solid var(--border)",
-              position: "relative",
-              overflow: "hidden",
-            }}
-          >
-            <div
+              {m.body && (
+                <div
+                  style={{
+                    fontSize: 11.5,
+                    color: "var(--text3)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    marginTop: 2,
+                  }}
+                >
+                  {m.body}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "flex", gap: 4 }}>
+              {m.tags.slice(0, 2).map((t) => (
+                <Tag key={t} color="muted">#{t}</Tag>
+              ))}
+            </div>
+            <div style={{ width: 50, height: 4, background: "var(--s3)", borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ width: `${m.strength * 100}%`, height: "100%", background: "var(--cedar-glow)" }} />
+            </div>
+            <span
               style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: `${Math.round(m.strength * 100)}%`,
-                background: "var(--cedar-glow)",
+                fontSize: 10.5,
+                color: "var(--muted)",
+                fontFamily: "var(--fm)",
+                minWidth: 40,
+                textAlign: "right",
               }}
-            />
+            >
+              {relTime(m.created)}
+            </span>
           </div>
-          <span style={{ fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)" }}>
-            {m.created ? new Date(m.created * 1000).toLocaleDateString() : ""}
-          </span>
-        </div>
-      ))}
-    </CedarCard>
+        ))}
+      </CedarCard>
+    </>
   );
 }
 
+// ── Forest — saplings per tag, height = strength ────────────
 function ForestView({ memories }: { memories: Memory[] }) {
-  if (memories.length === 0) return <Empty />;
-  const groves: Record<string, Memory[]> = {};
+  const tags: Record<string, Memory[]> = {};
   for (const m of memories) {
-    const tag = m.tags[0] || "general";
-    (groves[tag] ||= []).push(m);
+    for (const t of m.tags) {
+      (tags[t] ||= []).push(m);
+    }
+  }
+  if (memories.length === 0) {
+    return (
+      <CedarCard padding={48}>
+        <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>No memories yet.</div>
+      </CedarCard>
+    );
   }
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
-      {Object.entries(groves).map(([tag, items]) => (
-        <CedarCard key={tag} padding={16}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <span
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
+        gap: 14,
+      }}
+    >
+      {Object.entries(tags).map(([t, ms]) => (
+        <CedarCard key={t} padding={0} hoverable>
+          <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid var(--hairline)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+              <span style={{ fontFamily: "var(--fd)", fontSize: 20, color: "var(--text)" }}>#{t}</span>
+              <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+                {ms.length} {ms.length === 1 ? "memory" : "memories"}
+              </span>
+            </div>
+            <svg
+              viewBox={`0 0 ${ms.length * 16 + 8} 50`}
+              style={{ width: "100%", marginTop: 8, display: "block", height: 50 }}
+            >
+              {ms.map((m, i) => (
+                <g key={m.id}>
+                  <line
+                    x1={i * 16 + 8}
+                    y1="48"
+                    x2={i * 16 + 8}
+                    y2={48 - m.strength * 32}
+                    stroke="var(--cedar)"
+                    strokeWidth="1.2"
+                  />
+                  <circle cx={i * 16 + 8} cy={48 - m.strength * 32} r="3.5" fill={KIND_COLOR[m.kind]} />
+                </g>
+              ))}
+              <line x1="0" y1="48" x2="100%" y2="48" stroke="var(--border)" />
+            </svg>
+          </div>
+          {ms.slice(0, 2).map((m) => (
+            <div
+              key={m.id}
               style={{
-                fontFamily: "var(--fm)",
-                fontSize: 10.5,
-                color: "var(--muted)",
-                textTransform: "uppercase",
-                letterSpacing: ".14em",
+                padding: "8px 16px",
+                fontSize: 12,
+                color: "var(--text2)",
+                borderTop: "1px solid var(--hairline)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
             >
-              {tag}
-            </span>
-            <span
-              style={{
-                fontFamily: "var(--fm)",
-                fontSize: 10.5,
-                color: "var(--cedar-2)",
-              }}
-            >
-              {items.length}
-            </span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {items.map((m) => (
-              <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: KIND_COLOR[m.kind],
-                    marginTop: 6,
-                    flexShrink: 0,
-                  }}
-                />
-                <span style={{ fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>
-                  {m.title}
-                </span>
-              </div>
-            ))}
-          </div>
+              <span
+                style={{
+                  display: "inline-block",
+                  width: 6,
+                  height: 6,
+                  borderRadius: "50%",
+                  background: KIND_COLOR[m.kind],
+                  marginRight: 8,
+                }}
+              />
+              {m.title}
+            </div>
+          ))}
         </CedarCard>
       ))}
     </div>
-  );
-}
-
-function Empty() {
-  return (
-    <CedarCard padding={48}>
-      <div style={{ textAlign: "center", color: "var(--muted)" }}>
-        <Brain size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
-        <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
-          The grove is bare.
-        </div>
-        <div style={{ fontSize: 13, marginTop: 8 }}>
-          Have a conversation — Arzeh remembers what matters.
-        </div>
-        <div style={{ marginTop: 14 }}>
-          <Btn kind="solid" onClick={() => (window.location.href = "/")}>
-            Start a chat
-          </Btn>
-        </div>
-      </div>
-    </CedarCard>
   );
 }
