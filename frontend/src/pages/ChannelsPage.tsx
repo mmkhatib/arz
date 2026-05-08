@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Layers, Plus, Send, Wand2, X, Power, AlertTriangle } from "lucide-react";
 import { api } from "@/api/client";
-import { PageShell, PageHeader } from "@/components/PageShell";
+import { CedarPage, CedarPageHeader, Btn, Tag, TopoLines } from "@/components/CedarUI";
 import SecondaryNav from "@/components/SecondaryNav";
 
 type Channel = Awaited<ReturnType<typeof api.getChannelApp>>;
@@ -29,12 +29,6 @@ function fmtAge(ts: number): string {
   if (dt < 86400) return `${Math.floor(dt / 3600)}h`;
   return `${Math.floor(dt / 86400)}d`;
 }
-
-const STATUS_BADGE: Record<string, string> = {
-  active: "bg-emerald-900/30 text-emerald-300",
-  idle: "bg-amber-900/30 text-amber-300",
-  dismissed: "bg-[var(--border)] text-[var(--muted)]",
-};
 
 export default function ChannelsPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -116,20 +110,24 @@ export default function ChannelsPage() {
   }));
 
   return (
-    <PageShell variant="page">
-      <PageHeader
-        icon={<Layers size={16} />}
-        title="Channels"
-        subtitle="Multi-agent workspaces"
-        actions={
-          <button
-            onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] hover:bg-[var(--cedar-lt)]"
-          >
-            <Plus size={11} /> New channel
-          </button>
-        }
-      />
+    <CedarPage>
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        <TopoLines height={120} opacity={0.5} />
+        <CedarPageHeader
+          eyebrow="agent collaboration"
+          title={
+            <>
+              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>channels</em>.
+            </>
+          }
+          sub="Multi-agent workspaces. Drop a question, the orchestrator delegates."
+          right={
+            <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowCreate(true)}>
+              New channel
+            </Btn>
+          }
+        />
+      </div>
 
       {showCreate && <CreateChannelDialog onClose={() => setShowCreate(false)} onCreated={(slug) => { setShowCreate(false); setActiveId(slug); refreshList(); }} />}
 
@@ -154,13 +152,11 @@ export default function ChannelsPage() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[15px] font-semibold text-[var(--text)] truncate">{active.name}</span>
-                    <span className={["text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded font-mono", STATUS_BADGE[active.status] ?? "bg-[var(--border)] text-[var(--muted)]"].join(" ")}>
+                    <Tag color={active.status === "active" ? "cedar" : active.status === "idle" ? "dawn" : "muted"}>
                       {active.status}
-                    </span>
+                    </Tag>
                     {active.preset && active.preset !== "custom" && (
-                      <span className="text-[10px] uppercase tracking-wider text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded font-mono">
-                        {active.preset.replace("_", " ")}
-                      </span>
+                      <Tag color="stone">{active.preset.replace("_", " ")}</Tag>
                     )}
                   </div>
                   {active.topic && (
@@ -262,7 +258,7 @@ export default function ChannelsPage() {
           <button onClick={() => setError(null)} className="text-[var(--muted)] hover:text-[var(--text)]"><X size={11} /></button>
         </div>
       )}
-    </PageShell>
+    </CedarPage>
   );
 }
 

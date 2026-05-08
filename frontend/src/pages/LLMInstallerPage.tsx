@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Cpu, Download, Check, ExternalLink, Loader2, X, Power, PowerOff, MemoryStick } from "lucide-react";
+import { Download, Check, ExternalLink, Loader2, X, Power, PowerOff, MemoryStick } from "lucide-react";
 import { api } from "@/api/client";
 import { setOllamaInstalledModels } from "@/utils/models";
-import { PageShell, PageHeader } from "@/components/PageShell";
+import { CedarPage, CedarPageHeader, Btn, TopoLines } from "@/components/CedarUI";
 
 interface CliRow {
   name: string;
@@ -139,28 +139,32 @@ export default function LLMInstallerPage() {
     installed.some((i) => i.name === m.name);
 
   return (
-    <PageShell variant="page">
-      <PageHeader
-        icon={<Cpu size={16} />}
-        title="Models & Runtimes"
-        actions={
-          <button
-            onClick={refresh}
-            className="text-[12px] px-2 py-1 rounded-md text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]"
-          >
-            Refresh
-          </button>
-        }
-      />
+    <CedarPage>
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        <TopoLines height={120} opacity={0.5} />
+        <CedarPageHeader
+          eyebrow="cli + cloud + local"
+          title={
+            <>
+              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>models</em> at hand.
+            </>
+          }
+          sub="Install CLIs, configure cloud models, pull local weights via Ollama."
+          right={<Btn kind="ghost" onClick={refresh}>↻ refresh</Btn>}
+        />
+      </div>
 
       {error && (
-        <div className="mx-5 mt-3 text-red-400 text-[12px] bg-red-900/20 rounded-md px-3 py-2">{error}</div>
+        <div className="mx-8 mt-3 text-red-400 text-[12px] bg-red-900/20 rounded-md px-3 py-2">{error}</div>
       )}
 
-      <div className="overflow-y-auto px-5 py-4 flex-1 flex flex-col gap-6">
+      <div style={{ padding: "24px 32px 32px", display: "flex", flexDirection: "column", gap: 28 }}>
         {/* CLIs */}
         <section>
-          <h3 className="text-[12px] uppercase tracking-wider text-[var(--muted)] mb-2">LLM CLIs &amp; Runtimes</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
+            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+            CLIs &amp; runtimes
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {clis.map((c) => (
               <div key={c.name} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-1">
@@ -204,9 +208,10 @@ export default function LLMInstallerPage() {
         {/* Memory: currently loaded Ollama models */}
         {clis.find((c) => c.name === "ollama")?.installed && (
           <section>
-            <h3 className="text-[12px] uppercase tracking-wider text-[var(--muted)] mb-2 flex items-center gap-2">
-              <MemoryStick size={12} /> Loaded in memory ({loaded.length})
-            </h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
+              <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+              <MemoryStick size={11} /> Loaded in memory · {loaded.length}
+            </div>
             {loaded.length === 0 ? (
               <div className="text-[12px] text-[var(--muted)]/60 border border-dashed border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
                 No Ollama models currently held in RAM/VRAM. Use the <strong>Load</strong> button below to keep one warm; <strong>Eject</strong> evicts it.
@@ -237,7 +242,10 @@ export default function LLMInstallerPage() {
 
         {/* Local models */}
         <section>
-          <h3 className="text-[12px] uppercase tracking-wider text-[var(--muted)] mb-2">Local Models (via Ollama)</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
+            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+            Local models · Ollama
+          </div>
           {!clis.find((c) => c.name === "ollama")?.installed && (
             <div className="text-[12px] text-amber-400 bg-amber-900/20 rounded px-3 py-2 mb-2">
               Install Ollama first to pull these models.
@@ -321,7 +329,10 @@ export default function LLMInstallerPage() {
         {(installing || log) && (
           <section>
             <div className="flex items-center justify-between mb-2">
-              <h3 className="text-[12px] uppercase tracking-wider text-[var(--muted)]">Install Log</h3>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
+                <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+                Install log
+              </div>
               {installing && (
                 <button onClick={cancelInstall} className="text-[11px] text-[var(--muted)] hover:text-red-400 flex items-center gap-1">
                   <X size={11} /> Cancel
@@ -334,6 +345,6 @@ export default function LLMInstallerPage() {
           </section>
         )}
       </div>
-    </PageShell>
+    </CedarPage>
   );
 }

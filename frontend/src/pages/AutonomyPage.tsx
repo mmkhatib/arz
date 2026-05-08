@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, Users, Heart, ListChecks, Save, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import SecondaryNav from "@/components/SecondaryNav";
-import { PageShell } from "@/components/PageShell";
+import { CedarPage, CedarPageHeader, TopoLines } from "@/components/CedarUI";
 
 type Tab = "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -10,7 +10,19 @@ export default function AutonomyPage() {
   const [tab, setTab] = useState<Tab>("subagents");
 
   return (
-    <PageShell variant="page">
+    <CedarPage>
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        <TopoLines height={120} opacity={0.5} />
+        <CedarPageHeader
+          eyebrow="acted without asking"
+          title={
+            <>
+              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>autonomy</em> ledger.
+            </>
+          }
+          sub="What Arzeh did on its own — subagents, channels, heartbeat, scheduled tasks."
+        />
+      </div>
       <div className="flex flex-1 min-h-0">
         <SecondaryNav<Tab>
           title="Autonomy"
@@ -24,14 +36,14 @@ export default function AutonomyPage() {
             { id: "tasks",     label: "Tasks",     icon: <ListChecks size={13} /> },
           ]}
         />
-        <div className="overflow-y-auto px-5 py-4 flex-1">
+        <div className="overflow-y-auto px-8 py-6 flex-1">
           {tab === "subagents" && <SubagentsTab />}
           {tab === "channels" && <ChannelsTab />}
           {tab === "heartbeat" && <HeartbeatTab />}
           {tab === "tasks" && <TasksTab />}
         </div>
       </div>
-    </PageShell>
+    </CedarPage>
   );
 }
 

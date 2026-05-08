@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Wand2, Plus, Trash2, Play, X, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
-import { PageShell, PageHeader } from "@/components/PageShell";
+import { CedarPage, CedarPageHeader, TopoLines } from "@/components/CedarUI";
 
 type TaskRecord = Awaited<ReturnType<typeof api.getTask>>;
 
@@ -126,13 +126,20 @@ export default function AutopilotPage() {
   const addStep = () => setSteps((prev) => [...prev, ""]);
 
   return (
-    <PageShell variant="page">
-      <PageHeader
-        icon={<Wand2 size={16} />}
-        title="Autopilot"
-        subtitle="Multi-stage plan runner"
-      />
-      <div className="overflow-y-auto px-5 py-4 flex-1 flex flex-col gap-4 max-w-4xl mx-auto w-full">
+    <CedarPage>
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        <TopoLines height={120} opacity={0.5} />
+        <CedarPageHeader
+          eyebrow="autonomous rules"
+          title={
+            <>
+              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>autopilot</em>.
+            </>
+          }
+          sub="WHEN a condition fires, THEN take action. Multi-stage plan runner."
+        />
+      </div>
+      <div className="overflow-y-auto px-8 py-6 flex-1 flex flex-col gap-4 max-w-4xl mx-auto w-full">
         {/* Active run takes over the page */}
         {run && (
           <div className="border border-[var(--cedar)]/40 rounded-lg bg-[var(--surface)] flex flex-col">
@@ -299,6 +306,6 @@ export default function AutopilotPage() {
           </div>
         )}
       </div>
-    </PageShell>
+    </CedarPage>
   );
 }

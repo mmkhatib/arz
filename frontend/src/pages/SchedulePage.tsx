@@ -1,181 +1,403 @@
-// Schedule page — three variants:
-//   * Table    — existing ScheduleModal (CRUD + recurrence picker)
-//   * Calendar — month grid showing fire counts per day
-//   * Timeline — past 7 days timeline with last-run markers
-//
-// All variants read from the same /api/cron endpoint.
+// Schedule — cron jobs as a forest of recurring intentions.
+// Three layouts: Calendar (default), Timeline, Grid.
 
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Clock, Calendar, Activity, Table } from "lucide-react";
+import { Plus, Clock } from "lucide-react";
+import {
+  CedarPage,
+  CedarPageHeader,
+  CedarCard,
+  Btn,
+  Tag,
+  SegSeg,
+  TopoLines,
+} from "@/components/CedarUI";
 import { api, type CronEntry } from "@/api/client";
-import ScheduleModal from "@/components/ScheduleModal";
-import VariantSwitcher, { useVariant } from "@/components/VariantSwitcher";
-import { PageShell, PageHeader } from "@/components/PageShell";
 
-type V = "table" | "calendar" | "timeline";
+type Variant = "calendar" | "timeline" | "grid";
 
 export default function SchedulePage() {
-  const navigate = useNavigate();
-  const [variant, setVariant] = useVariant<V>("arz:schedule-variant", "table");
+  const [variant, setVariant] = useState<Variant>(
+    () => (localStorage.getItem("arz:schedule-variant") as Variant) || "calendar",
+  );
+  useEffect(() => { localStorage.setItem("arz:schedule-variant", variant); }, [variant]);
 
-  if (variant === "table") {
-    return (
-      <div className="flex flex-col w-full h-full">
-        <div className="flex items-center justify-end px-4 py-2 border-b border-[var(--border)] bg-[var(--bg)]">
-          <Switcher variant={variant} setVariant={setVariant} />
-        </div>
-        <div className="flex-1 min-h-0">
-          <ScheduleModal
-            variant="page"
-            onJumpToSession={(id) => {
-              api.reactivateSession(id)
-                .catch(() => {})
-                .finally(() => navigate(`/#session=${id}`));
-            }}
-          />
-        </div>
-      </div>
-    );
-  }
+  const [crons, setCrons] = useState<CronEntry[]>([]);
+  useEffect(() => { api.listCrons().then(setCrons).catch(() => {}); }, []);
+
+  const enabled = crons.filter((c) => c.enabled).length;
 
   return (
-    <PageShell variant="page">
-      <PageHeader
-        icon={<Clock size={16} />}
-        title="Schedule"
-        actions={<Switcher variant={variant} setVariant={setVariant} />}
-      />
-      <div className="flex-1 overflow-y-auto p-6">
-        {variant === "calendar" && <CalendarVariant />}
-        {variant === "timeline" && <TimelineVariant />}
+    <CedarPage>
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        <TopoLines height={120} opacity={0.5} />
+        <CedarPageHeader
+          eyebrow="recurring intentions"
+          title={
+            <>
+              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>schedule</em>.
+            </>
+          }
+          sub={`${crons.length} cron jobs · ${enabled} enabled`}
+          right={
+            <>
+              <SegSeg<Variant>
+                value={variant}
+                onChange={setVariant}
+                options={[
+                  { value: "calendar", label: "Calendar" },
+                  { value: "timeline", label: "Timeline" },
+                  { value: "grid", label: "Grid" },
+                ]}
+              />
+              <Btn kind="solid" icon={<Plus size={13} />}>New job</Btn>
+            </>
+          }
+        />
       </div>
-    </PageShell>
+      <div style={{ padding: "24px 32px 32px" }}>
+        {variant === "calendar" && <CalendarView crons={crons} />}
+        {variant === "timeline" && <TimelineView crons={crons} />}
+        {variant === "grid" && <GridView crons={crons} />}
+      </div>
+    </CedarPage>
   );
 }
 
-function Switcher({ variant, setVariant }: { variant: V; setVariant: (v: V) => void }) {
-  return (
-    <VariantSwitcher
-      storageKey="arz:schedule-variant"
-      value={variant}
-      onChange={setVariant}
-      variants={[
-        { id: "table",    label: "Table",    icon: <Table size={11} /> },
-        { id: "calendar", label: "Calendar", icon: <Calendar size={11} /> },
-        { id: "timeline", label: "Timeline", icon: <Activity size={11} /> },
-      ]}
-    />
-  );
-}
-
-function CalendarVariant() {
-  const [items, setItems] = useState<CronEntry[]>([]);
-  useEffect(() => { api.listCrons().then(setItems).catch(() => {}); }, []);
-
-  // Build a 5-week month grid for the current month, count last_run hits per day.
+function CalendarView({ crons }: { crons: CronEntry[] }) {
   const cells = useMemo(() => {
     const today = new Date();
     const first = new Date(today.getFullYear(), today.getMonth(), 1);
     const startDow = first.getDay();
     const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-    const grid: { date: Date | null; count: number }[] = [];
-    for (let i = 0; i < startDow; i++) grid.push({ date: null, count: 0 });
+    const grid: { date: Date | null; runs: number }[] = [];
+    for (let i = 0; i < startDow; i++) grid.push({ date: null, runs: 0 });
     for (let d = 1; d <= daysInMonth; d++) {
       const date = new Date(today.getFullYear(), today.getMonth(), d);
-      const count = items.filter((c) => {
+      const runs = crons.filter((c) => {
         if (!c.last_run_at) return false;
         const r = new Date(c.last_run_at * 1000);
-        return r.getFullYear() === date.getFullYear() &&
-               r.getMonth() === date.getMonth() &&
-               r.getDate() === date.getDate();
+        return (
+          r.getFullYear() === date.getFullYear() &&
+          r.getMonth() === date.getMonth() &&
+          r.getDate() === date.getDate()
+        );
       }).length;
-      grid.push({ date, count });
+      grid.push({ date, runs });
     }
-    while (grid.length % 7 !== 0) grid.push({ date: null, count: 0 });
+    while (grid.length % 7 !== 0) grid.push({ date: null, runs: 0 });
     return grid;
-  }, [items]);
+  }, [crons]);
 
   const monthLabel = new Date().toLocaleString("default", { month: "long", year: "numeric" });
   const todayKey = new Date().toDateString();
 
   return (
-    <div className="max-w-[720px]">
-      <h3 className="font-display text-[18px] mb-4 text-[var(--text)]">{monthLabel}</h3>
-      <div className="grid grid-cols-7 gap-1 text-[10px] eyebrow text-[var(--muted)] mb-1">
-        {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map((d) => <div key={d} className="text-center">{d}</div>)}
-      </div>
-      <div className="grid grid-cols-7 gap-1">
-        {cells.map((c, i) => {
-          if (!c.date) return <div key={i} className="aspect-square" />;
-          const isToday = c.date.toDateString() === todayKey;
-          const intensity = Math.min(1, c.count / 4);
-          return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 18, alignItems: "start" }}>
+      <CedarCard padding={20}>
+        <h3 style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)", margin: "0 0 14px" }}>
+          {monthLabel}
+        </h3>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(7, 1fr)",
+            gap: 6,
+            marginBottom: 6,
+          }}
+        >
+          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
             <div
-              key={i}
-              className={[
-                "aspect-square rounded-md border flex flex-col items-end p-1 text-[11px]",
-                isToday ? "border-[var(--cedar)]" : "border-[var(--border)]",
-              ].join(" ")}
-              style={{ background: c.count ? `rgba(106, 156, 92, ${0.15 + intensity * 0.5})` : undefined }}
-              title={c.count ? `${c.count} run${c.count > 1 ? "s" : ""}` : "no runs"}
+              key={d}
+              style={{
+                fontSize: 10,
+                fontFamily: "var(--fm)",
+                color: "var(--muted)",
+                textTransform: "uppercase",
+                letterSpacing: ".12em",
+                textAlign: "center",
+              }}
             >
-              <span className="text-[var(--muted)]">{c.date.getDate()}</span>
-              {c.count > 0 && <span className="font-mono text-[var(--text)] mt-auto">{c.count}</span>}
+              {d}
             </div>
-          );
-        })}
-      </div>
-      <div className="mt-6 text-[12px] text-[var(--muted)]">
-        {items.length} scheduled {items.length === 1 ? "task" : "tasks"} · grid shaded by last-run count.
-      </div>
+          ))}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+          {cells.map((c, i) => {
+            if (!c.date) return <div key={i} style={{ aspectRatio: 1 }} />;
+            const isToday = c.date.toDateString() === todayKey;
+            return (
+              <div
+                key={i}
+                title={c.runs ? `${c.runs} runs` : "no runs"}
+                style={{
+                  aspectRatio: 1,
+                  borderRadius: 8,
+                  border: `1px solid ${isToday ? "var(--cedar-glow)" : "var(--border)"}`,
+                  background: c.runs ? "var(--cedar-dim)" : "var(--surface)",
+                  padding: 6,
+                  display: "flex",
+                  flexDirection: "column",
+                  position: "relative",
+                }}
+              >
+                <span style={{ fontSize: 11, color: "var(--text3)" }}>{c.date.getDate()}</span>
+                {c.runs > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: 3,
+                      marginTop: "auto",
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    {Array.from({ length: Math.min(c.runs, 4) }).map((_, j) => (
+                      <span
+                        key={j}
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: "var(--cedar-glow)",
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </CedarCard>
+      <CedarCard padding={18}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <Clock size={14} />
+          <span style={{ fontSize: 13, fontWeight: 500 }}>Up next</span>
+        </div>
+        {crons.filter((c) => c.enabled).length === 0 && (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>No enabled jobs.</div>
+        )}
+        {crons.filter((c) => c.enabled).slice(0, 5).map((c) => (
+          <div
+            key={c.id}
+            style={{
+              padding: "10px 0",
+              borderBottom: "1px solid var(--hairline)",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, color: "var(--text)" }}>{c.name}</div>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  fontFamily: "var(--fm)",
+                  color: "var(--muted)",
+                  marginTop: 2,
+                }}
+              >
+                {c.schedule}
+              </div>
+            </div>
+            <Tag color="dawn">cron</Tag>
+          </div>
+        ))}
+      </CedarCard>
     </div>
   );
 }
 
-function TimelineVariant() {
-  const [items, setItems] = useState<CronEntry[]>([]);
-  useEffect(() => { api.listCrons().then(setItems).catch(() => {}); }, []);
-
+function TimelineView({ crons }: { crons: CronEntry[] }) {
   const days = 7;
   const now = Date.now();
-  const start = now - days * 86400_000;
+  const start = now - (days - 1) * 86_400_000;
   const ticks = Array.from({ length: days }, (_, i) => {
-    const t = start + i * 86400_000;
-    const d = new Date(t);
-    return { t, label: `${d.getMonth() + 1}/${d.getDate()}` };
+    const d = new Date(start + i * 86_400_000);
+    return { t: d.getTime(), label: `${d.getMonth() + 1}/${d.getDate()}` };
   });
 
   return (
-    <div className="flex flex-col gap-1">
-      <div className="grid gap-2 mb-2 text-[10px] eyebrow text-[var(--muted)]" style={{ gridTemplateColumns: `200px repeat(${days}, 1fr)` }}>
-        <span></span>
-        {ticks.map((t) => <span key={t.t} className="text-center">{t.label}</span>)}
+    <CedarCard padding={20}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: `200px repeat(${days}, 1fr)`,
+          gap: 8,
+          marginBottom: 8,
+        }}
+      >
+        <span />
+        {ticks.map((t) => (
+          <span
+            key={t.t}
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--fm)",
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".12em",
+              textAlign: "center",
+            }}
+          >
+            {t.label}
+          </span>
+        ))}
       </div>
-      {items.length === 0 && <div className="text-[12px] text-[var(--muted)]">No scheduled tasks.</div>}
-      {items.map((c) => {
-        const lastRun = c.last_run_at ? c.last_run_at * 1000 : null;
-        const offset = lastRun && lastRun > start
-          ? ((lastRun - start) / (now - start)) * 100
-          : null;
+      {crons.length === 0 && (
+        <div style={{ padding: 24, color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
+          No scheduled jobs.
+        </div>
+      )}
+      {crons.map((c) => {
+        const last = c.last_run_at ? c.last_run_at * 1000 : null;
+        const offset = last && last >= start ? ((last - start) / (now - start)) * 100 : null;
         return (
-          <div key={c.id} className="grid items-center gap-2 py-1.5 border-b border-[var(--border)]/40" style={{ gridTemplateColumns: `200px 1fr` }}>
-            <div className="flex flex-col min-w-0">
-              <div className="text-[12px] truncate text-[var(--text)]">{c.name}</div>
-              <div className="text-[10px] font-mono text-[var(--muted)] truncate">{c.schedule}</div>
+          <div
+            key={c.id}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "200px 1fr",
+              gap: 8,
+              padding: "10px 0",
+              borderBottom: "1px solid var(--hairline)",
+              alignItems: "center",
+            }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 12.5,
+                  color: "var(--text)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.name}
+              </div>
+              <div
+                style={{
+                  fontSize: 10.5,
+                  fontFamily: "var(--fm)",
+                  color: "var(--muted)",
+                  marginTop: 2,
+                }}
+              >
+                {c.schedule}
+              </div>
             </div>
-            <div className="relative h-4 bg-[var(--surface)] rounded">
+            <div style={{ position: "relative", height: 18, background: "var(--s2)", borderRadius: 6 }}>
+              {/* "now" line */}
+              <div
+                style={{
+                  position: "absolute",
+                  right: 0,
+                  top: -2,
+                  bottom: -2,
+                  width: 2,
+                  background: "var(--ember)",
+                }}
+                title="now"
+              />
               {offset !== null && (
                 <div
-                  className="absolute top-0 bottom-0 w-1 rounded bg-[var(--cedar)]"
-                  style={{ left: `${Math.min(99, Math.max(0, offset))}%` }}
-                  title={`Last run ${new Date(lastRun!).toLocaleString()}`}
+                  style={{
+                    position: "absolute",
+                    top: 4,
+                    bottom: 4,
+                    width: 6,
+                    borderRadius: 99,
+                    background: "var(--cedar-glow)",
+                    boxShadow: "0 0 6px var(--cedar-glow)",
+                    left: `calc(${offset}% - 3px)`,
+                  }}
+                  title={`Last run ${new Date(last!).toLocaleString()}`}
                 />
               )}
             </div>
           </div>
         );
       })}
-    </div>
+    </CedarCard>
+  );
+}
+
+function GridView({ crons }: { crons: CronEntry[] }) {
+  return (
+    <CedarCard padding={0}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1.4fr 1.6fr 80px 80px 110px 110px 60px",
+          gap: 12,
+          padding: "10px 18px",
+          borderBottom: "1px solid var(--border)",
+          fontFamily: "var(--fm)",
+          fontSize: 10.5,
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: ".12em",
+        }}
+      >
+        <span>Name</span>
+        <span>Cron</span>
+        <span>State</span>
+        <span>Persist</span>
+        <span>Next</span>
+        <span>Last</span>
+        <span>Runs</span>
+      </div>
+      {crons.length === 0 && (
+        <div style={{ padding: 24, color: "var(--muted)", fontSize: 12.5, textAlign: "center" }}>
+          No scheduled jobs.
+        </div>
+      )}
+      {crons.map((c) => (
+        <div
+          key={c.id}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1.4fr 1.6fr 80px 80px 110px 110px 60px",
+            gap: 12,
+            padding: "12px 18px",
+            borderBottom: "1px solid var(--hairline)",
+            alignItems: "center",
+            fontSize: 12.5,
+          }}
+        >
+          <div>
+            <div style={{ color: "var(--text)" }}>{c.name}</div>
+            <div
+              style={{
+                fontSize: 10.5,
+                color: "var(--muted)",
+                fontFamily: "var(--fm)",
+                marginTop: 2,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={c.prompt}
+            >
+              {c.prompt.slice(0, 60)}
+            </div>
+          </div>
+          <span style={{ fontFamily: "var(--fm)", fontSize: 11.5, color: "var(--cedar-2)" }}>
+            {c.schedule}
+          </span>
+          <Tag color={c.enabled ? "cedar" : "muted"}>{c.enabled ? "on" : "off"}</Tag>
+          <Tag color={c.persistent_session ? "stone" : "muted"}>
+            {c.persistent_session ? "yes" : "no"}
+          </Tag>
+          <span style={{ fontFamily: "var(--fm)", fontSize: 11, color: "var(--text3)" }}>—</span>
+          <span style={{ fontFamily: "var(--fm)", fontSize: 11, color: "var(--text3)" }}>
+            {c.last_run_at ? new Date(c.last_run_at * 1000).toLocaleDateString() : "—"}
+          </span>
+          <span style={{ fontFamily: "var(--fm)", fontSize: 11, color: "var(--text3)" }}>—</span>
+        </div>
+      ))}
+    </CedarCard>
   );
 }

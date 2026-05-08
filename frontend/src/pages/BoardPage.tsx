@@ -1,58 +1,45 @@
-// Operations — 4-lane Kanban for in-flight sessions + Action Items panel.
-//
-// Lanes (Cedar spec):
-//   * Waiting  — session has a pending tool permission request, or assistant
-//     turn done waiting for user reply.
-//   * Running  — provider is actively streaming.
-//   * Idle     — fresh / quiet sessions.
-//   * Failed   — last turn errored (best-effort: detected via streaming-flag
-//     dropouts; placeholder until we surface a structured error flag).
-//
-// Action Items panel: TODO list shared across the workspace. Items can be
-// added by the user or auto-drafted by an LLM emitting a `<todo>` tag in a
-// reply. Stored server-side (~/.arz/action-items.json) so they sync across
-// machines.
+// Operations — agent management room.
+// Two stacked sections per Cedar spec:
+//   1) Agent operations: 4-column board (Waiting on you / Running / Idle / Failed)
+//   2) Your action items: cedar-drafted to-dos w/ filter pills.
 
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
+import { Plus, Check, X as XIcon, Trash2 } from "lucide-react";
 import {
-  Columns3,
-  Wrench,
-  Hand,
-  Bot,
-  Clock,
-  AlertTriangle,
-  Plus,
-  Check,
-  X as XIcon,
-  Trash2,
-} from "lucide-react";
+  CedarPage,
+  CedarPageHeader,
+  CedarCard,
+  Btn,
+  Tag,
+  TopoLines,
+} from "@/components/CedarUI";
 import { api, type SessionSummary, type ActionItem } from "@/api/client";
-import { PageShell, PageHeader } from "@/components/PageShell";
 
 type Lane = "waiting" | "running" | "idle" | "failed";
 
-function classifySession(s: SessionSummary, hint: { lastRole: string | null }): Lane {
+const LANE_DEFS: { id: Lane; label: string; dot: string; sub: string }[] = [
+  { id: "waiting", label: "Waiting on you", dot: "var(--cedar-glow)", sub: "blocked on your decision" },
+  { id: "running", label: "Running",        dot: "var(--pine)",       sub: "in flight" },
+  { id: "idle",    label: "Idle",           dot: "var(--text3)",      sub: "parked, ready" },
+  { id: "failed",  label: "Failed",         dot: "var(--ember)",      sub: "needs attention" },
+];
+
+function classify(s: SessionSummary, hint: { lastRole: string | null }): Lane {
   if (s.streaming) return "running";
   if (hint.lastRole === "assistant") return "waiting";
   return "idle";
 }
 
-const LANE_DEFS: { id: Lane; label: string; icon: React.ReactNode; color: string }[] = [
-  { id: "waiting", label: "Waiting",  icon: <Hand size={14} />,           color: "border-amber-400/60" },
-  { id: "running", label: "Running",  icon: <Wrench size={14} />,         color: "border-blue-400/50" },
-  { id: "idle",    label: "Idle",     icon: <Clock size={14} />,          color: "border-[var(--border)]" },
-  { id: "failed",  label: "Failed",   icon: <AlertTriangle size={14} />,  color: "border-red-400/60" },
-];
-
 export default function BoardPage() {
+  const navigate = useNavigate();
   const [items, setItems] = useState<SessionSummary[]>([]);
   const [lastRoles, setLastRoles] = useState<Record<string, string | null>>({});
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
-  const [showDone, setShowDone] = useState(false);
+  const [filter, setFilter] = useState<"all" | "open" | "done">("open");
   const [draft, setDraft] = useState("");
 
-  const refreshSessions = async () => {
+  const refresh = async () => {
     try {
       const data = await api.fetchSessions();
       setItems(data);
@@ -68,203 +55,328 @@ export default function BoardPage() {
         }),
       );
       setLastRoles(Object.fromEntries(roles));
-    } catch {
-      // ignore
-    }
-  };
-
-  const refreshActions = async () => {
+    } catch {}
     try {
       setActionItems(await api.listActionItems());
-    } catch {
-      // ignore
-    }
+    } catch {}
   };
 
   useEffect(() => {
-    refreshSessions();
-    refreshActions();
-    const id = window.setInterval(() => {
-      if (document.hidden) return;
-      refreshSessions();
-      refreshActions();
-    }, 5000);
+    refresh();
+    const id = window.setInterval(() => { if (!document.hidden) refresh(); }, 5000);
     return () => window.clearInterval(id);
   }, []);
 
   const lanes: Record<Lane, SessionSummary[]> = { waiting: [], running: [], idle: [], failed: [] };
-  for (const s of items) {
-    const lane = classifySession(s, { lastRole: lastRoles[s.id] ?? null });
-    lanes[lane].push(s);
+  for (const s of items.filter((s) => !s.archived)) {
+    lanes[classify(s, { lastRole: lastRoles[s.id] ?? null })].push(s);
   }
 
   const submitDraft = async () => {
-    const t = draft.trim();
-    if (!t) return;
-    setDraft("");
+    const t = draft.trim(); if (!t) return; setDraft("");
     try {
       const created = await api.createActionItem(t);
-      setActionItems((prev) => [...prev, created]);
-    } catch {
-      // ignore
-    }
+      setActionItems((p) => [...p, created]);
+    } catch {}
   };
 
   const setStatus = async (id: string, status: "open" | "done" | "dismissed") => {
-    setActionItems((prev) => prev.map((i) => (i.id === id ? { ...i, status } : i)));
+    setActionItems((p) => p.map((i) => (i.id === id ? { ...i, status } : i)));
     try { await api.patchActionItem(id, { status }); } catch {}
   };
 
   const removeItem = async (id: string) => {
-    setActionItems((prev) => prev.filter((i) => i.id !== id));
+    setActionItems((p) => p.filter((i) => i.id !== id));
     try { await api.deleteActionItem(id); } catch {}
   };
 
-  const visibleActions = actionItems.filter((i) => showDone || i.status === "open");
+  const visibleActions = actionItems.filter((i) => filter === "all" || (filter === "done" ? i.status === "done" : i.status === "open"));
   const openCount = actionItems.filter((i) => i.status === "open").length;
+  const doneCount = actionItems.filter((i) => i.status === "done").length;
 
   return (
-    <PageShell variant="page">
-      <PageHeader
-        icon={<Columns3 size={16} />}
-        title="Operations"
-        count={`${items.length} active · ${openCount} todo`}
-        actions={
-          <button
-            onClick={() => { refreshSessions(); refreshActions(); }}
-            className="text-[12px] text-[var(--muted)] hover:text-[var(--text)] px-2 py-1 rounded-md hover:bg-[var(--surface)]"
-          >
-            ↻ refresh
-          </button>
-        }
-      />
-      <div className="flex-1 overflow-auto p-4 flex flex-col gap-4 min-h-0">
-        {/* Lanes */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 min-h-[40vh]">
-          {LANE_DEFS.map((lane) => (
-            <div key={lane.id} className={`flex flex-col bg-[var(--surface)] border ${lane.color} rounded-lg overflow-hidden`}>
-              <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] text-[12px] uppercase tracking-wider text-[var(--muted)]">
-                {lane.icon}
-                <span>{lane.label}</span>
-                <span className="ml-auto font-mono text-[11px]">{lanes[lane.id].length}</span>
-              </div>
-              <div className="flex-1 overflow-y-auto px-2 py-2 flex flex-col gap-1">
-                {lanes[lane.id].length === 0 && (
-                  <div className="text-center text-[11px] text-[var(--muted)]/50 py-3">empty</div>
-                )}
-                {lanes[lane.id].map((s) => (
-                  <Link
-                    key={s.id}
-                    to={`/?sid=${encodeURIComponent(s.id)}`}
-                    className="block px-2 py-1.5 rounded-md hover:bg-[var(--bg)] border border-transparent hover:border-[var(--border)] transition-colors"
-                    title={s.title}
-                  >
-                    <div className="text-[13px] text-[var(--text)] truncate">{s.title || "untitled"}</div>
-                    <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[var(--muted)] font-mono">
-                      <span>{s.message_count} msgs</span>
-                      {s.provider && <span>· {s.provider}</span>}
-                      {s.autonudge_goal && <span className="text-amber-400">· auto</span>}
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+    <CedarPage>
+      <div style={{ position: "relative", overflow: "hidden" }}>
+        <TopoLines height={130} opacity={0.5} />
+        <CedarPageHeader
+          eyebrow="agent management"
+          title={
+            <>
+              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>operations room</em>.
+            </>
+          }
+          sub={`${items.length} active sessions · ${openCount} open todos · ${doneCount} done`}
+          right={<Btn kind="ghost" onClick={refresh}>↻ refresh</Btn>}
+        />
+      </div>
 
-        {/* Action Items */}
-        <div className="flex flex-col bg-[var(--surface)] border border-[var(--border)] rounded-lg overflow-hidden">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] text-[12px] uppercase tracking-wider text-[var(--muted)]">
-            <Bot size={14} />
-            <span>Action Items</span>
-            <span className="font-mono text-[11px]">{openCount} open</span>
-            <button
-              onClick={() => setShowDone((v) => !v)}
-              className="ml-auto text-[10px] normal-case tracking-normal text-[var(--muted)] hover:text-[var(--text)]"
-            >
-              {showDone ? "hide done" : "show all"}
-            </button>
+      <div style={{ padding: "24px 32px 32px", display: "flex", flexDirection: "column", gap: 24 }}>
+        {/* Agent operations — 4-lane board */}
+        <section>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 12,
+              fontFamily: "var(--fm)",
+              fontSize: 10.5,
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".14em",
+            }}
+          >
+            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+            Agent operations
           </div>
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)]">
-            <Plus size={13} className="text-[var(--muted)]" />
-            <input
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") submitDraft(); }}
-              placeholder="Add a todo… (LLMs can also draft these via <todo> tags)"
-              className="flex-1 bg-transparent text-[13px] text-[var(--text)] placeholder-[var(--muted)] focus:outline-none"
-            />
-            <button
-              onClick={submitDraft}
-              disabled={!draft.trim()}
-              className="text-[11px] px-2 py-0.5 rounded-md bg-[var(--cedar-dim)] text-[var(--text)] hover:bg-[var(--cedar)]/30 disabled:opacity-40"
-            >
-              Add
-            </button>
-          </div>
-          <div className="flex flex-col divide-y divide-[var(--border)]/50">
-            {visibleActions.length === 0 && (
-              <div className="px-4 py-6 text-center text-[12px] text-[var(--muted)]">
-                {actionItems.length === 0 ? "No action items yet." : "No open items."}
-              </div>
-            )}
-            {visibleActions.map((it) => (
-              <div key={it.id} className="flex items-center gap-2 px-3 py-2">
-                <button
-                  onClick={() => setStatus(it.id, it.status === "done" ? "open" : "done")}
-                  className={[
-                    "w-4 h-4 shrink-0 rounded border flex items-center justify-center transition-colors",
-                    it.status === "done"
-                      ? "bg-[var(--cedar)] border-[var(--cedar)] text-white"
-                      : "border-[var(--border)] hover:border-[var(--cedar)]",
-                  ].join(" ")}
-                  title={it.status === "done" ? "Re-open" : "Mark done"}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+            {LANE_DEFS.map((lane) => (
+              <CedarCard key={lane.id} padding={0}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "12px 14px",
+                    borderBottom: "1px solid var(--border)",
+                  }}
                 >
-                  {it.status === "done" && <Check size={10} />}
-                </button>
-                <div className="flex-1 min-w-0">
-                  <div
-                    className={[
-                      "text-[13px] truncate",
-                      it.status === "open" ? "text-[var(--text)]" : "text-[var(--muted)] line-through",
-                    ].join(" ")}
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: lane.dot,
+                      boxShadow: lane.id === "running" ? `0 0 6px ${lane.dot}` : undefined,
+                    }}
+                  />
+                  <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>
+                    {lane.label}
+                  </span>
+                  <span
+                    style={{
+                      marginLeft: "auto",
+                      fontFamily: "var(--fm)",
+                      fontSize: 10.5,
+                      color: "var(--muted)",
+                    }}
                   >
-                    {it.text}
-                  </div>
-                  <div className="text-[10px] font-mono text-[var(--muted)]/70 flex items-center gap-2">
-                    <span>{it.source_kind === "agent" ? "agent" : "you"}</span>
-                    {it.session_id && (
-                      <Link
-                        to={`/?sid=${encodeURIComponent(it.session_id)}`}
-                        className="hover:text-[var(--cedar)]"
-                        title="Open source session"
-                      >
-                        ↗ session
-                      </Link>
-                    )}
-                  </div>
+                    {lanes[lane.id].length}
+                  </span>
                 </div>
-                {it.status === "open" && (
-                  <button
-                    onClick={() => setStatus(it.id, "dismissed")}
-                    className="text-[var(--muted)] hover:text-[var(--text)] p-1 rounded hover:bg-[var(--bg)]"
-                    title="Dismiss"
-                  >
-                    <XIcon size={12} />
-                  </button>
-                )}
-                <button
-                  onClick={() => removeItem(it.id)}
-                  className="text-[var(--muted)] hover:text-red-400 p-1 rounded hover:bg-[var(--bg)]"
-                  title="Delete"
-                >
-                  <Trash2 size={12} />
-                </button>
-              </div>
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  {lanes[lane.id].length === 0 && (
+                    <div style={{ padding: "18px 14px", fontSize: 11.5, color: "var(--muted)", textAlign: "center" }}>
+                      empty
+                    </div>
+                  )}
+                  {lanes[lane.id].map((s) => (
+                    <div
+                      key={s.id}
+                      onClick={() => navigate(`/?sid=${encodeURIComponent(s.id)}`)}
+                      style={{
+                        padding: "12px 14px",
+                        borderBottom: "1px solid var(--hairline)",
+                        cursor: "pointer",
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--s2)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <div style={{ fontSize: 12.5, color: "var(--text)", lineHeight: 1.4, marginBottom: 4 }}>
+                        {s.title || "untitled"}
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: 10.5,
+                          fontFamily: "var(--fm)",
+                          color: "var(--muted)",
+                        }}
+                      >
+                        <span>{s.message_count} msgs</span>
+                        {s.provider && <Tag color={s.provider === "kiro-cli" ? "stone" : "cedar"}>{s.provider === "kiro-cli" ? "Kiro" : s.provider === "codex" ? "Codex" : s.provider === "gemini" ? "Gemini" : "CC"}</Tag>}
+                        {s.autonudge_goal && <Tag color="dawn">auto</Tag>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CedarCard>
             ))}
           </div>
-        </div>
+        </section>
+
+        {/* Action items */}
+        <section>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginBottom: 12,
+              fontFamily: "var(--fm)",
+              fontSize: 10.5,
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".14em",
+            }}
+          >
+            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+            Your action items
+          </div>
+          <CedarCard padding={0}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "12px 16px",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              {(["all", "open", "done"] as const).map((f) => {
+                const count =
+                  f === "all" ? actionItems.length : f === "open" ? openCount : doneCount;
+                return (
+                  <button
+                    key={f}
+                    onClick={() => setFilter(f)}
+                    style={{
+                      padding: "5px 10px",
+                      borderRadius: 99,
+                      border: `1px solid ${f === filter ? "var(--cedar-line)" : "var(--border)"}`,
+                      background: f === filter ? "var(--cedar-dim)" : "transparent",
+                      color: f === filter ? "var(--cedar-glow)" : "var(--text2)",
+                      fontFamily: "var(--fn)",
+                      fontSize: 11.5,
+                      cursor: "pointer",
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {f} <span style={{ fontFamily: "var(--fm)", fontSize: 10, opacity: 0.7 }}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 16px",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <Plus size={13} style={{ color: "var(--muted)" }} />
+              <input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") submitDraft(); }}
+                placeholder="Add a todo… (LLMs auto-draft via <todo> tags)"
+                style={{
+                  flex: 1,
+                  background: "transparent",
+                  border: "none",
+                  outline: "none",
+                  fontSize: 13,
+                  color: "var(--text)",
+                  fontFamily: "var(--fn)",
+                }}
+              />
+              <Btn size="sm" kind="solid" onClick={submitDraft} disabled={!draft.trim()}>
+                Add
+              </Btn>
+            </div>
+            <div>
+              {visibleActions.length === 0 && (
+                <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--muted)" }}>
+                  {actionItems.length === 0 ? "Cedar will draft action items here as you work." : "No items in this view."}
+                </div>
+              )}
+              {visibleActions.map((it) => (
+                <div
+                  key={it.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "12px 16px",
+                    borderBottom: "1px solid var(--hairline)",
+                  }}
+                >
+                  <button
+                    onClick={() => setStatus(it.id, it.status === "done" ? "open" : "done")}
+                    title={it.status === "done" ? "Re-open" : "Mark done"}
+                    style={{
+                      width: 18,
+                      height: 18,
+                      borderRadius: 5,
+                      border: `1px solid ${it.status === "done" ? "var(--cedar)" : "var(--border)"}`,
+                      background: it.status === "done" ? "var(--cedar)" : "transparent",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {it.status === "done" && <Check size={11} color="#fff" />}
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: it.status === "open" ? "var(--text)" : "var(--text3)",
+                        textDecoration: it.status === "done" ? "line-through" : "none",
+                      }}
+                    >
+                      {it.text}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 10.5,
+                        color: "var(--muted)",
+                        fontFamily: "var(--fm)",
+                        marginTop: 3,
+                        display: "flex",
+                        gap: 6,
+                      }}
+                    >
+                      <span>
+                        {it.source_kind === "agent" ? "drafted by Cedar" : "you"}
+                      </span>
+                      {it.session_id && (
+                        <a
+                          href={`/?sid=${encodeURIComponent(it.session_id)}`}
+                          style={{ color: "var(--cedar-2)", textDecoration: "none" }}
+                        >
+                          ↗ session
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                  {it.status === "open" && (
+                    <Btn size="sm" kind="ghost" icon={<XIcon size={11} />} onClick={() => setStatus(it.id, "dismissed")} title="Dismiss" />
+                  )}
+                  <Btn size="sm" kind="ghost" icon={<Trash2 size={11} />} onClick={() => removeItem(it.id)} title="Delete" />
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                padding: "10px 16px",
+                fontSize: 10.5,
+                fontFamily: "var(--fm)",
+                color: "var(--muted)",
+                borderTop: "1px solid var(--border)",
+                fontStyle: "italic",
+              }}
+            >
+              Cedar drafts these from your conversations and memory.
+            </div>
+          </CedarCard>
+        </section>
       </div>
-    </PageShell>
+    </CedarPage>
   );
 }
