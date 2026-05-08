@@ -9,19 +9,40 @@ export interface ThemeEntry {
   label: string;
 }
 
+// Arz-original theme names. Most are riffs on classic palettes but with
+// our own colour shifts so they read as Arz themes, not direct ports.
 export const THEMES: ThemeEntry[] = [
-  { value: "cedar", label: "Cedar" },
-  { value: "monokai", label: "Monokai" },
-  { value: "dracula", label: "Dracula" },
-  { value: "nord", label: "Nord" },
-  { value: "solarized", label: "Solarized" },
-  { value: "tokyonight", label: "Tokyo Night" },
-  { value: "gruvbox", label: "Gruvbox" },
-  { value: "catppuccin", label: "Catppuccin" },
-  { value: "rosepine", label: "Rosé Pine" },
-  { value: "ice", label: "Ice" },
-  { value: "amoled", label: "AMOLED" },
+  { value: "cedar", label: "Cedar" },          // signature green/forest
+  { value: "saffron", label: "Saffron" },      // warm citrine + olive
+  { value: "twilight", label: "Twilight" },    // dusty violet
+  { value: "glacier", label: "Glacier" },      // pale arctic blue
+  { value: "driftwood", label: "Driftwood" },  // muted teal on cream
+  { value: "inkwell", label: "Inkwell" },      // deep navy + indigo
+  { value: "ember", label: "Ember" },          // burnt orange + ochre
+  { value: "lavender", label: "Lavender" },    // soft mauve
+  { value: "petal", label: "Petal" },          // rose + dusk
+  { value: "glass", label: "Glass" },          // crisp cyan
+  { value: "obsidian", label: "Obsidian" },    // pure-black AMOLED
 ];
+
+// One-shot remap: anyone with the old theme keys in localStorage from
+// a prior version gets transparently switched to the renamed equivalent.
+const THEME_MIGRATION: Record<string, string> = {
+  monokai: "saffron",
+  dracula: "twilight",
+  nord: "glacier",
+  solarized: "driftwood",
+  tokyonight: "inkwell",
+  gruvbox: "ember",
+  catppuccin: "lavender",
+  rosepine: "petal",
+  ice: "glass",
+  amoled: "obsidian",
+};
+
+function migrateTheme(name: string): string {
+  return THEME_MIGRATION[name] ?? name;
+}
 
 function getSystemMode(): ResolvedMode {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -42,9 +63,12 @@ export function useTheme() {
   const [mode, setMode] = useState<ModePreference>(
     () => (localStorage.getItem("arz-mode") as ModePreference) || "system"
   );
-  const [colorTheme, setColorThemeState] = useState<ColorTheme>(
-    () => (localStorage.getItem("arz-color-theme") as ColorTheme) || "cedar"
-  );
+  const [colorTheme, setColorThemeState] = useState<ColorTheme>(() => {
+    const raw = (localStorage.getItem("arz-color-theme") as ColorTheme) || "cedar";
+    const migrated = migrateTheme(raw);
+    if (migrated !== raw) localStorage.setItem("arz-color-theme", migrated);
+    return migrated;
+  });
   const [resolved, setResolved] = useState<ResolvedMode>(() =>
     resolveMode((localStorage.getItem("arz-mode") as ModePreference) || "system")
   );
