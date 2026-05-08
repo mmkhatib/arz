@@ -19,6 +19,8 @@ export interface SessionSummary {
   autonudge_idle_s?: number;
   autonudge_iterations?: number;
   autonudge_max_iterations?: number;
+  pinned?: boolean;
+  archived?: boolean;
 }
 
 export interface UsageRecord {
@@ -176,6 +178,16 @@ export interface McpServer {
   env: Record<string, string>;
   source: string;
   enabled: boolean;
+}
+
+export interface ActionItem {
+  id: string;
+  text: string;
+  status: "open" | "done" | "dismissed";
+  source_kind: "user" | "agent";
+  session_id: string | null;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface PromptTemplate {
@@ -769,6 +781,37 @@ export const api = {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agent: agent ?? "" }),
+    });
+  },
+
+  listActionItems: () => request<ActionItem[]>("/action-items"),
+  createActionItem: (text: string) =>
+    request<ActionItem>("/action-items", {
+      method: "POST",
+      body: JSON.stringify({ text, source_kind: "user" }),
+    }),
+  patchActionItem: (id: string, patch: { text?: string; status?: "open" | "done" | "dismissed" }) =>
+    request<ActionItem>(`/action-items/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deleteActionItem: async (id: string): Promise<void> => {
+    await fetch(`${BASE}/action-items/${id}`, { method: "DELETE" });
+  },
+
+  async setSessionPin(sessionId: string, pinned: boolean): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/pin`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pinned }),
+    });
+  },
+
+  async setSessionArchive(sessionId: string, archived: boolean): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/archive`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ archived }),
     });
   },
 

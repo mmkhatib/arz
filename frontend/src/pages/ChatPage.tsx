@@ -48,6 +48,16 @@ export default function ChatPage() {
     try {
       const data = await api.fetchSessions();
       setSessions(data);
+      // Merge server-side pinned state into local set (cross-machine sync).
+      setPinnedIds((prev) => {
+        const next = new Set(prev);
+        for (const s of data) {
+          if (s.pinned) next.add(s.id);
+          else next.delete(s.id);
+        }
+        localStorage.setItem("arz:pinned", JSON.stringify([...next]));
+        return next;
+      });
       // Auto-select on first load only. Use the functional setter form so we
       // see the current activeId — never clobber a user-picked session on
       // subsequent polls (this is what was making the chat flip back to the
@@ -173,10 +183,18 @@ export default function ChatPage() {
   const handleTogglePin = (id: string) => {
     setPinnedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      const willPin = !next.has(id);
+      if (willPin) next.add(id); else next.delete(id);
       localStorage.setItem("arz:pinned", JSON.stringify([...next]));
+      api.setSessionPin(id, willPin).catch(() => {});
       return next;
     });
+  };
+
+  const handleArchive = (id: string, archived: boolean) => {
+    api.setSessionArchive(id, archived)
+      .then(() => loadSessions())
+      .catch(() => {});
   };
 
   const handleSelect = (id: string) => {
@@ -271,6 +289,7 @@ export default function ChatPage() {
         onCreate={handleCreate}
         onDelete={handleDelete}
         onTogglePin={handleTogglePin}
+        onArchive={handleArchive}
         onResume={handleResume}
       />
 

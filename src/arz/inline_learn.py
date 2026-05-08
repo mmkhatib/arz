@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # Tags we recognise. Body can include newlines. Attributes are simple
 # key="value" pairs separated by whitespace.
 _TAG_RE = re.compile(
-    r"<(?P<tag>learn|memory|note|recall)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
+    r"<(?P<tag>learn|memory|note|recall|todo)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
     r"(?P<body>.*?)"
     r"</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
@@ -41,7 +41,7 @@ _VALID_LEARN_CATEGORIES = {"preference", "tool", "knowledge"}
 
 @dataclass
 class Extracted:
-    kind: Literal["learn", "memory", "note", "recall"]
+    kind: Literal["learn", "memory", "note", "recall", "todo"]
     body: str
     attrs: dict[str, str]
 
@@ -98,7 +98,7 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
     ``session_id`` is required for ``<recall>`` extractions so the queued
     query can be pulled on the next turn.
     """
-    counts = {"learn": 0, "memory": 0, "note": 0, "recall": 0, "skipped": 0}
+    counts = {"learn": 0, "memory": 0, "note": 0, "recall": 0, "todo": 0, "skipped": 0}
     if not extractions:
         return counts
     from arz.lessons import get_lesson_store
@@ -153,6 +153,13 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
                 title = (ex.attrs.get("title") or "untitled").strip()
                 notes.save(title, ex.body)
                 counts["note"] += 1
+            elif ex.kind == "todo":
+                from arz.dashboard.routes.action_items import add_from_agent
+
+                if add_from_agent(ex.body, session_id=session_id):
+                    counts["todo"] += 1
+                else:
+                    counts["skipped"] += 1
             else:
                 counts["skipped"] += 1
         except Exception:

@@ -81,6 +81,9 @@ it's additive.
 - `<memory key="projects">arz multi-LLM agent runtime</memory>`
 - `<memory>random fact about user</memory>`
 - `<note title="meshclaw-port-decisions">…multi-line markdown…</note>`
+- `<todo>follow up on the GitHub Actions cache miss</todo>` — append a TODO
+  to the shared Operations action-items panel. Use this for genuine
+  user-facing follow-ups, NOT for in-turn scratch work.
 
 Worked examples (note the tag is REQUIRED, not optional):
 

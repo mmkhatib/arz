@@ -17,6 +17,7 @@ from arz.config.schema import ArzConfig
 from arz.core.router import MessageRouter
 from arz.dashboard.audit import AuditLog
 from arz.dashboard.cron import CronEntry, CronRegistry
+from arz.dashboard.routes.action_items import router as action_items_router
 from arz.dashboard.routes.agents import router as agents_router
 from arz.dashboard.routes.analytics import router as analytics_router
 from arz.dashboard.routes.approvals import router as approvals_router
@@ -471,6 +472,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(taskrunner_router)
     app.include_router(installer_router)
     app.include_router(consolidator_router)
+    app.include_router(action_items_router)
 
     if _STATIC_DIR.exists():
         # SPA fallback: any non-/api path that doesn't match a real file

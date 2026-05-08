@@ -64,6 +64,7 @@ interface Props {
   onCreate: () => void;
   onDelete: (id: string) => void;
   onTogglePin: (id: string) => void;
+  onArchive?: (id: string, archived: boolean) => void;
   /** Visible state on mobile (overlay drawer). On md+ the sidebar is always visible. */
   mobileOpen?: boolean;
   onMobileClose?: () => void;
@@ -80,6 +81,7 @@ export default function SessionList({
   onCreate,
   onDelete,
   onTogglePin,
+  onArchive,
   mobileOpen = false,
   onMobileClose,
   onResume,
@@ -166,12 +168,14 @@ export default function SessionList({
       }, {})
     : null;
 
-  const displayed = results ?? [...sessions].sort((a, b) => {
-    const ap = pinnedIds.has(a.id) ? 1 : 0;
-    const bp = pinnedIds.has(b.id) ? 1 : 0;
-    if (ap !== bp) return bp - ap;
-    return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
-  });
+  const displayed = results ?? [...sessions]
+    .filter((s) => !s.archived)
+    .sort((a, b) => {
+      const ap = pinnedIds.has(a.id) ? 1 : 0;
+      const bp = pinnedIds.has(b.id) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    });
 
   // Resizable width — desktop only. Persists to localStorage.
   const MIN_WIDTH = 180;
@@ -334,6 +338,15 @@ export default function SessionList({
                     >
                       <Palette size={11} />
                     </button>
+                    {onArchive && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onArchive(s.id, true); }}
+                        title="Archive (move to History)"
+                        className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)] transition-colors"
+                      >
+                        ⌄
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}
                       title="Close session"

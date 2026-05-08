@@ -86,6 +86,9 @@ class Session:
     autonudge_idle_s: int = 0  # 0 = disabled
     autonudge_max_iterations: int = 20  # safety cap
     autonudge_iterations: int = 0  # how many nudges have fired so far
+    # Per-session UI state — persists across restarts and machines.
+    pinned: bool = False
+    archived: bool = False
 
     def add_message(self, role: Literal["user", "assistant", "system"], text: str) -> Message:
         msg = Message(role=role, text=text)
@@ -116,6 +119,8 @@ class Session:
             "autonudge_idle_s": self.autonudge_idle_s,
             "autonudge_max_iterations": self.autonudge_max_iterations,
             "autonudge_iterations": self.autonudge_iterations,
+            "pinned": self.pinned,
+            "archived": self.archived,
         }
 
     @classmethod
@@ -140,4 +145,6 @@ class Session:
             autonudge_idle_s=int(d.get("autonudge_idle_s") or 0),
             autonudge_max_iterations=int(d.get("autonudge_max_iterations") or 20),
             autonudge_iterations=int(d.get("autonudge_iterations") or 0),
+            pinned=bool(d.get("pinned") or False),
+            archived=bool(d.get("archived") or False),
         )

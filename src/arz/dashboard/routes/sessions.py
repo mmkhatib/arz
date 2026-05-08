@@ -47,6 +47,8 @@ def _session_to_dict(session: object) -> dict:
         "autonudge_idle_s": session.autonudge_idle_s,
         "autonudge_iterations": session.autonudge_iterations,
         "autonudge_max_iterations": session.autonudge_max_iterations,
+        "pinned": getattr(session, "pinned", False),
+        "archived": getattr(session, "archived", False),
     }
 
 
@@ -361,6 +363,34 @@ async def delete_session_permanent(session_id: str, request: Request) -> None:
             pass
 
 
+@router.patch("/api/sessions/{session_id}/pin", status_code=status.HTTP_204_NO_CONTENT)
+async def set_session_pin(session_id: str, request: Request) -> None:
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    from arz.session.session import Session
+
+    assert isinstance(session, Session)
+    session.pinned = bool(body.get("pinned", False))
+    mgr.save(session)
+
+
+@router.patch("/api/sessions/{session_id}/archive", status_code=status.HTTP_204_NO_CONTENT)
+async def set_session_archive(session_id: str, request: Request) -> None:
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    from arz.session.session import Session
+
+    assert isinstance(session, Session)
+    session.archived = bool(body.get("archived", True))
+    mgr.save(session)
+
+
 @router.patch("/api/sessions/{session_id}/color", status_code=status.HTTP_204_NO_CONTENT)
 async def set_session_color(session_id: str, request: Request) -> None:
     mgr: SessionManager = _get_manager(request)
@@ -552,13 +582,17 @@ async def generate_title(session_id: str, request: Request) -> dict:
         f"User: {user_msg}\nAssistant: {assistant_msg[:200]}"
     )
 
-    # Use the session's actual provider + model. Falls back to global config.
+    # Title generation is a tiny task — prefer a cheap model over the
+    # session's working model. Order: smallest local Ollama → claude
+    # haiku → session model fallback.
     cfg = request.app.state.config
     from arz.session.session import Session
 
     assert isinstance(session, Session)
-    provider_name = session.provider or cfg.provider.name
-    model_name = session.model or ""
+    provider_name, model_name = await _pick_cheap_model(
+        fallback_provider=session.provider or cfg.provider.name,
+        fallback_model=session.model or "",
+    )
 
     title = ""
     try:
@@ -595,6 +629,44 @@ async def generate_title(session_id: str, request: Request) -> dict:
         session.title = title
         mgr.save(session)
     return {"title": session.title}
+
+
+async def _pick_cheap_model(*, fallback_provider: str, fallback_model: str) -> tuple[str, str]:
+    """Pick the cheapest LLM available for a tiny task (title gen, etc.).
+
+    Smallest local Ollama wins. Falls back to claude-code haiku, then to
+    whatever the session is configured with.
+    """
+    import shutil
+
+    try:
+        from arz.installer import list_installed_ollama_models
+
+        models = await list_installed_ollama_models()
+    except Exception:
+        models = []
+
+    def _params(m: dict) -> float:
+        # parameter_size is e.g. "1.7B" / "4B" / "70.6B"
+        s = (m.get("parameter_size") or m.get("name") or "").upper()
+        for tok in s.replace("(", " ").replace(")", " ").split():
+            if tok.endswith("B"):
+                try:
+                    return float(tok[:-1])
+                except Exception:
+                    continue
+        return 9999.0
+
+    if models:
+        smallest = min(models, key=_params)
+        name = smallest.get("name") or smallest.get("model")
+        if name:
+            return ("ollama", name)
+
+    if shutil.which("claude"):
+        return ("claude-code", "claude-haiku-4-5")
+
+    return (fallback_provider, fallback_model)
 
 
 async def _generate_title_via_provider(provider_name: str, model: str, prompt: str) -> str:
