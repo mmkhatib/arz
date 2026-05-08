@@ -626,6 +626,45 @@ export const api = {
   cancelTask: (id: string) =>
     request<{ cancelled: boolean }>(`/taskrun/${id}/cancel`, { method: "POST" }),
 
+  // ── Channels (Apps) ──
+  listChannelsApp: () =>
+    request<{ id: string; name: string; topic: string; preset: string;
+              status: string; idle_timeout_s: number; last_activity_ts: number;
+              members: { agent: string; role: string }[];
+              messages: { id: number; from: string; text: string; ts: number;
+                          mentions: string[]; in_reply_to: number | null;
+                          thread_id: number | null }[] }[]>("/channels"),
+  getChannelApp: (slug: string) =>
+    request<{ id: string; name: string; topic: string; preset: string;
+              status: string; idle_timeout_s: number; last_activity_ts: number;
+              members: { agent: string; role: string }[];
+              messages: { id: number; from: string; text: string; ts: number;
+                          mentions: string[]; in_reply_to: number | null;
+                          thread_id: number | null }[] }>(`/channels/${slug}`),
+  createChannelApp: (body: {
+    name?: string;
+    topic?: string;
+    preset?: string;
+    members?: ({ agent: string; role?: string } | string)[];
+    idle_timeout_s?: number;
+  }) =>
+    request<{ id: string; name: string }>("/channels", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  postToChannelApp: (slug: string, text: string, from = "user") =>
+    request<{ id: number }>(`/channels/${slug}/post`, {
+      method: "POST",
+      body: JSON.stringify({ from, text }),
+    }),
+  wakeChannelApp: (slug: string) =>
+    request<unknown>(`/channels/${slug}/wake`, { method: "POST" }),
+  dismissChannelApp: (slug: string) =>
+    request<unknown>(`/channels/${slug}/dismiss`, { method: "POST" }),
+  channelPresetsApp: () =>
+    request<{ id: string; name: string; topic: string;
+              members: { agent: string; role: string }[] }[]>("/channels/_/presets"),
+
   /** Hand off a markdown file + batch of selection-anchored comments to a
    *  subagent for in-place editing. */
   editFileWithComments: (

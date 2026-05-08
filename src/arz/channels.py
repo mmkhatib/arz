@@ -33,13 +33,16 @@ from threading import Lock
 from pydantic import BaseModel
 
 _DIR = Path.home() / ".arz" / "channels"
-_MAX_MEMBERS = 3
+_MAX_MEMBERS = 6  # 1 orchestrator + up to 5 specialists
 _MAX_MESSAGES = 200
+_MAX_A2A_PAIR = 3  # max exchanges between any (a,b) per user-turn
+_DEFAULT_IDLE_TIMEOUT_S = 30 * 60
 _MENTION_RE = re.compile(r"@([a-zA-Z][a-zA-Z0-9_-]{1,40})")
 
 
 class ChannelMember(BaseModel):
     agent: str
+    role: str = "specialist"  # orchestrator | specialist
     listen_mode: str = "ALL"  # ALL | MENTION | SILENT
     approval: str = "WRITES"  # ALL | WRITES | TRUSTED
 
@@ -51,6 +54,7 @@ class ChannelMessage(BaseModel):
     ts: float
     mentions: list[str] = []
     in_reply_to: int | None = None
+    thread_id: int | None = None  # message id this thread is anchored to
 
     def model_dump(self, **kwargs):  # pydantic alias workaround for `from`
         d = super().model_dump(**kwargs)
@@ -61,6 +65,11 @@ class ChannelMessage(BaseModel):
 class Channel(BaseModel):
     id: str
     name: str
+    topic: str = ""
+    preset: str = "custom"  # incident_response | code_review | research | custom
+    idle_timeout_s: int = _DEFAULT_IDLE_TIMEOUT_S
+    last_activity_ts: float = 0.0
+    status: str = "active"  # active | idle | dismissed
     members: list[ChannelMember] = []
     messages: list[ChannelMessage] = []
 
@@ -118,13 +127,64 @@ class ChannelStore:
             _path_for(ch.id).write_text(json.dumps(data, indent=2), encoding="utf-8")
             return ch
 
-    def create(self, name: str, members: list[ChannelMember] | None = None) -> Channel:
+    def create(
+        self,
+        name: str,
+        members: list[ChannelMember] | None = None,
+        *,
+        topic: str = "",
+        preset: str = "custom",
+        idle_timeout_s: int = _DEFAULT_IDLE_TIMEOUT_S,
+    ) -> Channel:
         slug = _slugify(name)
         if self.get(slug):
             raise ValueError(f"channel '{slug}' already exists")
         members = (members or [])[:_MAX_MEMBERS]
-        ch = Channel(id=slug, name=name.strip(), members=members)
+        # Exactly one orchestrator allowed; promote the first if none flagged.
+        orchestrators = [m for m in members if m.role == "orchestrator"]
+        if not orchestrators and members:
+            members[0].role = "orchestrator"
+        elif len(orchestrators) > 1:
+            for m in orchestrators[1:]:
+                m.role = "specialist"
+        ch = Channel(
+            id=slug,
+            name=name.strip(),
+            topic=topic.strip(),
+            preset=preset,
+            idle_timeout_s=idle_timeout_s,
+            last_activity_ts=time.time(),
+            members=members,
+        )
         return self.save(ch)
+
+    def wake(self, slug: str) -> Channel | None:
+        """Mark a channel active again — UI 'Wake' button after idle."""
+        ch = self.get(slug)
+        if ch is None:
+            return None
+        ch.status = "active"
+        ch.last_activity_ts = time.time()
+        return self.save(ch)
+
+    def dismiss(self, slug: str) -> Channel | None:
+        """Permanently shelve a channel without deleting its history."""
+        ch = self.get(slug)
+        if ch is None:
+            return None
+        ch.status = "dismissed"
+        return self.save(ch)
+
+    def maybe_idle(self, ch: Channel) -> Channel:
+        """Flip status to 'idle' if last activity exceeds the timeout."""
+        if ch.status != "active":
+            return ch
+        if not ch.last_activity_ts or ch.idle_timeout_s <= 0:
+            return ch
+        if time.time() - ch.last_activity_ts > ch.idle_timeout_s:
+            ch.status = "idle"
+            self.save(ch)
+        return ch
 
     def delete(self, slug: str) -> bool:
         p = _path_for(slug)
@@ -150,6 +210,7 @@ class ChannelStore:
         from_: str,
         text: str,
         in_reply_to: int | None = None,
+        thread_id: int | None = None,
     ) -> ChannelMessage:
         ch = self.get(slug)
         if ch is None:
@@ -163,10 +224,14 @@ class ChannelStore:
             ts=time.time(),
             mentions=mentions,
             in_reply_to=in_reply_to,
+            thread_id=thread_id,
         )
         ch.messages.append(msg)
         if len(ch.messages) > _MAX_MESSAGES:
             ch.messages = ch.messages[-_MAX_MESSAGES:]
+        ch.last_activity_ts = time.time()
+        if ch.status == "idle":
+            ch.status = "active"
         self.save(ch)
         return msg
 

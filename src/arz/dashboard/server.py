@@ -378,6 +378,12 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
 
     get_task_runner().set_runner(_run_subagent)
 
+    # Channel runner — orchestrator + specialist execution loop. Uses
+    # the same single-turn subagent runner as everything else.
+    from arz.channel_runner import init_channel_runner
+
+    init_channel_runner(_run_subagent)
+
     # Memory consolidator ("dream"): nightly LLM-driven rollup of recent
     # sessions into preferences/projects/lessons + daily summaries.
     from arz.consolidator import init_consolidator

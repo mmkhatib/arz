@@ -34,10 +34,29 @@ async def get_channel(slug: str) -> dict:
 @router.post("/api/channels", status_code=status.HTTP_201_CREATED)
 async def create_channel(request: Request) -> dict:
     body = await request.json()
+    preset = (body.get("preset") or "").strip()
     name = (body.get("name") or "").strip()
+    topic = (body.get("topic") or "").strip()
+    idle_timeout_s = int(body.get("idle_timeout_s") or 1800)
+    members_raw = body.get("members") or []
+
+    # Hydrate from preset if requested.
+    if preset and preset != "custom":
+        from arz.channel_runner import PRESETS
+
+        spec = PRESETS.get(preset)
+        if spec is None:
+            raise HTTPException(status_code=422, detail=f"unknown preset {preset!r}")
+        if not name:
+            name = spec["name"]
+        if not topic:
+            topic = spec["topic"]
+        if not members_raw:
+            members_raw = spec["members"]
+
     if not name:
         raise HTTPException(status_code=422, detail="name required")
-    members_raw = body.get("members") or []
+
     members = []
     for m in members_raw:
         if isinstance(m, str):
@@ -45,10 +64,24 @@ async def create_channel(request: Request) -> dict:
         elif isinstance(m, dict) and m.get("agent"):
             members.append(ChannelMember(**m))
     try:
-        ch = get_channel_store().create(name, members)
+        ch = get_channel_store().create(
+            name,
+            members,
+            topic=topic,
+            preset=preset or "custom",
+            idle_timeout_s=idle_timeout_s,
+        )
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return _channel_to_dict(ch)
+
+
+@router.get("/api/channels/_/presets")
+async def list_presets() -> list[dict]:
+    """Return the built-in channel presets."""
+    from arz.channel_runner import PRESETS
+
+    return [{"id": k, **v} for k, v in PRESETS.items()]
 
 
 @router.delete("/api/channels/{slug}", status_code=status.HTTP_204_NO_CONTENT)
@@ -73,6 +106,13 @@ async def add_member(slug: str, request: Request) -> dict:
 
 @router.post("/api/channels/{slug}/post", status_code=status.HTTP_201_CREATED)
 async def post_message(slug: str, request: Request) -> dict:
+    """Post a message into a channel.
+
+    When ``from`` is "user" (the default), the channel runner is fired:
+    orchestrator + specialists drive the conversation forward in the
+    background. The HTTP call returns immediately with the user's
+    message; the UI polls /api/channels/{slug} to watch replies land.
+    """
     body = await request.json()
     from_ = (body.get("from") or "user").strip()
     text = (body.get("text") or "").strip()
@@ -83,5 +123,31 @@ async def post_message(slug: str, request: Request) -> dict:
         msg = get_channel_store().post(slug, from_, text, in_reply_to)
     except KeyError:
         raise HTTPException(status_code=404, detail="Channel not found")
+
+    if from_ == "user":
+        from arz.channel_runner import get_channel_runner
+
+        runner = get_channel_runner()
+        if runner is not None:
+            import asyncio
+
+            asyncio.create_task(runner.post_user(slug, text))
+
     out = msg.model_dump()
     return out
+
+
+@router.post("/api/channels/{slug}/wake", status_code=status.HTTP_200_OK)
+async def wake_channel(slug: str) -> dict:
+    ch = get_channel_store().wake(slug)
+    if ch is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return _channel_to_dict(ch)
+
+
+@router.post("/api/channels/{slug}/dismiss", status_code=status.HTTP_200_OK)
+async def dismiss_channel(slug: str) -> dict:
+    ch = get_channel_store().dismiss(slug)
+    if ch is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return _channel_to_dict(ch)
