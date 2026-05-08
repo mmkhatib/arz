@@ -15,6 +15,28 @@ import SecondaryNav from "@/components/SecondaryNav";
 type Channel = Awaited<ReturnType<typeof api.getChannelApp>>;
 type Preset = Awaited<ReturnType<typeof api.channelPresetsApp>>[number];
 
+function renderWithMentions(text: string): React.ReactNode {
+  const parts = text.split(/(@\w[\w-]*)/g);
+  return parts.map((p, i) =>
+    p.startsWith("@") ? (
+      <span
+        key={i}
+        style={{
+          color: "var(--cedar-glow)",
+          background: "var(--cedar-dim)",
+          padding: "1px 6px",
+          borderRadius: 4,
+          fontWeight: 500,
+        }}
+      >
+        {p}
+      </span>
+    ) : (
+      <span key={i}>{p}</span>
+    ),
+  );
+}
+
 function fmtTime(ts: number): string {
   if (!ts) return "";
   const d = new Date(ts * 1000);
@@ -162,13 +184,42 @@ export default function ChannelsPage() {
                   {active.topic && (
                     <div className="text-[12px] text-[var(--muted)] mt-0.5 truncate">{active.topic}</div>
                   )}
-                  <div className="text-[10px] text-[var(--muted)]/70 mt-0.5 font-mono flex items-center gap-2 flex-wrap">
+                  <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                    <span style={{ fontSize: 10, fontFamily: "var(--fm)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".1em", marginRight: 4 }}>
+                      Members
+                    </span>
                     {active.members.map((m) => (
-                      <span key={m.agent} className={m.role === "orchestrator" ? "text-[var(--cedar)]" : ""}>
-                        @{m.agent}{m.role === "orchestrator" ? "★" : ""}
+                      <span
+                        key={m.agent}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "3px 9px 3px 6px",
+                          background: "var(--s2)",
+                          border: "1px solid var(--border)",
+                          borderRadius: 14,
+                          fontSize: 11.5,
+                          color: "var(--text)",
+                        }}
+                        title={m.role}
+                      >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: "50%",
+                            background: m.role === "orchestrator" ? "var(--cedar-glow)" : "var(--text3)",
+                            boxShadow: m.role === "orchestrator" ? "0 0 4px var(--cedar-glow)" : undefined,
+                          }}
+                        />
+                        @{m.agent}
+                        <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--fm)" }}>· {m.role}</span>
                       </span>
                     ))}
-                    <span className="opacity-60">· last activity {fmtAge(active.last_activity_ts)} ago</span>
+                    <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)", marginLeft: 6 }}>
+                      · last {fmtAge(active.last_activity_ts)}
+                    </span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -218,7 +269,7 @@ export default function ChannelsPage() {
                           isUser ? "bg-[var(--user-bg)] text-[var(--text)] self-start" :
                           isThreaded ? "bg-[var(--bg)] border border-[var(--border)]/60 text-[var(--text)] self-start" :
                           "bg-[var(--surface)] border border-[var(--border)] text-[var(--text)] self-start"].join(" ")}>
-                          {m.text}
+                          {renderWithMentions(m.text)}
                         </div>
                       </div>
                     );

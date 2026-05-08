@@ -1,26 +1,45 @@
 import { useEffect, useState } from "react";
 import { Activity, Users, Heart, ListChecks, Save, Plus, Trash2, RefreshCw } from "lucide-react";
-import { api } from "@/api/client";
+import { api, type AuditEntryPub } from "@/api/client";
 import SecondaryNav from "@/components/SecondaryNav";
-import { CedarPage, CedarPageHeader, TopoLines } from "@/components/CedarUI";
+import { CedarPage, CedarPageHeader, CedarCard, Tag, TopoLines } from "@/components/CedarUI";
 
-type Tab = "subagents" | "channels" | "heartbeat" | "tasks";
+type Tab = "decisions" | "subagents" | "channels" | "heartbeat" | "tasks";
 
 export default function AutonomyPage() {
-  const [tab, setTab] = useState<Tab>("subagents");
+  const [tab, setTab] = useState<Tab>("decisions");
+  const [audits, setAudits] = useState<AuditEntryPub[]>([]);
+  const [trust, setTrust] = useState<number>(() => {
+    const raw = Number(localStorage.getItem("arz:trust-level"));
+    return Number.isFinite(raw) && raw >= 0 && raw <= 100 ? raw : 70;
+  });
+
+  useEffect(() => {
+    api.getOverview(50)
+      .then((o) => setAudits(o.recent_activity || []))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem("arz:trust-level", String(trust));
+  }, [trust]);
+
+  const auto = audits.length;
+  const asked = 0; // Could come from a different audit kind once we tag them
 
   return (
     <CedarPage>
       <div style={{ position: "relative", overflow: "hidden" }}>
         <TopoLines height={120} opacity={0.5} />
         <CedarPageHeader
-          eyebrow="acted without asking"
+          eyebrow="trust"
           title={
             <>
-              The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>autonomy</em> ledger.
+              What Arzeh did{" "}
+              <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>without asking</em>.
             </>
           }
-          sub="What Arzeh did on its own — subagents, channels, heartbeat, scheduled tasks."
+          sub={`${auto} auto-approved · ${asked} asked first. Adjust the trust dial to bring more decisions back to you.`}
         />
       </div>
       <div className="flex flex-1 min-h-0">
@@ -30,6 +49,7 @@ export default function AutonomyPage() {
           value={tab}
           onChange={setTab}
           items={[
+            { id: "decisions", label: "Decisions", icon: <Activity size={13} /> },
             { id: "subagents", label: "Subagents", icon: <Activity size={13} /> },
             { id: "channels",  label: "Channels",  icon: <Users size={13} /> },
             { id: "heartbeat", label: "Heartbeat", icon: <Heart size={13} /> },
@@ -37,6 +57,7 @@ export default function AutonomyPage() {
           ]}
         />
         <div className="overflow-y-auto px-8 py-6 flex-1">
+          {tab === "decisions" && <DecisionsTab audits={audits} trust={trust} setTrust={setTrust} />}
           {tab === "subagents" && <SubagentsTab />}
           {tab === "channels" && <ChannelsTab />}
           {tab === "heartbeat" && <HeartbeatTab />}
@@ -44,6 +65,102 @@ export default function AutonomyPage() {
         </div>
       </div>
     </CedarPage>
+  );
+}
+
+function DecisionsTab({
+  audits,
+  trust,
+  setTrust,
+}: {
+  audits: AuditEntryPub[];
+  trust: number;
+  setTrust: (n: number) => void;
+}) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24 }}>
+      <CedarCard padding={0}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center" }}>
+          <span style={{ fontSize: 11, fontFamily: "var(--fm)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".1em" }}>
+            Recent decisions · {audits.length}
+          </span>
+        </div>
+        {audits.length === 0 && (
+          <div style={{ padding: 32, textAlign: "center", fontSize: 12.5, color: "var(--muted)" }}>
+            No actions logged yet.
+          </div>
+        )}
+        {audits.map((e) => (
+          <div
+            key={e.id}
+            style={{
+              display: "grid",
+              gridTemplateColumns: "100px 1fr auto",
+              alignItems: "center",
+              gap: 14,
+              padding: "12px 18px",
+              borderBottom: "1px solid var(--hairline)",
+            }}
+          >
+            <Tag color="cedar">auto</Tag>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 12.5, color: "var(--text)" }}>
+                <span style={{ fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>{e.kind}</span>
+                {" "}· {e.summary}
+              </div>
+              {e.session_id && (
+                <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 2 }}>
+                  session {e.session_id.slice(0, 8)}
+                </div>
+              )}
+            </div>
+            <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+              {relTime(e.ts)}
+            </span>
+          </div>
+        ))}
+      </CedarCard>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <CedarCard padding={20}>
+          <div
+            style={{
+              fontSize: 10.5,
+              color: "var(--muted)",
+              fontFamily: "var(--fm)",
+              textTransform: "uppercase",
+              letterSpacing: ".12em",
+              marginBottom: 12,
+            }}
+          >
+            Trust dial
+          </div>
+          <div style={{ fontFamily: "var(--fd)", fontSize: 36, color: "var(--text)", lineHeight: 1, marginBottom: 4 }}>
+            {trust}%
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 14 }}>
+            {trust < 30 ? "Cautious — ask for most things." : trust < 70 ? "Balanced — auto-approve safe ops." : "Trusting — auto-approve broadly."}
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={trust}
+            onChange={(e) => setTrust(Number(e.target.value))}
+            style={{ width: "100%", accentColor: "var(--cedar)" }}
+          />
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+            <span>cautious</span>
+            <span>trusting</span>
+          </div>
+        </CedarCard>
+        <CedarCard padding={16}>
+          <div style={{ fontSize: 11.5, color: "var(--text3)", lineHeight: 1.5 }}>
+            Lower the dial to bring more decisions back to you for approval. Higher trust = fewer interruptions but more autonomy.
+          </div>
+        </CedarCard>
+      </div>
+    </div>
   );
 }
 

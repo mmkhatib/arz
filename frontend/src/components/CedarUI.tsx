@@ -336,6 +336,49 @@ export function CedarPageHeader({
   );
 }
 
+// ── Toggle (iOS-style) ───────────────────────────────────────
+export function Toggle({
+  on,
+  onClick,
+  title,
+}: {
+  on: boolean;
+  onClick?: () => void;
+  title?: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        width: 34,
+        height: 18,
+        borderRadius: 9,
+        border: "none",
+        cursor: "pointer",
+        background: on ? "var(--cedar)" : "var(--s3)",
+        position: "relative",
+        flexShrink: 0,
+        transition: "background .15s",
+      }}
+    >
+      <span
+        style={{
+          position: "absolute",
+          top: 2,
+          left: on ? 18 : 2,
+          width: 14,
+          height: 14,
+          background: "#fff",
+          borderRadius: "50%",
+          transition: "left .15s",
+          boxShadow: "0 1px 2px rgba(0,0,0,.4)",
+        }}
+      />
+    </button>
+  );
+}
+
 // ── Eyebrow label ────────────────────────────────────────────
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (

@@ -1,44 +1,65 @@
-// Global top header. Lives above the page area on every route.
-// Hosts: breadcrumb, ⌘K command palette, theme/density dial.
+// Cedar TopBar — matches design_handoff_arz_cedar/redesign/shell.jsx.
+// Left: page eyebrow label.
+// Center: ⌘K search button (opens command palette indexing pages,
+//   sessions, history, memory, crons, agents, channels, prompts).
+// Right: light/dark segmented toggle (cedar-glow accent on active),
+//   notifications button, avatar.
 
-import { useEffect, useState } from "react";
-import { Search, Sun, Moon, Monitor, SlidersHorizontal, Check } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Bell, Search } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "@/api/client";
-import Popover from "./Popover";
-import { useTheme, type ColorTheme, type Density } from "@/hooks/useTheme";
+import { useTheme } from "@/hooks/useTheme";
 
-const PATH_LABELS: Record<string, string> = {
-  "/":            "Chat",
-  "/chat":        "Chat",
-  "/board":       "Operations",
-  "/autopilot":   "Autopilot",
-  "/channels":    "Channels",
-  "/agents":      "Agents",
-  "/memory":      "Memory",
-  "/schedule":    "Schedule",
-  "/analytics":   "Analytics",
-  "/capabilities":"Capabilities",
-  "/autonomy":    "Autonomy",
-  "/models":      "Models",
-  "/settings":    "Settings",
-  "/overview":    "Overview",
+const PAGE_LABEL: Record<string, string> = {
+  "/":             "Chat",
+  "/chat":         "Chat",
+  "/board":        "Operations",
+  "/autopilot":    "Autopilot",
+  "/channels":     "Channels",
+  "/agents":       "Agents",
+  "/memory":       "Memory",
+  "/schedule":     "Schedule",
+  "/analytics":    "Analytics",
+  "/capabilities": "Capabilities",
+  "/autonomy":     "Autonomy",
+  "/models":       "Models",
+  "/settings":     "Settings",
+  "/overview":     "Overview",
 };
+
+const ALL_PAGES = [
+  { path: "/overview",     label: "Overview",     zone: "Today" },
+  { path: "/",             label: "Chat",         zone: "Today" },
+  { path: "/memory",       label: "Memory",       zone: "Mind" },
+  { path: "/capabilities", label: "Capabilities", zone: "Mind" },
+  { path: "/schedule",     label: "Schedule",     zone: "Work" },
+  { path: "/autopilot",    label: "Autopilot",    zone: "Work" },
+  { path: "/autonomy",     label: "Autonomy",     zone: "Work" },
+  { path: "/board",        label: "Operations",   zone: "Work" },
+  { path: "/agents",       label: "Agents",       zone: "Work" },
+  { path: "/channels",     label: "Channels",     zone: "Reach" },
+  { path: "/models",       label: "Models",       zone: "Reach" },
+  { path: "/analytics",    label: "Analytics",    zone: "System" },
+  { path: "/settings",     label: "Settings",     zone: "System" },
+];
 
 function pageLabel(pathname: string): string {
   if (pathname.startsWith("/chat/")) return "Chat";
-  return PATH_LABELS[pathname] ?? "Arz";
+  return PAGE_LABEL[pathname] ?? "Arz";
 }
 
 export default function TopBar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const [dialOpen, setDialOpen] = useState(false);
-  const dialBtnRef = useState<HTMLButtonElement | null>(null);
-  const [, setDialBtn] = dialBtnRef;
+  const { mode, setMode } = useTheme();
 
-  // ⌘K / Ctrl+K opens palette
+  // Keep mode toggle binary — collapse "system" to whichever is active.
+  const onSelectMode = (v: "light" | "dark") => setMode(v);
+  const isLight = mode === "light";
+  const isDark = mode === "dark" || mode === "system";
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -52,46 +73,113 @@ export default function TopBar() {
 
   return (
     <header
-      className="shrink-0 flex items-center gap-3 px-4 py-2 border-b border-[var(--border)] bg-[var(--bg)]"
-      style={{ minHeight: 44 }}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        height: 48,
+        flexShrink: 0,
+        padding: "0 14px",
+        borderBottom: "1px solid var(--border)",
+        background: "var(--surface)",
+      }}
     >
-      <div className="flex items-baseline gap-2 min-w-0">
+      <span
+        style={{
+          fontSize: 11,
+          fontFamily: "var(--fm)",
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: ".14em",
+        }}
+      >
+        {pageLabel(location.pathname)}
+      </span>
+      <div style={{ flex: 1 }} />
+
+      {/* Center search */}
+      <button
+        onClick={() => setPaletteOpen(true)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          height: 30,
+          padding: "0 10px",
+          background: "var(--bg)",
+          border: "1px solid var(--border)",
+          borderRadius: 7,
+          color: "var(--text3)",
+          fontSize: 12,
+          minWidth: 240,
+          maxWidth: 360,
+          width: "100%",
+          cursor: "pointer",
+          transition: "border-color .12s, color .12s",
+          fontFamily: "var(--fn)",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--cedar-line)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text2)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)";
+          (e.currentTarget as HTMLButtonElement).style.color = "var(--text3)";
+        }}
+      >
+        <Search size={13} />
+        <span style={{ flex: 1, textAlign: "left" }}>Search pages, chats, history, memory…</span>
         <span
-          className="font-display text-[15px] text-[var(--text2)] tracking-wide"
-          style={{ letterSpacing: ".02em" }}
+          style={{
+            fontFamily: "var(--fm)",
+            fontSize: 10,
+            padding: "1px 5px",
+            border: "1px solid var(--border)",
+            borderRadius: 3,
+            color: "var(--muted)",
+          }}
         >
-          arz
+          ⌘K
         </span>
-        <span className="text-[var(--text3)]">/</span>
-        <span className="text-[14px] font-medium text-[var(--text)] truncate">
-          {pageLabel(location.pathname)}
-        </span>
+      </button>
+      <div style={{ flex: 1 }} />
+
+      {/* Light/dark segmented toggle — cedar-glow accent on active */}
+      <div
+        style={{
+          display: "inline-flex",
+          background: "var(--s2)",
+          border: "1px solid var(--border)",
+          borderRadius: 8,
+          padding: 2,
+          height: 30,
+        }}
+      >
+        <ModeBtn active={isLight} onClick={() => onSelectMode("light")} kind="light" />
+        <ModeBtn active={isDark} onClick={() => onSelectMode("dark")} kind="dark" />
       </div>
 
-      <div className="flex-1 flex justify-center">
-        <button
-          onClick={() => setPaletteOpen(true)}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-[var(--surface)] border border-[var(--border)] text-[12px] text-[var(--muted)] hover:border-[var(--cedar-line)] hover:text-[var(--text)] min-w-[280px] max-w-[420px] w-full"
-        >
-          <Search size={13} />
-          <span className="flex-1 text-left">Search pages, sessions, history…</span>
-          <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] text-[var(--muted)]">
-            ⌘K
-          </kbd>
-        </button>
-      </div>
+      {/* Notifications */}
+      <button
+        title="Notifications"
+        style={{
+          width: 30,
+          height: 30,
+          borderRadius: 7,
+          border: "1px solid var(--border)",
+          background: "var(--s2)",
+          color: "var(--text2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+        }}
+      >
+        <Bell size={13} />
+      </button>
 
-      <div className="flex items-center gap-1">
-        <button
-          ref={(el) => setDialBtn(el)}
-          onClick={() => setDialOpen((v) => !v)}
-          className="flex items-center gap-1 px-2 py-1.5 rounded-md text-[12px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]"
-          title="Theme & density"
-        >
-          <SlidersHorizontal size={13} />
-        </button>
-        <ThemeDial open={dialOpen} onClose={() => setDialOpen(false)} />
-      </div>
+      {/* Avatar */}
+      <UserMark size={26} />
 
       {paletteOpen && (
         <CommandPalette
@@ -106,82 +194,88 @@ export default function TopBar() {
   );
 }
 
-// ── Theme + mode + density dial ─────────────────────────────────
-function ThemeDial({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { mode, setMode, colorTheme, setColorTheme, density, setDensity, themes, densities } =
-    useTheme();
+function ModeBtn({
+  active,
+  onClick,
+  kind,
+}: {
+  active: boolean;
+  onClick: () => void;
+  kind: "light" | "dark";
+}) {
   return (
-    <Popover open={open} onClose={onClose} position="below">
-      <div className="min-w-[280px] flex flex-col">
-        <div className="px-3 py-2 eyebrow border-b border-[var(--border)]">Mode</div>
-        <div className="px-2 py-2 grid grid-cols-3 gap-1">
-          {[
-            { id: "light", label: "Light", icon: <Sun size={13} /> },
-            { id: "dark", label: "Dark", icon: <Moon size={13} /> },
-            { id: "system", label: "System", icon: <Monitor size={13} /> },
-          ].map((m) => (
-            <button
-              key={m.id}
-              onClick={() => setMode(m.id as "light" | "dark" | "system")}
-              className={[
-                "flex flex-col items-center gap-1 p-2 rounded-md text-[11px]",
-                mode === m.id
-                  ? "bg-[var(--cedar-dim)] text-[var(--text)] border border-[var(--cedar-line)]"
-                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)] border border-transparent",
-              ].join(" ")}
-            >
-              {m.icon}
-              <span>{m.label}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="px-3 py-2 eyebrow border-t border-b border-[var(--border)]">Theme</div>
-        <div className="max-h-[260px] overflow-y-auto px-1 py-1">
-          {themes.map((t) => (
-            <button
-              key={t.value}
-              onClick={() => setColorTheme(t.value as ColorTheme)}
-              className={[
-                "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left text-[12px]",
-                colorTheme === t.value
-                  ? "bg-[var(--cedar-dim)] text-[var(--text)]"
-                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)]",
-              ].join(" ")}
-            >
-              <span
-                className="w-3 h-3 rounded-full shrink-0 border border-[var(--border)]"
-                style={{ background: t.swatch }}
-              />
-              <span className="flex-1">{t.label}</span>
-              {colorTheme === t.value && <Check size={11} className="text-[var(--cedar)]" />}
-            </button>
-          ))}
-        </div>
-
-        <div className="px-3 py-2 eyebrow border-t border-b border-[var(--border)]">Density</div>
-        <div className="px-2 py-2 grid grid-cols-3 gap-1">
-          {densities.map((d) => (
-            <button
-              key={d.value}
-              onClick={() => setDensity(d.value as Density)}
-              className={[
-                "p-2 rounded-md text-[11px]",
-                density === d.value
-                  ? "bg-[var(--cedar-dim)] text-[var(--text)] border border-[var(--cedar-line)]"
-                  : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)] border border-transparent",
-              ].join(" ")}
-            >
-              {d.label}
-            </button>
-          ))}
-        </div>
-      </div>
-    </Popover>
+    <button
+      onClick={onClick}
+      title={kind}
+      style={{
+        width: 30,
+        height: 24,
+        borderRadius: 6,
+        border: "none",
+        background: active ? "var(--surface)" : "transparent",
+        color: active ? "var(--cedar-glow)" : "var(--text3)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        cursor: "pointer",
+        boxShadow: active ? "inset 0 0 0 1px var(--cedar-line)" : "none",
+        transition: "all .12s",
+      }}
+    >
+      {kind === "light" ? (
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.4" />
+          <g stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+            <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.3 3.3l1.4 1.4M11.3 11.3l1.4 1.4M3.3 12.7l1.4-1.4M11.3 4.7l1.4-1.4" />
+          </g>
+        </svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path
+            d="M12.5 9.5A5 5 0 0 1 6.5 3.5 5 5 0 1 0 12.5 9.5z"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinejoin="round"
+          />
+        </svg>
+      )}
+    </button>
   );
 }
 
-// ── ⌘K palette ──────────────────────────────────────────────────
+function UserMark({ size = 26 }: { size?: number }) {
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: "50%",
+        background: "linear-gradient(135deg, oklch(.6 .08 50), oklch(.45 .06 30))",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: "#fff",
+        fontSize: size * 0.42,
+        fontWeight: 600,
+        fontFamily: "var(--fd)",
+        flexShrink: 0,
+        border: "1px solid oklch(.55 .06 40)",
+      }}
+    >
+      M
+    </div>
+  );
+}
+
+// ── Command palette ─────────────────────────────────────────
+type Item = {
+  kind: "page" | "session" | "history" | "memory" | "cron" | "agent" | "channel" | "prompt";
+  id: string;
+  label: string;
+  sub: string;
+  path: string;
+};
+
 function CommandPalette({
   onClose,
   onNavigate,
@@ -190,70 +284,309 @@ function CommandPalette({
   onNavigate: (path: string) => void;
 }) {
   const [q, setQ] = useState("");
-  const [sessions, setSessions] = useState<{ id: string; title: string }[]>([]);
+  const [idx, setIdx] = useState(0);
+  const [sessions, setSessions] = useState<Item[]>([]);
+  const [history, setHistory] = useState<Item[]>([]);
+  const [memory, setMemory] = useState<Item[]>([]);
+  const [crons, setCrons] = useState<Item[]>([]);
+  const [agents, setAgents] = useState<Item[]>([]);
+  const [channels, setChannels] = useState<Item[]>([]);
+  const [prompts, setPrompts] = useState<Item[]>([]);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // Load every searchable corpus in parallel on open.
   useEffect(() => {
-    api.fetchSessions().then((s) => setSessions(s.map((x) => ({ id: x.id, title: x.title })))).catch(() => {});
+    api
+      .fetchSessions()
+      .then((arr) =>
+        setSessions(
+          arr.map((s) => ({
+            kind: "session" as const,
+            id: s.id,
+            label: s.title || "(untitled)",
+            sub: `Session · ${s.message_count} msgs`,
+            path: `/?sid=${encodeURIComponent(s.id)}`,
+          })),
+        ),
+      )
+      .catch(() => {});
+    api
+      .fetchHistory()
+      .then((arr) =>
+        setHistory(
+          arr.map((s) => ({
+            kind: "history" as const,
+            id: s.id,
+            label: s.title || "(untitled)",
+            sub: `History · ${s.message_count} msgs`,
+            path: `/?sid=${encodeURIComponent(s.id)}`,
+          })),
+        ),
+      )
+      .catch(() => {});
+    api
+      .listLessons()
+      .then((arr) =>
+        setMemory((prev) => [
+          ...prev.filter((p) => !p.id.startsWith("lesson:")),
+          ...arr.map((l) => ({
+            kind: "memory" as const,
+            id: `lesson:${l.id}`,
+            label: l.text.split("\n")[0]?.slice(0, 80) || `Lesson #${l.id}`,
+            sub: `Memory · ${l.category}${l.pinned ? " · pinned" : ""}`,
+            path: "/memory",
+          })),
+        ]),
+      )
+      .catch(() => {});
+    api
+      .listMemoryFiles()
+      .then((m) => {
+        const items: Item[] = [];
+        for (const k of ["preferences", "projects"] as const) {
+          const v = m[k];
+          if (v) {
+            v.split("\n").filter((l) => l.trim().startsWith("-")).slice(0, 80).forEach((l, i) => {
+              items.push({
+                kind: "memory" as const,
+                id: `${k}:${i}`,
+                label: l.replace(/^[-*]\s*/, "").slice(0, 80),
+                sub: `Memory · ${k}.md`,
+                path: "/memory",
+              });
+            });
+          }
+        }
+        setMemory((prev) => [
+          ...prev.filter((p) => !p.id.startsWith("preferences:") && !p.id.startsWith("projects:")),
+          ...items,
+        ]);
+      })
+      .catch(() => {});
+    api
+      .listCrons()
+      .then((arr) =>
+        setCrons(
+          arr.map((c) => ({
+            kind: "cron" as const,
+            id: String(c.id),
+            label: c.name,
+            sub: `Schedule · ${c.schedule}`,
+            path: "/schedule",
+          })),
+        ),
+      )
+      .catch(() => {});
+    api
+      .listAgents()
+      .then((arr) =>
+        setAgents(
+          arr.map((a) => ({
+            kind: "agent" as const,
+            id: a.name,
+            label: a.name,
+            sub: `Agent · ${a.provider}${a.is_default ? " · default" : ""}`,
+            path: "/agents",
+          })),
+        ),
+      )
+      .catch(() => {});
+    api
+      .listChannelsApp()
+      .then((arr) =>
+        setChannels(
+          arr.map((c) => ({
+            kind: "channel" as const,
+            id: c.id,
+            label: c.name,
+            sub: `Channel · ${c.status}`,
+            path: "/channels",
+          })),
+        ),
+      )
+      .catch(() => {});
+    api
+      .listPrompts()
+      .then((arr) =>
+        setPrompts(
+          arr.map((p) => ({
+            kind: "prompt" as const,
+            id: p.slug,
+            label: p.title,
+            sub: `Prompt · ${(p.tags || []).join(", ") || "no tags"}`,
+            path: "/capabilities",
+          })),
+        ),
+      )
+      .catch(() => {});
+    // Focus the input after first paint.
+    requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
+
+  const items = useMemo<Item[]>(() => {
+    const ql = q.toLowerCase().trim();
+    const pages: Item[] = ALL_PAGES.map((p) => ({
+      kind: "page",
+      id: p.path,
+      label: p.label,
+      sub: `Page · ${p.zone}`,
+      path: p.path,
+    }));
+    const all = [
+      ...pages,
+      ...sessions,
+      ...history,
+      ...memory,
+      ...crons,
+      ...agents,
+      ...channels,
+      ...prompts,
+    ];
+    if (!ql) return [...pages, ...sessions.slice(0, 8)].slice(0, 16);
+    return all
+      .filter(
+        (i) => i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql),
+      )
+      .slice(0, 24);
+  }, [q, sessions, history, memory, crons, agents, channels, prompts]);
+
+  useEffect(() => setIdx(0), [q]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setIdx((i) => Math.min(items.length - 1, i + 1));
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setIdx((i) => Math.max(0, i - 1));
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const it = items[idx];
+        if (it) onNavigate(it.path);
+      }
     };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  const ql = q.toLowerCase();
-  const pageItems = Object.entries(PATH_LABELS)
-    .filter(([_, label]) => label.toLowerCase().includes(ql))
-    .map(([path, label]) => ({ kind: "page" as const, path, label }));
-  const sessItems = sessions
-    .filter((s) => !ql || s.title.toLowerCase().includes(ql))
-    .slice(0, 8)
-    .map((s) => ({ kind: "session" as const, path: `/?sid=${s.id}`, label: s.title || s.id.slice(0, 8) }));
-
-  const items = [...pageItems, ...sessItems];
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [items, idx, onNavigate, onClose]);
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-start justify-center pt-[14vh] bg-black/40 backdrop-blur-sm"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.5)",
+        backdropFilter: "blur(3px)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        paddingTop: "18vh",
+        zIndex: 100,
       }}
     >
-      <div className="bg-[var(--bg)] border border-[var(--border)] rounded-2xl shadow-2xl w-full max-w-xl mx-4">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--border)]">
-          <Search size={14} className="text-[var(--muted)]" />
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: 560,
+          maxWidth: "90vw",
+          background: "var(--surface)",
+          border: "1px solid var(--border2)",
+          borderRadius: 14,
+          boxShadow: "var(--shadow-2)",
+          overflow: "hidden",
+          fontFamily: "var(--fn)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "14px 16px",
+            borderBottom: "1px solid var(--border)",
+          }}
+        >
+          <Search size={15} color="var(--text3)" />
           <input
-            autoFocus
+            ref={inputRef}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && items[0]) onNavigate(items[0].path);
+            placeholder="Search pages, chats, history, memory, crons, agents, channels…"
+            style={{
+              flex: 1,
+              background: "transparent",
+              border: "none",
+              outline: "none",
+              fontSize: 14,
+              color: "var(--text)",
+              fontFamily: "var(--fn)",
             }}
-            placeholder="Search pages, sessions…"
-            className="flex-1 bg-transparent border-0 text-[14px] text-[var(--text)] focus:outline-none"
           />
-          <kbd className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[var(--surface)] border border-[var(--border)] text-[var(--muted)]">
-            esc
-          </kbd>
+          <span style={{ fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)" }}>esc</span>
         </div>
-        <div className="max-h-[50vh] overflow-y-auto p-2 flex flex-col gap-0.5">
+        <div style={{ maxHeight: 360, overflowY: "auto", padding: 6 }}>
           {items.length === 0 && (
-            <div className="text-center text-[12px] text-[var(--muted)] py-8">No matches.</div>
+            <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
+              No results
+            </div>
           )}
           {items.map((it, i) => (
             <button
-              key={`${it.kind}-${it.path}-${i}`}
+              key={`${it.kind}:${it.id}`}
               onClick={() => onNavigate(it.path)}
-              className="flex items-center gap-3 px-3 py-2 rounded-md text-left text-[13px] text-[var(--text)] hover:bg-[var(--surface)]"
+              onMouseEnter={() => setIdx(i)}
+              style={{
+                width: "100%",
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "9px 12px",
+                background: i === idx ? "var(--cedar-dim)" : "transparent",
+                border: "none",
+                borderRadius: 8,
+                cursor: "pointer",
+                textAlign: "left",
+                color: "var(--text)",
+                fontFamily: "var(--fn)",
+                marginBottom: 1,
+              }}
             >
-              <span className="eyebrow text-[9px] w-12 shrink-0 text-[var(--muted)]">
-                {it.kind === "page" ? "page" : "chat"}
+              <span
+                style={{
+                  fontFamily: "var(--fm)",
+                  fontSize: 9.5,
+                  color: i === idx ? "var(--cedar-glow)" : "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".12em",
+                  width: 56,
+                  flexShrink: 0,
+                }}
+              >
+                {it.kind}
               </span>
-              <span className="flex-1 truncate">{it.label}</span>
-              <span className="text-[10px] font-mono text-[var(--muted)]/70">{it.path}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "var(--text)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {it.label}
+                </div>
+                <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 1 }}>
+                  {it.sub}
+                </div>
+              </div>
+              {i === idx && (
+                <span style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)" }}>↵</span>
+              )}
             </button>
           ))}
         </div>

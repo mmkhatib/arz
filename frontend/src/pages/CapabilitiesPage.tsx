@@ -10,6 +10,7 @@ import {
   Btn,
   Tag,
   SegSeg,
+  Toggle,
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type McpServer, type PromptTemplate, type ToolView } from "@/api/client";
@@ -90,43 +91,71 @@ function McpView({ mcps, setMcps }: { mcps: McpServer[]; setMcps: (m: McpServer[
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
             {items.map((m) => (
-              <CedarCard key={`${m.source}-${m.name}`} padding={16}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{m.name}</div>
-                    <div style={{ fontSize: 11, fontFamily: "var(--fm)", color: "var(--muted)", marginTop: 2 }}>
-                      {m.command}
+              <CedarCard key={`${m.source}-${m.name}`} padding={18} hoverable>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                    <div
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 8,
+                        background: "var(--cedar-dim)",
+                        border: "1px solid var(--cedar-line)",
+                        color: "var(--cedar-glow)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <Server size={16} />
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: "var(--fd)", fontSize: 18, color: "var(--text)" }}>{m.name}</div>
+                      <div
+                        style={{
+                          fontSize: 10.5,
+                          color: "var(--muted)",
+                          fontFamily: "var(--fm)",
+                          textTransform: "uppercase",
+                          letterSpacing: ".08em",
+                          marginTop: 2,
+                        }}
+                      >
+                        mcp · {m.source}
+                      </div>
                     </div>
                   </div>
-                  <Tag color={m.enabled ? "cedar" : "muted"}>{m.enabled ? "on" : "off"}</Tag>
+                  <Toggle
+                    on={m.enabled}
+                    title={m.enabled ? "Disable" : "Enable"}
+                    onClick={async () => {
+                      try {
+                        const updated = await api.toggleMcpServer(m.source, m.name);
+                        setMcps(mcps.map((x) => (x.source === updated.source && x.name === updated.name ? updated : x)));
+                      } catch {}
+                    }}
+                  />
+                </div>
+                <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 12, lineHeight: 1.5, fontFamily: "var(--fm)" }}>
+                  {m.command}
                 </div>
                 {m.args.length > 0 && (
                   <div
                     style={{
-                      fontSize: 11,
-                      fontFamily: "var(--fm)",
-                      color: "var(--text3)",
-                      marginBottom: 10,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
+                      display: "flex",
+                      gap: 4,
+                      flexWrap: "wrap",
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: "1px solid var(--hairline)",
                     }}
                   >
-                    {m.args.join(" ")}
+                    {m.args.slice(0, 5).map((a, i) => (
+                      <Tag key={i} color="muted">{a}</Tag>
+                    ))}
                   </div>
                 )}
-                <Btn
-                  size="sm"
-                  kind={m.enabled ? "outline" : "soft"}
-                  onClick={async () => {
-                    try {
-                      const updated = await api.toggleMcpServer(m.source, m.name);
-                      setMcps(mcps.map((x) => (x.source === updated.source && x.name === updated.name ? updated : x)));
-                    } catch {}
-                  }}
-                >
-                  {m.enabled ? "Disable" : "Enable"}
-                </Btn>
               </CedarCard>
             ))}
           </div>

@@ -13,7 +13,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Wand2, Plus, Trash2, Play, X, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
-import { CedarPage, CedarPageHeader, TopoLines } from "@/components/CedarUI";
+import { CedarPage, CedarPageHeader, CedarCard, Tag, Toggle, TopoLines } from "@/components/CedarUI";
+import { type CronEntry } from "@/api/client";
 
 type TaskRecord = Awaited<ReturnType<typeof api.getTask>>;
 
@@ -51,8 +52,13 @@ export default function AutopilotPage() {
   const [history, setHistory] = useState<TaskRecord[]>([]);
   const refreshHistory = () => api.listTasks().then(setHistory).catch(() => {});
 
+  // Cron rules (treated as autopilot rules)
+  const [rules, setRules] = useState<CronEntry[]>([]);
+  const refreshRules = () => api.listCrons().then(setRules).catch(() => {});
+
   useEffect(() => {
     refreshHistory();
+    refreshRules();
   }, []);
 
   // Poll the active run until it finishes.
@@ -139,7 +145,81 @@ export default function AutopilotPage() {
           sub="WHEN a condition fires, THEN take action. Multi-stage plan runner."
         />
       </div>
-      <div className="overflow-y-auto px-8 py-6 flex-1 flex flex-col gap-4 max-w-4xl mx-auto w-full">
+      <div className="overflow-y-auto px-8 py-6 flex-1 flex flex-col gap-6 max-w-5xl mx-auto w-full">
+        {/* Rules section — Cedar design WHEN/THEN cards */}
+        <section>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
+            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+            Rules · {rules.length}
+          </div>
+          {rules.length === 0 && (
+            <CedarCard padding={20}>
+              <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                No rules yet. Add cron jobs in the Schedule page — they show up here as WHEN/THEN rules.
+              </div>
+            </CedarCard>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {rules.map((r) => (
+              <CedarCard key={r.id} padding={0} hoverable>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr 1fr auto auto",
+                    alignItems: "center",
+                    gap: 18,
+                    padding: "14px 18px",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: "50%",
+                      background: r.enabled ? "var(--cedar-glow)" : "var(--muted)",
+                      boxShadow: r.enabled ? "0 0 6px var(--cedar-glow)" : undefined,
+                    }}
+                  />
+                  <div>
+                    <div style={{ fontSize: 13.5, color: "var(--text)" }}>{r.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
+                      <Tag color="muted">when</Tag>
+                      <code style={{ fontFamily: "var(--fm)", fontSize: 11, color: "var(--text2)" }}>{r.schedule}</code>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                    <Tag color="cedar">→ then</Tag>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: "var(--text2)",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={r.prompt}
+                    >
+                      {r.prompt.slice(0, 80)}
+                    </span>
+                  </div>
+                  <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+                    {r.last_run_at ? "fired" : "never run"}
+                  </span>
+                  <Toggle on={r.enabled} title={r.enabled ? "Disable" : "Enable"} />
+                </div>
+              </CedarCard>
+            ))}
+          </div>
+        </section>
+
+        {/* Plan runner section */}
+        <section>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".14em" }}>
+            <span style={{ width: 18, height: 1, background: "var(--cedar-glow)" }} />
+            Plan runner
+          </div>
+        </section>
+
         {/* Active run takes over the page */}
         {run && (
           <div className="border border-[var(--cedar)]/40 rounded-lg bg-[var(--surface)] flex flex-col">
