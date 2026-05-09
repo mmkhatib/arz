@@ -3,7 +3,7 @@
 // the prototype in design_handoff_arz_cedar/redesign/foundation.jsx.
 
 import type { CSSProperties, ReactNode, MouseEventHandler } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 // ── TopoLines ───────────────────────────────────────────────
 // Organic mountain contour decoration. Drops behind hero areas.
@@ -397,12 +397,22 @@ export function CedarModal({
   footer?: ReactNode;
   width?: number;
 }) {
+  // ESC dismisses; click-outside does not — modal only closes via the
+  // explicit close button in the header or the Cancel button consumers
+  // place in the footer. Stops the user losing wizard state by missing
+  // the modal edge.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
+
   if (!open) return null;
   return (
     <div
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
       style={{
         position: "fixed",
         inset: 0,
@@ -411,8 +421,9 @@ export function CedarModal({
         display: "flex",
         alignItems: "flex-start",
         justifyContent: "center",
-        paddingTop: "12vh",
+        padding: "5vh 4vw",
         zIndex: 100,
+        overflow: "hidden",
       }}
     >
       <div
@@ -420,6 +431,9 @@ export function CedarModal({
         style={{
           width,
           maxWidth: "92vw",
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
           background: "var(--surface)",
           border: "1px solid var(--border2)",
           borderRadius: 14,
@@ -429,17 +443,20 @@ export function CedarModal({
           position: "relative",
         }}
       >
+        {/* Header — fixed at top, never scrolls */}
         <div
           style={{
             position: "relative",
             padding: "18px 22px 14px",
             borderBottom: "1px solid var(--border)",
             overflow: "hidden",
+            flexShrink: 0,
+            paddingRight: 48,
           }}
         >
           <TopoLines height={80} opacity={0.4} />
           {eyebrow && (
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, position: "relative" }}>
               <span style={{ width: 16, height: 1, background: "var(--cedar-glow)" }} />
               <span
                 style={{
@@ -468,8 +485,51 @@ export function CedarModal({
           >
             {title}
           </h2>
+          <button
+            onClick={onClose}
+            title="Close (Esc)"
+            aria-label="Close"
+            style={{
+              position: "absolute",
+              top: 12,
+              right: 12,
+              width: 28,
+              height: 28,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 6,
+              border: "1px solid transparent",
+              background: "transparent",
+              color: "var(--muted)",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+              zIndex: 2,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "var(--s2)";
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--text)";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+              (e.currentTarget as HTMLButtonElement).style.color = "var(--muted)";
+            }}
+          >
+            ×
+          </button>
         </div>
-        <div style={{ padding: "18px 22px" }}>{children}</div>
+        {/* Body — scrolls when content exceeds viewport */}
+        <div
+          style={{
+            padding: "18px 22px",
+            overflowY: "auto",
+            flex: 1,
+            minHeight: 0,
+          }}
+        >
+          {children}
+        </div>
         {footer && (
           <div
             style={{
@@ -480,6 +540,7 @@ export function CedarModal({
               justifyContent: "flex-end",
               gap: 8,
               background: "var(--bg)",
+              flexShrink: 0,
             }}
           >
             {footer}
