@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Briefcase, Layers } from "lucide-react";
+import { Plus, Briefcase, Layers, ArrowLeft, ArrowRight, Check, Sparkles, X as XIcon } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
@@ -195,6 +195,8 @@ export default function ProjectsPage() {
   );
 }
 
+type WizStep = "goal" | "constraints" | "review";
+
 function NewProjectModal({
   open,
   onClose,
@@ -204,37 +206,106 @@ function NewProjectModal({
   onClose: () => void;
   onCreated: (id: string) => void | Promise<void>;
 }) {
-  const [name, setName] = useState("");
-  const [brief, setBrief] = useState("");
-  const [repoPath, setRepoPath] = useState("");
+  const [step, setStep] = useState<WizStep>("goal");
+
+  // Step 1 — Goal & folder
+  const [goal, setGoal] = useState("");
+  const [folder, setFolder] = useState("");
+
+  // Step 2 — Constraints
+  const [deadline, setDeadline] = useState("");
+  const [mustHavesText, setMustHavesText] = useState("");
+  const [niceText, setNiceText] = useState("");
+  const [successMetric, setSuccessMetric] = useState("");
+  const [constraints, setConstraints] = useState("");
+
+  // Step 3 — PM draft (LLM-generated, editable)
+  const [drafting, setDrafting] = useState(false);
+  const [draft, setDraft] = useState<{
+    name: string;
+    brief: string;
+    success_criteria: string[];
+    tasks: { title: string; description?: string; assignee?: string | null }[];
+    suggested_agents: string[];
+  } | null>(null);
+
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
-      setName("");
-      setBrief("");
-      setRepoPath("");
+      setStep("goal");
+      setGoal("");
+      setFolder("");
+      setDeadline("");
+      setMustHavesText("");
+      setNiceText("");
+      setSuccessMetric("");
+      setConstraints("");
+      setDraft(null);
       setError(null);
       setCreating(false);
+      setDrafting(false);
     }
   }, [open]);
 
-  const submit = async () => {
-    const n = name.trim();
-    if (!n) {
-      setError("Project name is required.");
+  const splitLines = (s: string) =>
+    s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
+
+  const goNextFromGoal = () => {
+    if (!goal.trim()) {
+      setError("Tell the PM what you're building.");
       return;
     }
+    setError(null);
+    setStep("constraints");
+  };
+
+  const askPMForDraft = async () => {
+    setDrafting(true);
+    setError(null);
+    try {
+      const d = await api.draftProjectIntake({
+        goal: goal.trim(),
+        folder: folder.trim(),
+        deadline: deadline.trim(),
+        must_haves: splitLines(mustHavesText),
+        nice_to_haves: splitLines(niceText),
+        success_metric: successMetric.trim(),
+        constraints: constraints.trim(),
+      });
+      setDraft(d);
+      setStep("review");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDrafting(false);
+    }
+  };
+
+  const submit = async () => {
+    if (!draft) return;
     setCreating(true);
     setError(null);
     try {
-      const p = await api.createProject({
-        name: n,
-        brief: brief.trim(),
-        repo_path: repoPath.trim(),
+      const created = await api.createProject({
+        name: draft.name.trim() || "New project",
+        brief: draft.brief,
+        repo_path: folder.trim(),
       });
-      await onCreated(p.id);
+      // Persist tasks
+      for (const t of draft.tasks) {
+        try {
+          await api.createProjectTask(created.id, {
+            title: t.title,
+            description: t.description,
+            assignee: t.assignee || null,
+          });
+        } catch {
+          // best-effort: keep going
+        }
+      }
+      await onCreated(created.id);
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -243,71 +314,412 @@ function NewProjectModal({
     }
   };
 
+  const stepIndex = step === "goal" ? 0 : step === "constraints" ? 1 : 2;
+
+  const footer = (() => {
+    if (step === "goal") {
+      return (
+        <>
+          <Btn kind="ghost" onClick={onClose}>Cancel</Btn>
+          <Btn kind="solid" onClick={goNextFromGoal} disabled={!goal.trim()}>
+            Continue <ArrowRight size={11} style={{ marginLeft: 4 }} />
+          </Btn>
+        </>
+      );
+    }
+    if (step === "constraints") {
+      return (
+        <>
+          <Btn kind="ghost" icon={<ArrowLeft size={11} />} onClick={() => setStep("goal")} disabled={drafting}>
+            Back
+          </Btn>
+          <Btn kind="soft" icon={<Sparkles size={11} />} onClick={askPMForDraft} disabled={drafting}>
+            {drafting ? "PM drafting…" : "Skip PM, write my own"}
+          </Btn>
+          <Btn kind="solid" onClick={askPMForDraft} disabled={drafting}>
+            {drafting ? (
+              <>Asking PM…</>
+            ) : (
+              <>Ask PM to draft <ArrowRight size={11} style={{ marginLeft: 4 }} /></>
+            )}
+          </Btn>
+        </>
+      );
+    }
+    return (
+      <>
+        <Btn kind="ghost" icon={<ArrowLeft size={11} />} onClick={() => setStep("constraints")} disabled={creating}>
+          Back
+        </Btn>
+        <Btn kind="solid" icon={<Check size={11} />} onClick={submit} disabled={creating || !draft}>
+          {creating ? "Creating…" : "Create project"}
+        </Btn>
+      </>
+    );
+  })();
+
   return (
     <CedarModal
       open={open}
       onClose={onClose}
-      eyebrow="new project"
+      width={640}
+      eyebrow={
+        <span>
+          new project · step {stepIndex + 1} of 3
+        </span>
+      }
       title={
-        <>
-          Plant a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>cedar</em>.
-        </>
+        step === "goal" ? (
+          <>
+            What are we <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>building</em>?
+          </>
+        ) : step === "constraints" ? (
+          <>
+            Constraints &amp; <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>success</em>
+          </>
+        ) : (
+          <>
+            PM <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>draft</em> — review &amp; edit
+          </>
+        )
       }
-      footer={
-        <>
-          <Btn kind="ghost" onClick={onClose} disabled={creating}>Cancel</Btn>
-          <Btn kind="solid" onClick={submit} disabled={creating}>
-            {creating ? "Creating…" : "Create project"}
-          </Btn>
-        </>
-      }
+      footer={footer}
     >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <div>
-          <CedarLabel>Name</CedarLabel>
-          <CedarInput
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Auth refactor"
-            autoFocus
-            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(); }}
-          />
-        </div>
-        <div>
-          <CedarLabel>Brief</CedarLabel>
-          <CedarTextArea
-            value={brief}
-            onChange={(e) => setBrief(e.target.value)}
-            placeholder="What is the orchestrator working on? You can edit this later."
-            rows={6}
-          />
-          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
-            Markdown supported. The orchestrator reads this every turn.
+      <Stepper current={stepIndex} labels={["Goal", "Constraints", "Review"]} />
+
+      {step === "goal" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 14 }}>
+          <div>
+            <CedarLabel>Goal</CedarLabel>
+            <CedarTextArea
+              value={goal}
+              onChange={(e) => setGoal(e.target.value)}
+              placeholder="One-paragraph description of what you want built. The more specific, the better the PM's questions."
+              rows={5}
+              autoFocus
+            />
+          </div>
+          <div>
+            <CedarLabel>Folder / repo path</CedarLabel>
+            <CedarInput
+              value={folder}
+              onChange={(e) => setFolder(e.target.value)}
+              placeholder="/Users/you/code/my-project (where work happens)"
+            />
+            <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+              Optional. Subagents will run in this directory when they touch files.
+            </div>
           </div>
         </div>
-        <div>
-          <CedarLabel>Repo path (optional)</CedarLabel>
-          <CedarInput
-            value={repoPath}
-            onChange={(e) => setRepoPath(e.target.value)}
-            placeholder="/Users/you/code/this-project"
-          />
+      )}
+
+      {step === "constraints" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <div>
+              <CedarLabel>Deadline (optional)</CedarLabel>
+              <CedarInput
+                value={deadline}
+                onChange={(e) => setDeadline(e.target.value)}
+                placeholder="e.g. ship by Fri"
+              />
+            </div>
+            <div>
+              <CedarLabel>Success metric</CedarLabel>
+              <CedarInput
+                value={successMetric}
+                onChange={(e) => setSuccessMetric(e.target.value)}
+                placeholder="how do we know we won?"
+              />
+            </div>
+          </div>
+          <div>
+            <CedarLabel>Must-haves (one per line)</CedarLabel>
+            <CedarTextArea
+              value={mustHavesText}
+              onChange={(e) => setMustHavesText(e.target.value)}
+              rows={3}
+              placeholder={"login flow works\npasses prod load test"}
+            />
+          </div>
+          <div>
+            <CedarLabel>Nice-to-haves (one per line)</CedarLabel>
+            <CedarTextArea
+              value={niceText}
+              onChange={(e) => setNiceText(e.target.value)}
+              rows={3}
+              placeholder={"animated transitions\ndarkmode polish"}
+            />
+          </div>
+          <div>
+            <CedarLabel>Other constraints</CedarLabel>
+            <CedarTextArea
+              value={constraints}
+              onChange={(e) => setConstraints(e.target.value)}
+              rows={2}
+              placeholder="tech stack you must use, budget caps, audiences, etc."
+            />
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text3)", lineHeight: 1.5 }}>
+            Cedar's PM agent will read these and draft a brief, success criteria, and a starter
+            task list using a cheap model — usually a few seconds. You can edit everything in the
+            next step before the project is created.
+          </div>
         </div>
-        {error && (
-          <div
+      )}
+
+      {step === "review" && draft && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, marginTop: 14 }}>
+          <div>
+            <CedarLabel>Project name</CedarLabel>
+            <CedarInput
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+            />
+          </div>
+          <div>
+            <CedarLabel>Brief (markdown)</CedarLabel>
+            <CedarTextArea
+              value={draft.brief}
+              onChange={(e) => setDraft({ ...draft, brief: e.target.value })}
+              rows={10}
+              style={{ fontFamily: "var(--fm)", fontSize: 12 }}
+            />
+          </div>
+          <div>
+            <CedarLabel>Success criteria</CedarLabel>
+            <BulletEditor
+              items={draft.success_criteria}
+              onChange={(items) => setDraft({ ...draft, success_criteria: items })}
+              placeholder="checkable success criterion"
+            />
+          </div>
+          <div>
+            <CedarLabel>Suggested starter tasks</CedarLabel>
+            <TasksEditor
+              tasks={draft.tasks}
+              onChange={(tasks) => setDraft({ ...draft, tasks })}
+            />
+          </div>
+          {draft.suggested_agents.length > 0 && (
+            <div>
+              <CedarLabel>Suggested agents</CedarLabel>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {draft.suggested_agents.map((a) => (
+                  <Tag key={a} color="cedar">@{a}</Tag>
+                ))}
+              </div>
+              <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+                Add or wire these on the Agents page after the project is created.
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div
+          style={{
+            marginTop: 14,
+            fontSize: 12,
+            color: "var(--ember)",
+            background: "var(--ember-dim)",
+            border: "1px solid var(--ember)",
+            borderRadius: 6,
+            padding: "8px 10px",
+          }}
+        >
+          {error}
+        </div>
+      )}
+    </CedarModal>
+  );
+}
+
+function Stepper({ current, labels }: { current: number; labels: string[] }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      {labels.map((label, i) => {
+        const active = i === current;
+        const done = i < current;
+        return (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, flex: 1 }}>
+            <div
+              style={{
+                width: 22,
+                height: 22,
+                borderRadius: "50%",
+                border: `1px solid ${active || done ? "var(--cedar-line)" : "var(--border)"}`,
+                background: active ? "var(--cedar-dim)" : done ? "var(--cedar)" : "var(--bg)",
+                color: done ? "#fff" : active ? "var(--cedar-glow)" : "var(--text3)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 10.5,
+                fontFamily: "var(--fm)",
+                flexShrink: 0,
+              }}
+            >
+              {done ? <Check size={11} /> : i + 1}
+            </div>
+            <span
+              style={{
+                fontSize: 11,
+                fontFamily: "var(--fm)",
+                color: active ? "var(--text)" : "var(--text3)",
+                textTransform: "uppercase",
+                letterSpacing: ".12em",
+              }}
+            >
+              {label}
+            </span>
+            {i < labels.length - 1 && (
+              <div
+                style={{
+                  flex: 1,
+                  height: 1,
+                  background: done ? "var(--cedar-line)" : "var(--border)",
+                  marginLeft: 4,
+                  marginRight: 4,
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function BulletEditor({
+  items,
+  onChange,
+  placeholder,
+}: {
+  items: string[];
+  onChange: (items: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const add = () => {
+    const v = draft.trim();
+    if (!v) return;
+    onChange([...items, v]);
+    setDraft("");
+  };
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {items.length === 0 && (
+        <div style={{ fontSize: 11.5, color: "var(--muted)" }}>None yet — add some below.</div>
+      )}
+      {items.map((it, idx) => (
+        <div key={idx} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--cedar-glow)" }} />
+          <CedarInput
+            value={it}
+            onChange={(e) => {
+              const next = [...items];
+              next[idx] = e.target.value;
+              onChange(next);
+            }}
+            style={{ flex: 1 }}
+          />
+          <button
+            onClick={() => onChange(items.filter((_, i) => i !== idx))}
+            title="Remove"
             style={{
-              fontSize: 12,
-              color: "var(--ember)",
-              background: "var(--ember-dim)",
-              border: "1px solid var(--ember)",
-              borderRadius: 6,
-              padding: "8px 10px",
+              background: "transparent",
+              border: "none",
+              color: "var(--muted)",
+              cursor: "pointer",
+              padding: 4,
             }}
           >
-            {error}
-          </div>
-        )}
+            <XIcon size={11} />
+          </button>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+        <CedarInput
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={placeholder}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          style={{ flex: 1 }}
+        />
+        <Btn size="sm" kind="outline" icon={<Plus size={11} />} onClick={add} disabled={!draft.trim()}>
+          Add
+        </Btn>
       </div>
-    </CedarModal>
+    </div>
+  );
+}
+
+function TasksEditor({
+  tasks,
+  onChange,
+}: {
+  tasks: { title: string; description?: string; assignee?: string | null }[];
+  onChange: (tasks: { title: string; description?: string; assignee?: string | null }[]) => void;
+}) {
+  if (tasks.length === 0) {
+    return <div style={{ fontSize: 11.5, color: "var(--muted)" }}>No tasks suggested.</div>;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {tasks.map((t, idx) => (
+        <div
+          key={idx}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 140px auto",
+            gap: 6,
+            alignItems: "center",
+          }}
+        >
+          <CedarInput
+            value={t.title}
+            onChange={(e) => {
+              const next = [...tasks];
+              next[idx] = { ...t, title: e.target.value };
+              onChange(next);
+            }}
+            placeholder="task title"
+          />
+          <CedarInput
+            value={t.assignee ?? ""}
+            onChange={(e) => {
+              const next = [...tasks];
+              next[idx] = { ...t, assignee: e.target.value || null };
+              onChange(next);
+            }}
+            placeholder="@assignee"
+          />
+          <button
+            onClick={() => onChange(tasks.filter((_, i) => i !== idx))}
+            title="Remove"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--muted)",
+              cursor: "pointer",
+              padding: 4,
+            }}
+          >
+            <XIcon size={11} />
+          </button>
+        </div>
+      ))}
+      <div>
+        <Btn
+          size="sm"
+          kind="outline"
+          icon={<Plus size={11} />}
+          onClick={() => onChange([...tasks, { title: "", assignee: null }])}
+        >
+          Add task
+        </Btn>
+      </div>
+    </div>
   );
 }

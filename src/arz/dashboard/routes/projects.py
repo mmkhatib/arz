@@ -7,6 +7,12 @@ inside ChannelsPage when a channel has a project_id.
 
 from __future__ import annotations
 
+# PM intake — used by the guided "New project" wizard. The PM agent
+# turns a small structured payload of user answers into a brief, a
+# success-criteria list, and a suggested task breakdown.
+import asyncio
+import json as _json
+import re as _re
 import uuid
 from dataclasses import asdict
 from typing import Literal
@@ -158,6 +164,207 @@ async def patch_task(project_id: str, task_id: str, body: TaskPatchBody) -> dict
     if task is None:
         raise HTTPException(status_code=404, detail="task not found after update")
     return asdict(task)
+
+
+class IntakeBody(BaseModel):
+    goal: str
+    folder: str = ""
+    deadline: str = ""
+    must_haves: list[str] = []
+    nice_to_haves: list[str] = []
+    success_metric: str = ""
+    constraints: str = ""
+
+
+class IntakeDraft(BaseModel):
+    name: str
+    brief: str
+    success_criteria: list[str] = []
+    tasks: list[dict] = []  # [{title, description?, assignee?}]
+    suggested_agents: list[str] = []
+
+
+_PM_PROMPT_TEMPLATE = """You are a senior product manager helping the user
+turn a fuzzy goal into a tight, executable project brief.
+
+## User answers so far
+Goal: {goal}
+Folder/repo: {folder}
+Deadline: {deadline}
+Must-haves:
+{must_haves}
+Nice-to-haves:
+{nice_to_haves}
+Success metric: {success_metric}
+Other constraints: {constraints}
+
+## Output
+Produce a single JSON object with these keys:
+- name: short project name (max 60 chars, sentence case, no quotes)
+- brief: markdown brief (3-6 short paragraphs) covering: goal, scope,
+  out-of-scope, key constraints, definition of done.
+- success_criteria: 3-7 short, checkable bullet items.
+- tasks: 4-10 starter tasks. Each task is an object with:
+    title: short imperative phrase
+    description: 1-2 sentence elaboration
+    assignee: optional agent role (e.g. "coder", "reviewer", "test-writer",
+      "designer", "researcher", "doc-updater") — leave empty when unsure.
+- suggested_agents: 2-5 agent role names that would be useful on this
+  project (e.g. "coder", "reviewer", "designer").
+
+Reply with ONLY the JSON object. No prose, no code fences. Be concrete
+and specific; avoid generic filler. If a field is genuinely unknown,
+return an empty list or string rather than padding.
+"""
+
+
+def _format_bullets(items: list[str]) -> str:
+    if not items:
+        return "(none)"
+    return "\n".join(f"- {x.strip()}" for x in items if x.strip()) or "(none)"
+
+
+async def _pm_intake_draft(body: IntakeBody) -> IntakeDraft:
+    """Run a single cheap-model call to draft a project from intake."""
+    from arz.acp.types import EVENT_COMPLETE, EVENT_TEXT_CHUNK
+    from arz.dashboard.routes.sessions import _pick_cheap_model
+
+    prompt = _PM_PROMPT_TEMPLATE.format(
+        goal=(body.goal or "").strip() or "(unspecified)",
+        folder=(body.folder or "").strip() or "(unspecified)",
+        deadline=(body.deadline or "").strip() or "(no hard deadline)",
+        must_haves=_format_bullets(body.must_haves),
+        nice_to_haves=_format_bullets(body.nice_to_haves),
+        success_metric=(body.success_metric or "").strip() or "(unspecified)",
+        constraints=(body.constraints or "").strip() or "(none stated)",
+    )
+
+    try:
+        provider_name, model_name = await _pick_cheap_model(
+            fallback_provider="claude-code", fallback_model=""
+        )
+    except Exception:
+        return _fallback_draft(body)
+
+    try:
+        if provider_name == "claude-code":
+            from arz.providers.claude_code import ClaudeCodeProvider
+
+            provider = ClaudeCodeProvider(model=model_name or None)
+        elif provider_name == "ollama":
+            from arz.providers.ollama import OllamaProvider
+
+            provider = OllamaProvider(model=model_name or None)
+        elif provider_name == "kiro-cli":
+            from arz.providers.kiro_cli import KiroCliProvider
+
+            provider = KiroCliProvider(model=model_name or "auto")
+        elif provider_name == "codex":
+            from arz.providers.codex import CodexProvider
+
+            provider = CodexProvider(model=model_name or None)
+        elif provider_name == "gemini":
+            from arz.providers.gemini import GeminiProvider
+
+            provider = GeminiProvider(model=model_name or None)
+        else:
+            return _fallback_draft(body)
+    except Exception:
+        return _fallback_draft(body)
+
+    text = ""
+    try:
+        await asyncio.wait_for(provider.start(), timeout=15.0)
+        async for ev in provider.stream(prompt):
+            if ev.kind == EVENT_TEXT_CHUNK and ev.text:
+                text += ev.text
+                if len(text) > 8000:
+                    break
+            elif ev.kind == EVENT_COMPLETE:
+                break
+    except Exception:
+        pass
+    finally:
+        try:
+            await provider.shutdown()
+        except Exception:
+            pass
+
+    return _parse_draft(text, body)
+
+
+def _strip_code_fences(s: str) -> str:
+    t = s.strip()
+    if t.startswith("```"):
+        t = _re.sub(r"^```[a-zA-Z]*\n?", "", t)
+        if t.endswith("```"):
+            t = t[:-3]
+    return t.strip()
+
+
+def _parse_draft(raw: str, body: IntakeBody) -> IntakeDraft:
+    cleaned = _strip_code_fences(raw)
+    try:
+        # Find the first { ... } JSON object even if the model added prose.
+        m = _re.search(r"\{.*\}", cleaned, _re.DOTALL)
+        obj = _json.loads(m.group(0) if m else cleaned)
+        return IntakeDraft(
+            name=str(obj.get("name") or "")[:80] or _derive_name(body),
+            brief=str(obj.get("brief") or "").strip(),
+            success_criteria=[
+                str(x).strip() for x in (obj.get("success_criteria") or []) if str(x).strip()
+            ],
+            tasks=[
+                {
+                    "title": str(t.get("title") or "").strip()[:200],
+                    "description": str(t.get("description") or "").strip(),
+                    "assignee": (str(t.get("assignee") or "").strip().lstrip("@") or None),
+                }
+                for t in (obj.get("tasks") or [])
+                if isinstance(t, dict) and (t.get("title") or "").strip()
+            ],
+            suggested_agents=[
+                str(a).strip().lstrip("@")
+                for a in (obj.get("suggested_agents") or [])
+                if str(a).strip()
+            ],
+        )
+    except Exception:
+        return _fallback_draft(body)
+
+
+def _derive_name(body: IntakeBody) -> str:
+    goal = (body.goal or "").strip()
+    return (goal.split("\n")[0][:60] or "New project").strip()
+
+
+def _fallback_draft(body: IntakeBody) -> IntakeDraft:
+    """Produce a sane draft from raw inputs when the LLM call fails or
+    parses badly. Keeps the wizard usable even offline."""
+    bullets_must = _format_bullets(body.must_haves)
+    bullets_nice = _format_bullets(body.nice_to_haves)
+    brief = (
+        f"# {_derive_name(body)}\n\n"
+        f"## Goal\n{body.goal.strip() or '(unspecified)'}\n\n"
+        f"## Constraints\n{body.constraints.strip() or '(none stated)'}\n\n"
+        f"## Must-haves\n{bullets_must}\n\n"
+        f"## Nice-to-haves\n{bullets_nice}\n\n"
+        f"## Success metric\n{body.success_metric.strip() or '(define before kickoff)'}\n"
+    )
+    return IntakeDraft(
+        name=_derive_name(body),
+        brief=brief,
+        success_criteria=[m for m in body.must_haves if m.strip()],
+        tasks=[],
+        suggested_agents=[],
+    )
+
+
+@router.post("/api/projects/intake/draft", response_model=IntakeDraft)
+async def project_intake_draft(body: IntakeBody) -> IntakeDraft:
+    """Run the PM agent on a structured intake payload. Returns a
+    draft project ready for the user to review + edit."""
+    return await _pm_intake_draft(body)
 
 
 @router.delete("/api/projects/{project_id}/tasks/{task_id}", status_code=204)

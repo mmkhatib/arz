@@ -823,6 +823,23 @@ export const api = {
   },
 
   // Folders — group sessions under named buckets, icons LLM-picked.
+  draftProjectIntake: (body: {
+    goal: string;
+    folder?: string;
+    deadline?: string;
+    must_haves?: string[];
+    nice_to_haves?: string[];
+    success_metric?: string;
+    constraints?: string;
+  }) =>
+    request<{
+      name: string;
+      brief: string;
+      success_criteria: string[];
+      tasks: { title: string; description?: string; assignee?: string | null }[];
+      suggested_agents: string[];
+    }>("/projects/intake/draft", { method: "POST", body: JSON.stringify(body) }),
+
   // Projects — group brief/tasks/memory under a Channel.
   listProjects: () =>
     request<ProjectSummary[]>("/projects"),
