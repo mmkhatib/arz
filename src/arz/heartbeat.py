@@ -112,21 +112,37 @@ class HeartbeatService:
         text = self._path.read_text(encoding="utf-8")
         lines = text.splitlines(keepends=False)
         rewrote = False
+        in_comment = False  # tracks `<!--` … `-->` block depth
         for i, line in enumerate(lines):
+            stripped = line.strip()
+            # Track HTML comment region. Lines that open a comment without
+            # closing it on the same line enter the region; lines that
+            # contain `-->` exit it. Single-line `<!-- … -->` stays out.
+            opens = "<!--" in stripped
+            closes = "-->" in stripped
+            if in_comment:
+                if closes:
+                    in_comment = False
+                continue
+            if opens and not closes:
+                in_comment = True
+                continue
             m = _TASK_RE.match(line)
             if not m:
                 continue
             mark = m.group(2)
             body = m.group(4)
+            # Strip an inline KEEP marker AND any inline trailing comment
+            # like `<!-- KEEP -->` from the prompt fed to the runner.
             keep = bool(_KEEP_RE.search(body))
+            prompt_body = re.sub(r"<!--.*?-->", "", body)
             if mark != " ":
                 # Already done; if KEEP, reset to unchecked for next time.
                 if keep:
                     lines[i] = f"{m.group(1)} {m.group(3)}{body}"
                     rewrote = True
                 continue
-            # Unchecked → run it now
-            prompt = _KEEP_RE.sub("", body).strip()
+            prompt = prompt_body.strip()
             if not prompt:
                 continue
             log.info("heartbeat firing item", line=i, prompt=prompt[:80])
