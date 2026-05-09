@@ -2,6 +2,8 @@ import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
 import Layout from "@/pages/Layout";
 import ChatPage from "@/pages/ChatPage";
 import BoardPage from "@/pages/BoardPage";
+import ProjectsPage from "@/pages/ProjectsPage";
+import ProjectDetailPage from "@/pages/ProjectDetailPage";
 import AutopilotPage from "@/pages/AutopilotPage";
 import ChannelsPage from "@/pages/ChannelsPage";
 import OverviewPage from "@/pages/OverviewPage";
@@ -24,6 +26,8 @@ export default function App() {
           <Route path="/" element={<ChatPage />} />
           <Route path="/chat/:slug" element={<ChatPage />} />
           <Route path="/board" element={<BoardPage />} />
+          <Route path="/projects" element={<ProjectsPage />} />
+          <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/autopilot" element={<AutopilotPage />} />
           <Route path="/channels" element={<ChannelsPage />} />
           <Route path="/overview" element={<OverviewPage />} />

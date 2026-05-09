@@ -15,6 +15,7 @@ const PAGE_LABEL: Record<string, string> = {
   "/":             "Chat",
   "/chat":         "Chat",
   "/board":        "Operations",
+  "/projects":     "Projects",
   "/autopilot":    "Autopilot",
   "/channels":     "Channels",
   "/agents":       "Agents",
@@ -37,6 +38,7 @@ const ALL_PAGES = [
   { path: "/autopilot",    label: "Autopilot",    zone: "Work" },
   { path: "/autonomy",     label: "Autonomy",     zone: "Work" },
   { path: "/board",        label: "Operations",   zone: "Work" },
+  { path: "/projects",     label: "Projects",     zone: "Work" },
   { path: "/agents",       label: "Agents",       zone: "Work" },
   { path: "/channels",     label: "Channels",     zone: "Reach" },
   { path: "/models",       label: "Models",       zone: "Reach" },
@@ -359,7 +361,7 @@ function UserMark({ size = 26 }: { size?: number }) {
 
 // ── Command palette ─────────────────────────────────────────
 type Item = {
-  kind: "page" | "session" | "history" | "memory" | "cron" | "agent" | "channel" | "prompt";
+  kind: "page" | "session" | "history" | "memory" | "cron" | "agent" | "channel" | "prompt" | "project";
   id: string;
   label: string;
   sub: string;
@@ -382,6 +384,7 @@ function CommandPalette({
   const [agents, setAgents] = useState<Item[]>([]);
   const [channels, setChannels] = useState<Item[]>([]);
   const [prompts, setPrompts] = useState<Item[]>([]);
+  const [projects, setProjects] = useState<Item[]>([]);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // Load every searchable corpus in parallel on open.
@@ -496,6 +499,20 @@ function CommandPalette({
       )
       .catch(() => {});
     api
+      .listProjects()
+      .then((arr) =>
+        setProjects(
+          arr.map((p) => ({
+            kind: "project" as const,
+            id: p.id,
+            label: p.name,
+            sub: `Project · ${p.open_tasks} open · ${p.status}`,
+            path: `/projects/${encodeURIComponent(p.id)}`,
+          })),
+        ),
+      )
+      .catch(() => {});
+    api
       .listPrompts()
       .then((arr) =>
         setPrompts(
@@ -524,6 +541,7 @@ function CommandPalette({
     }));
     const all = [
       ...pages,
+      ...projects,
       ...sessions,
       ...history,
       ...memory,
@@ -538,7 +556,7 @@ function CommandPalette({
         (i) => i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql),
       )
       .slice(0, 24);
-  }, [q, sessions, history, memory, crons, agents, channels, prompts]);
+  }, [q, sessions, history, memory, crons, agents, channels, prompts, projects]);
 
   useEffect(() => setIdx(0), [q]);
 

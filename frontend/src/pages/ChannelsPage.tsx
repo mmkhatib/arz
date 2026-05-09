@@ -7,8 +7,9 @@
 // shows new messages live.
 
 import { useEffect, useRef, useState } from "react";
-import { Layers, Plus, Send, Wand2, X, Power, AlertTriangle } from "lucide-react";
-import { api } from "@/api/client";
+import { Briefcase, Layers, Plus, Send, Wand2, X, Power, AlertTriangle } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { api, type ProjectSummary } from "@/api/client";
 import { CedarPage, CedarPageHeader, Btn, Tag, TopoLines } from "@/components/CedarUI";
 import SecondaryNav from "@/components/SecondaryNav";
 
@@ -53,12 +54,20 @@ function fmtAge(ts: number): string {
 }
 
 export default function ChannelsPage() {
+  const navigate = useNavigate();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [active, setActive] = useState<Channel | null>(null);
   const [composer, setComposer] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+
+  useEffect(() => {
+    api.listProjects().then(setProjects).catch(() => {});
+    const t = setInterval(() => api.listProjects().then(setProjects).catch(() => {}), 30_000);
+    return () => clearInterval(t);
+  }, []);
   const feedRef = useRef<HTMLDivElement>(null);
 
   const refreshList = async () => {
@@ -169,6 +178,16 @@ export default function ChannelsPage() {
             </div>
           ) : (
             <>
+              {/* Project banner — visible when channel has a linked project,
+                  or a CTA to create one when not */}
+              <ProjectBanner
+                channelId={active.id}
+                channelName={active.name}
+                channelTopic={active.topic}
+                projects={projects}
+                onCreated={() => api.listProjects().then(setProjects).catch(() => {})}
+                onOpen={(pid) => navigate(`/projects/${encodeURIComponent(pid)}`)}
+              />
               {/* Channel header */}
               <div className="border-b border-[var(--border)] px-5 py-3 flex items-center justify-between gap-3">
                 <div className="min-w-0">
@@ -431,6 +450,91 @@ function CreateChannelDialog({ onClose, onCreated }: { onClose: () => void; onCr
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Banner that appears above a channel when it's been linked to a Project,
+// or offers a one-click "create project from this channel" when not.
+function ProjectBanner({
+  channelId,
+  channelName,
+  channelTopic,
+  projects,
+  onCreated,
+  onOpen,
+}: {
+  channelId: string;
+  channelName: string;
+  channelTopic: string;
+  projects: ProjectSummary[];
+  onCreated: () => void;
+  onOpen: (projectId: string) => void;
+}) {
+  const linked = projects.find((p) => p.channel_id === channelId);
+  const create = async () => {
+    const name = window.prompt("Project name (defaults to channel name):", channelName);
+    if (!name?.trim()) return;
+    try {
+      const p = await api.createProject({
+        name: name.trim(),
+        brief: channelTopic || "",
+        channel_id: channelId,
+      });
+      onCreated();
+      onOpen(p.id);
+    } catch (e) {
+      alert(`Project create failed: ${e}`);
+    }
+  };
+
+  if (linked) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "10px 18px",
+          borderBottom: "1px solid var(--border)",
+          background: "var(--cedar-dim)",
+        }}
+      >
+        <Briefcase size={14} className="text-[var(--cedar-glow)]" />
+        <span style={{ fontSize: 12, fontFamily: "var(--fm)", color: "var(--cedar-2)", textTransform: "uppercase", letterSpacing: ".12em" }}>
+          Project
+        </span>
+        <span style={{ fontSize: 13, color: "var(--text)", fontWeight: 500 }}>{linked.name}</span>
+        <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+          · {linked.open_tasks} open task{linked.open_tasks === 1 ? "" : "s"}
+        </span>
+        <div style={{ flex: 1 }} />
+        <Btn size="sm" kind="outline" onClick={() => onOpen(linked.id)}>
+          Open project →
+        </Btn>
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 18px",
+        borderBottom: "1px solid var(--hairline)",
+        background: "var(--surface)",
+      }}
+    >
+      <Briefcase size={13} className="text-[var(--muted)]" />
+      <span style={{ fontSize: 11.5, color: "var(--text3)" }}>
+        Promote this channel to a tracked project — gives the orchestrator a brief, task list,
+        and project memory.
+      </span>
+      <div style={{ flex: 1 }} />
+      <Btn size="sm" kind="soft" icon={<Plus size={11} />} onClick={create}>
+        Create project
+      </Btn>
     </div>
   );
 }

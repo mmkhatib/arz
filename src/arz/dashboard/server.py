@@ -37,6 +37,7 @@ from arz.dashboard.routes.lessons import router as lessons_router
 from arz.dashboard.routes.mcp import router as mcp_router
 from arz.dashboard.routes.memory import router as memory_router
 from arz.dashboard.routes.overview import router as overview_router
+from arz.dashboard.routes.projects import router as projects_router
 from arz.dashboard.routes.prompts import router as prompts_router
 from arz.dashboard.routes.search import router as search_router
 from arz.dashboard.routes.sessions import router as sessions_router
@@ -267,7 +268,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.4.1", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.5.0", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -483,6 +484,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(consolidator_router)
     app.include_router(action_items_router)
     app.include_router(folders_router)
+    app.include_router(projects_router)
 
     if _STATIC_DIR.exists():
         # SPA fallback: any non-/api path that doesn't match a real file

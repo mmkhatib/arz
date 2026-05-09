@@ -38,6 +38,13 @@ log = logging.getLogger(__name__)
 # integrate, summarise" without runaway costs.
 _MAX_ROUNDS = 3
 
+# Global ceiling on concurrent specialist runs across the whole runner.
+# Per-project caps (Project.max_concurrent_subagents) further restrict
+# work inside one channel; the global semaphore protects the gateway as
+# a whole when many channels fire at once.
+_GLOBAL_MAX_CONCURRENT = 3
+_global_sem = asyncio.Semaphore(_GLOBAL_MAX_CONCURRENT)
+
 
 # Same ChatRunner shape used by AutoNudge / heartbeat / consolidator.
 ChatRunner = Callable[[str, str], Awaitable[str]]
@@ -70,12 +77,23 @@ class ChannelRunner:
             log.warning("channel %s has no orchestrator", slug)
             return store.get(slug)
 
+        # If the channel is wired to a project, drive task-tag persistence
+        # and use the project's per-channel concurrency cap (clamped by
+        # the global semaphore).
+        from arz.projects import get_project_store, parse_and_apply_task_tags
+
+        project = get_project_store().get_by_channel(slug)
+        per_channel_cap = project.max_concurrent_subagents if project else 3
+        per_channel_sem = asyncio.Semaphore(max(1, per_channel_cap))
+
         # Per-pair counters reset each user turn.
         pair_counts: dict[tuple[str, str], int] = {}
 
-        for round_idx in range(_MAX_ROUNDS):
+        for _round_idx in range(_MAX_ROUNDS):
             ch = store.get(slug) or ch
-            ctx = self._build_context(ch, orchestrator.agent)
+            ctx = self._build_context(
+                ch, orchestrator.agent, project_id=(project.id if project else None)
+            )
             try:
                 reply = await self._runner(orchestrator.agent, ctx)
             except Exception:
@@ -84,6 +102,15 @@ class ChannelRunner:
             reply = (reply or "").strip()
             if not reply:
                 break
+            # If linked to a project, strip + apply <task> tags before
+            # storing the visible reply.
+            if project:
+                try:
+                    cleaned, _touched = parse_and_apply_task_tags(reply, project.id)
+                    reply = cleaned or reply
+                except Exception:
+                    log.exception("task-tag apply failed", extra={"channel": slug})
+
             store.post(slug, orchestrator.agent, reply, thread_id=None)
             mentions = _extract_member_mentions(reply, ch)
             if not mentions:
@@ -100,7 +127,9 @@ class ChannelRunner:
                     continue
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
                 tasks.append(
-                    asyncio.create_task(self._run_specialist(slug, spec, reply, anchor_msg))
+                    asyncio.create_task(
+                        self._run_specialist(slug, spec, reply, anchor_msg, per_channel_sem)
+                    )
                 )
             if not tasks:
                 break
@@ -114,14 +143,18 @@ class ChannelRunner:
         agent: str,
         prompt: str,
         anchor: ChannelMessage | None,
+        per_channel_sem: asyncio.Semaphore,
     ) -> None:
         if self._runner is None:
             return
-        try:
-            reply = await self._runner(agent, prompt)
-        except Exception:
-            log.exception("specialist turn failed", extra={"channel": slug, "agent": agent})
-            return
+        # Bound concurrency: per-channel cap nested inside the global cap
+        # so one busy channel can't starve the rest of the gateway.
+        async with _global_sem, per_channel_sem:
+            try:
+                reply = await self._runner(agent, prompt)
+            except Exception:
+                log.exception("specialist turn failed", extra={"channel": slug, "agent": agent})
+                return
         reply = (reply or "").strip()
         if not reply:
             return
@@ -133,9 +166,28 @@ class ChannelRunner:
             thread_id=anchor.id if anchor else None,
         )
 
-    def _build_context(self, ch: Channel, agent: str) -> str:
-        """Render the channel as a prompt for an orchestrator turn."""
+    def _build_context(
+        self,
+        ch: Channel,
+        agent: str,
+        project_id: str | None = None,
+    ) -> str:
+        """Render the channel as a prompt for an orchestrator turn.
+        When a project is attached, the brief, open task list, and a
+        capability snapshot are layered in so the orchestrator picks the
+        right specialist + model tier for each delegation.
+        """
         lines: list[str] = []
+
+        # Capability registry block — what the orchestrator can call.
+        try:
+            from arz.capabilities import capabilities_block
+
+            lines.append(capabilities_block())
+            lines.append("")
+        except Exception:
+            log.exception("capabilities block render failed")
+
         if ch.topic:
             lines.append(f"# Channel: {ch.name}")
             lines.append(f"Topic: {ch.topic}")
@@ -144,6 +196,37 @@ class ChannelRunner:
         members = ", ".join(f"@{m.agent}" for m in ch.members if m.agent != agent)
         if members:
             lines.append(f"Specialists you can delegate to: {members}")
+
+        # Project state, if any.
+        if project_id:
+            try:
+                from arz.projects import get_project_store
+
+                p = get_project_store().get(project_id)
+                if p:
+                    lines.append("")
+                    lines.append(f"## Project: {p.name} (status={p.status})")
+                    if p.brief:
+                        lines.append("### Brief")
+                        lines.append(p.brief.strip())
+                    open_tasks = [t for t in p.tasks if t.status not in ("done", "failed")]
+                    if open_tasks:
+                        lines.append("### Open tasks")
+                        for t in open_tasks[:30]:
+                            assignee = f" → @{t.assignee}" if t.assignee else ""
+                            blockers = (
+                                f" (blocked by {','.join(t.depends_on)})" if t.depends_on else ""
+                            )
+                            lines.append(f"- [{t.status}] {t.id}: {t.title}{assignee}{blockers}")
+                    lines.append("")
+                    lines.append(
+                        'Track work by emitting `<task action="create|update|done|delete" '
+                        'id="..." assignee="@agent">title</task>` tags in your reply. They '
+                        "are stripped before display and persisted to the project."
+                    )
+            except Exception:
+                log.exception("project context render failed")
+
         lines.append("")
         lines.append("## Recent messages")
         for m in ch.messages[-30:]:
@@ -152,8 +235,9 @@ class ChannelRunner:
         lines.append("")
         lines.append(
             "Reply as the channel orchestrator. To delegate, mention a "
-            "specialist with @name and ask a focused question. Keep replies "
-            "short — humans read this feed."
+            "specialist with @name and ask a focused question. Pick model "
+            "tiers from <capabilities>: cheap/local for trivial work, "
+            "frontier only for hard reasoning. Keep replies short."
         )
         return "\n".join(lines)
 

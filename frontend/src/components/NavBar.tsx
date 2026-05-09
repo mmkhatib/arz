@@ -19,11 +19,12 @@ import {
   Columns3,
   Wand2,
   Layers,
+  Briefcase,
 } from "lucide-react";
 
 const STORAGE_KEY = "arz:nav-collapsed";
 
-export type NavSection = "overview" | "chat" | "board" | "autopilot" | "channels" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
+export type NavSection = "overview" | "chat" | "board" | "projects" | "autopilot" | "channels" | "agents" | "memory" | "schedule" | "analytics" | "capabilities" | "autonomy" | "models" | "settings";
 
 interface Props {
   active: NavSection;
@@ -69,6 +70,7 @@ const NAV_ZONES: { zone: string; items: NavEntry[] }[] = [
             </span>
           ) : null,
       },
+      { id: "projects", label: "Projects", icon: <Briefcase size={16} /> },
       { id: "autopilot", label: "Autopilot", icon: <Wand2 size={16} /> },
       { id: "autonomy",  label: "Autonomy",  icon: <Activity size={16} /> },
       { id: "board",     label: "Operations", icon: <Columns3 size={16} /> },
@@ -186,7 +188,7 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
         >
           <Keyboard size={14} />
         </button>
-        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.4.1</span>}
+        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.5.0</span>}
       </div>
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
     </nav>

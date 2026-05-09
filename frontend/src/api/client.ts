@@ -180,6 +180,44 @@ export interface McpServer {
   enabled: boolean;
 }
 
+export type ProjectStatus = "active" | "paused" | "done" | "archived";
+export type ProjectTaskStatus = "planned" | "in_progress" | "blocked" | "done" | "failed";
+
+export interface ProjectTask {
+  id: string;
+  title: string;
+  status: ProjectTaskStatus;
+  assignee: string | null;
+  description: string;
+  depends_on: string[];
+  artifacts: string[];
+  created_at: number;
+  updated_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+}
+
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  brief: string;
+  repo_path: string;
+  status: ProjectStatus;
+  channel_id: string | null;
+  tasks: ProjectTask[];
+  open_tasks: number;
+  created_at: number;
+  updated_at: number;
+  autopilot_idle_s: number;
+  autopilot_max_iterations: number;
+  autopilot_iterations: number;
+  budget_tokens: number;
+  budget_usd_cents: number;
+  spent_tokens: number;
+  spent_usd_cents: number;
+  max_concurrent_subagents: number;
+}
+
 export interface ActionItem {
   id: string;
   text: string;
@@ -785,6 +823,34 @@ export const api = {
   },
 
   // Folders — group sessions under named buckets, icons LLM-picked.
+  // Projects — group brief/tasks/memory under a Channel.
+  listProjects: () =>
+    request<ProjectSummary[]>("/projects"),
+  getProject: (id: string) => request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`),
+  createProject: (body: { name: string; brief?: string; repo_path?: string; channel_id?: string | null }) =>
+    request<ProjectSummary>("/projects", { method: "POST", body: JSON.stringify(body) }),
+  patchProject: (id: string, body: Partial<ProjectSummary>) =>
+    request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteProject: async (id: string): Promise<void> => {
+    await fetch(`${BASE}/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  createProjectTask: (projectId: string, body: { title: string; description?: string; assignee?: string | null; depends_on?: string[] }) =>
+    request<ProjectTask>(`/projects/${encodeURIComponent(projectId)}/tasks`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  patchProjectTask: (projectId: string, taskId: string, body: Partial<ProjectTask>) =>
+    request<ProjectTask>(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteProjectTask: async (projectId: string, taskId: string): Promise<void> => {
+    await fetch(`${BASE}/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}`, { method: "DELETE" });
+  },
+
   listFolders: () =>
     request<{ id: string; name: string; icon: string; session_ids: string[]; created_at: number }[]>("/folders"),
   createFolder: (name: string) =>
