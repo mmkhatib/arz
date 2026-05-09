@@ -117,33 +117,227 @@
   --user-bd:    rgba(45,106,79,.30);
 }
 
-/* ─── Alt themes — recolor cedar variables only ─────────────── */
-[data-theme="saffron"][data-mode="dark"] { --cedar:#9fbf2f;--cedar-2:#b6d147;--cedar-deep:#6e8a1f;--cedar-glow:#c9e055;--cedar-lt:#b6d147;--cedar-dim:rgba(159,191,47,.12);--cedar-line:rgba(159,191,47,.35);--accent:#c9e055;--user-bg:rgba(159,191,47,.13);--user-bd:rgba(159,191,47,.28); }
-[data-theme="saffron"][data-mode="light"] { --cedar:#5e8b0c;--cedar-2:#7da922;--cedar-deep:#456a05;--cedar-glow:#7da922;--cedar-lt:#7da922;--cedar-dim:rgba(94,139,12,.10);--cedar-line:rgba(94,139,12,.30);--accent:#7da922;--user-bg:rgba(94,139,12,.10);--user-bd:rgba(94,139,12,.28); }
+/* ─── Alt themes — surfaces tinted with theme accent ──────────
+ * Each theme tints the dark or light base surfaces with its accent
+ * via color-mix. So saffron-dark gets olive-tinged surfaces, twilight
+ * gets purple-tinged, etc — like MeshClaw's per-theme palettes.
+ */
 
-[data-theme="twilight"][data-mode="dark"] { --cedar:#a884e8;--cedar-2:#bd9eef;--cedar-deep:#7c5ac0;--cedar-glow:#c9a4ff;--cedar-lt:#bd9eef;--cedar-dim:rgba(168,132,232,.12);--cedar-line:rgba(168,132,232,.35);--accent:#c9a4ff;--user-bg:rgba(168,132,232,.13);--user-bd:rgba(168,132,232,.28); }
-[data-theme="twilight"][data-mode="light"] { --cedar:#7148d9;--cedar-2:#8a64f0;--cedar-deep:#5b35b8;--cedar-glow:#7148d9;--cedar-lt:#8a64f0;--cedar-dim:rgba(113,72,217,.10);--cedar-line:rgba(113,72,217,.30);--accent:#7148d9;--user-bg:rgba(113,72,217,.10);--user-bd:rgba(113,72,217,.28); }
+/* Saffron */
+[data-theme="saffron"][data-mode="dark"] {
+  --cedar:#9fbf2f;--cedar-2:#b6d147;--cedar-deep:#6e8a1f;--cedar-glow:#c9e055;--cedar-lt:#b6d147;
+  --cedar-dim:rgba(159,191,47,.12);--cedar-line:rgba(159,191,47,.35);
+  --accent:#c9e055;--user-bg:rgba(159,191,47,.13);--user-bd:rgba(159,191,47,.28);
+  --bg:        color-mix(in oklab, #9fbf2f 6%, #0b1210);
+  --surface:   color-mix(in oklab, #9fbf2f 8%, #111a16);
+  --s2:        color-mix(in oklab, #9fbf2f 12%, #16211c);
+  --s3:        color-mix(in oklab, #9fbf2f 16%, #1c2922);
+  --border:    color-mix(in oklab, #9fbf2f 14%, #243228);
+  --border2:   color-mix(in oklab, #9fbf2f 18%, #2d3e33);
+}
+[data-theme="saffron"][data-mode="light"] {
+  --cedar:#5e8b0c;--cedar-2:#7da922;--cedar-deep:#456a05;--cedar-glow:#7da922;--cedar-lt:#7da922;
+  --cedar-dim:rgba(94,139,12,.10);--cedar-line:rgba(94,139,12,.30);
+  --accent:#7da922;--user-bg:rgba(94,139,12,.10);--user-bd:rgba(94,139,12,.28);
+  --bg:        color-mix(in oklab, #9fbf2f 6%, #f5f1e6);
+  --surface:   color-mix(in oklab, #9fbf2f 4%, #fbf8ef);
+  --s2:        color-mix(in oklab, #9fbf2f 10%, #ede8d8);
+  --s3:        color-mix(in oklab, #9fbf2f 12%, #e3dcc7);
+  --border:    color-mix(in oklab, #9fbf2f 18%, #d6cdb5);
+  --border2:   color-mix(in oklab, #9fbf2f 22%, #c8bfa6);
+}
 
-[data-theme="glacier"][data-mode="dark"] { --cedar:#6fa6bb;--cedar-2:#8abacc;--cedar-deep:#4a8092;--cedar-glow:#9fc8d8;--cedar-lt:#8abacc;--cedar-dim:rgba(111,166,187,.12);--cedar-line:rgba(111,166,187,.35);--accent:#9fc8d8;--user-bg:rgba(111,166,187,.13);--user-bd:rgba(111,166,187,.28); }
-[data-theme="glacier"][data-mode="light"] { --cedar:#3f6a96;--cedar-2:#5b8bbb;--cedar-deep:#28547e;--cedar-glow:#3f6a96;--cedar-lt:#5b8bbb;--cedar-dim:rgba(63,106,150,.10);--cedar-line:rgba(63,106,150,.30);--accent:#3f6a96;--user-bg:rgba(63,106,150,.10);--user-bd:rgba(63,106,150,.28); }
+/* Twilight */
+[data-theme="twilight"][data-mode="dark"] {
+  --cedar:#a884e8;--cedar-2:#bd9eef;--cedar-deep:#7c5ac0;--cedar-glow:#c9a4ff;--cedar-lt:#bd9eef;
+  --cedar-dim:rgba(168,132,232,.12);--cedar-line:rgba(168,132,232,.35);
+  --accent:#c9a4ff;--user-bg:rgba(168,132,232,.13);--user-bd:rgba(168,132,232,.28);
+  --bg:        color-mix(in oklab, #a884e8 8%, #0b0a14);
+  --surface:   color-mix(in oklab, #a884e8 10%, #14111d);
+  --s2:        color-mix(in oklab, #a884e8 14%, #1a1626);
+  --s3:        color-mix(in oklab, #a884e8 18%, #221d31);
+  --border:    color-mix(in oklab, #a884e8 16%, #2b2538);
+  --border2:   color-mix(in oklab, #a884e8 22%, #362e47);
+}
+[data-theme="twilight"][data-mode="light"] {
+  --cedar:#7148d9;--cedar-2:#8a64f0;--cedar-deep:#5b35b8;--cedar-glow:#7148d9;--cedar-lt:#8a64f0;
+  --cedar-dim:rgba(113,72,217,.10);--cedar-line:rgba(113,72,217,.30);
+  --accent:#7148d9;--user-bg:rgba(113,72,217,.10);--user-bd:rgba(113,72,217,.28);
+  --bg:        color-mix(in oklab, #a884e8 5%, #f5f0fa);
+  --surface:   color-mix(in oklab, #a884e8 3%, #faf6fc);
+  --s2:        color-mix(in oklab, #a884e8 8%, #ebe2f3);
+  --s3:        color-mix(in oklab, #a884e8 12%, #e0d4ec);
+  --border:    color-mix(in oklab, #a884e8 18%, #d0c0e2);
+  --border2:   color-mix(in oklab, #a884e8 24%, #beadd5);
+}
 
-[data-theme="driftwood"][data-mode="dark"] { --cedar:#34b0a4;--cedar-2:#48c9bc;--cedar-deep:#1f8478;--cedar-glow:#65d6cb;--cedar-lt:#48c9bc;--cedar-dim:rgba(52,176,164,.12);--cedar-line:rgba(52,176,164,.35);--accent:#65d6cb;--user-bg:rgba(52,176,164,.13);--user-bd:rgba(52,176,164,.28); }
-[data-theme="driftwood"][data-mode="light"] { --cedar:#1f8478;--cedar-2:#34b0a4;--cedar-deep:#106a5e;--cedar-glow:#1f8478;--cedar-lt:#34b0a4;--cedar-dim:rgba(31,132,120,.10);--cedar-line:rgba(31,132,120,.30);--accent:#1f8478;--user-bg:rgba(31,132,120,.10);--user-bd:rgba(31,132,120,.28); }
+/* Glacier */
+[data-theme="glacier"][data-mode="dark"] {
+  --cedar:#6fa6bb;--cedar-2:#8abacc;--cedar-deep:#4a8092;--cedar-glow:#9fc8d8;--cedar-lt:#8abacc;
+  --cedar-dim:rgba(111,166,187,.12);--cedar-line:rgba(111,166,187,.35);
+  --accent:#9fc8d8;--user-bg:rgba(111,166,187,.13);--user-bd:rgba(111,166,187,.28);
+  --bg:        color-mix(in oklab, #6fa6bb 8%, #0a0f15);
+  --surface:   color-mix(in oklab, #6fa6bb 10%, #11171f);
+  --s2:        color-mix(in oklab, #6fa6bb 14%, #161e28);
+  --s3:        color-mix(in oklab, #6fa6bb 18%, #1d2632);
+  --border:    color-mix(in oklab, #6fa6bb 18%, #25303e);
+  --border2:   color-mix(in oklab, #6fa6bb 22%, #2f3b4b);
+}
+[data-theme="glacier"][data-mode="light"] {
+  --cedar:#3f6a96;--cedar-2:#5b8bbb;--cedar-deep:#28547e;--cedar-glow:#3f6a96;--cedar-lt:#5b8bbb;
+  --cedar-dim:rgba(63,106,150,.10);--cedar-line:rgba(63,106,150,.30);
+  --accent:#3f6a96;--user-bg:rgba(63,106,150,.10);--user-bd:rgba(63,106,150,.28);
+  --bg:        color-mix(in oklab, #6fa6bb 6%, #ecf2f5);
+  --surface:   color-mix(in oklab, #6fa6bb 4%, #f4f8fa);
+  --s2:        color-mix(in oklab, #6fa6bb 12%, #dbe5ec);
+  --s3:        color-mix(in oklab, #6fa6bb 16%, #cfdbe4);
+  --border:    color-mix(in oklab, #6fa6bb 22%, #c0cfd9);
+  --border2:   color-mix(in oklab, #6fa6bb 28%, #b1c0cd);
+}
 
-[data-theme="inkwell"][data-mode="dark"] { --cedar:#6a8df0;--cedar-2:#82a6f5;--cedar-deep:#4a6dcc;--cedar-glow:#8eaeff;--cedar-lt:#82a6f5;--cedar-dim:rgba(106,141,240,.12);--cedar-line:rgba(106,141,240,.35);--accent:#8eaeff;--user-bg:rgba(106,141,240,.13);--user-bd:rgba(106,141,240,.28); }
-[data-theme="inkwell"][data-mode="light"] { --cedar:#2670d4;--cedar-2:#4691f0;--cedar-deep:#1858ad;--cedar-glow:#2670d4;--cedar-lt:#4691f0;--cedar-dim:rgba(38,112,212,.10);--cedar-line:rgba(38,112,212,.30);--accent:#2670d4;--user-bg:rgba(38,112,212,.10);--user-bd:rgba(38,112,212,.28); }
+/* Driftwood */
+[data-theme="driftwood"][data-mode="dark"] {
+  --cedar:#34b0a4;--cedar-2:#48c9bc;--cedar-deep:#1f8478;--cedar-glow:#65d6cb;--cedar-lt:#48c9bc;
+  --cedar-dim:rgba(52,176,164,.12);--cedar-line:rgba(52,176,164,.35);
+  --accent:#65d6cb;--user-bg:rgba(52,176,164,.13);--user-bd:rgba(52,176,164,.28);
+  --bg:        color-mix(in oklab, #34b0a4 7%, #0a1413);
+  --surface:   color-mix(in oklab, #34b0a4 9%, #101c1b);
+  --s2:        color-mix(in oklab, #34b0a4 13%, #152625);
+  --s3:        color-mix(in oklab, #34b0a4 17%, #1c302e);
+  --border:    color-mix(in oklab, #34b0a4 18%, #243a37);
+  --border2:   color-mix(in oklab, #34b0a4 24%, #304743);
+}
+[data-theme="driftwood"][data-mode="light"] {
+  --cedar:#1f8478;--cedar-2:#34b0a4;--cedar-deep:#106a5e;--cedar-glow:#1f8478;--cedar-lt:#34b0a4;
+  --cedar-dim:rgba(31,132,120,.10);--cedar-line:rgba(31,132,120,.30);
+  --accent:#1f8478;--user-bg:rgba(31,132,120,.10);--user-bd:rgba(31,132,120,.28);
+  --bg:        color-mix(in oklab, #34b0a4 5%, #ecf6f4);
+  --surface:   color-mix(in oklab, #34b0a4 3%, #f4faf8);
+  --s2:        color-mix(in oklab, #34b0a4 10%, #d8e8e6);
+  --s3:        color-mix(in oklab, #34b0a4 13%, #cadeda);
+  --border:    color-mix(in oklab, #34b0a4 22%, #b9d2cd);
+  --border2:   color-mix(in oklab, #34b0a4 28%, #a8c5be);
+}
 
-[data-theme="ember"][data-mode="dark"] { --cedar:#ff8c2a;--cedar-2:#ffae5b;--cedar-deep:#cc6a17;--cedar-glow:#ffb677;--cedar-lt:#ffae5b;--cedar-dim:rgba(255,140,42,.12);--cedar-line:rgba(255,140,42,.35);--accent:#ffb677;--user-bg:rgba(255,140,42,.13);--user-bd:rgba(255,140,42,.28); }
-[data-theme="ember"][data-mode="light"] { --cedar:#a83c08;--cedar-2:#c45a17;--cedar-deep:#7e2c05;--cedar-glow:#a83c08;--cedar-lt:#c45a17;--cedar-dim:rgba(168,60,8,.10);--cedar-line:rgba(168,60,8,.30);--accent:#a83c08;--user-bg:rgba(168,60,8,.10);--user-bd:rgba(168,60,8,.28); }
+/* Inkwell */
+[data-theme="inkwell"][data-mode="dark"] {
+  --cedar:#6a8df0;--cedar-2:#82a6f5;--cedar-deep:#4a6dcc;--cedar-glow:#8eaeff;--cedar-lt:#82a6f5;
+  --cedar-dim:rgba(106,141,240,.12);--cedar-line:rgba(106,141,240,.35);
+  --accent:#8eaeff;--user-bg:rgba(106,141,240,.13);--user-bd:rgba(106,141,240,.28);
+  --bg:        color-mix(in oklab, #6a8df0 7%, #0a0d18);
+  --surface:   color-mix(in oklab, #6a8df0 9%, #101424);
+  --s2:        color-mix(in oklab, #6a8df0 14%, #161c30);
+  --s3:        color-mix(in oklab, #6a8df0 18%, #1d243d);
+  --border:    color-mix(in oklab, #6a8df0 18%, #262e4a);
+  --border2:   color-mix(in oklab, #6a8df0 24%, #313a5a);
+}
+[data-theme="inkwell"][data-mode="light"] {
+  --cedar:#2670d4;--cedar-2:#4691f0;--cedar-deep:#1858ad;--cedar-glow:#2670d4;--cedar-lt:#4691f0;
+  --cedar-dim:rgba(38,112,212,.10);--cedar-line:rgba(38,112,212,.30);
+  --accent:#2670d4;--user-bg:rgba(38,112,212,.10);--user-bd:rgba(38,112,212,.28);
+  --bg:        color-mix(in oklab, #6a8df0 5%, #eff2fa);
+  --surface:   color-mix(in oklab, #6a8df0 3%, #f5f7fc);
+  --s2:        color-mix(in oklab, #6a8df0 10%, #dde2ef);
+  --s3:        color-mix(in oklab, #6a8df0 14%, #cfd6e8);
+  --border:    color-mix(in oklab, #6a8df0 22%, #bec7df);
+  --border2:   color-mix(in oklab, #6a8df0 28%, #adb8d4);
+}
 
-[data-theme="lavender"][data-mode="dark"] { --cedar:#b894ed;--cedar-2:#cdaef3;--cedar-deep:#8e6dc6;--cedar-glow:#d6b8ff;--cedar-lt:#cdaef3;--cedar-dim:rgba(184,148,237,.12);--cedar-line:rgba(184,148,237,.35);--accent:#d6b8ff;--user-bg:rgba(184,148,237,.13);--user-bd:rgba(184,148,237,.28); }
-[data-theme="lavender"][data-mode="light"] { --cedar:#7c33de;--cedar-2:#9554f5;--cedar-deep:#5e1eb8;--cedar-glow:#7c33de;--cedar-lt:#9554f5;--cedar-dim:rgba(124,51,222,.10);--cedar-line:rgba(124,51,222,.30);--accent:#7c33de;--user-bg:rgba(124,51,222,.10);--user-bd:rgba(124,51,222,.28); }
+/* Ember */
+[data-theme="ember"][data-mode="dark"] {
+  --cedar:#ff8c2a;--cedar-2:#ffae5b;--cedar-deep:#cc6a17;--cedar-glow:#ffb677;--cedar-lt:#ffae5b;
+  --cedar-dim:rgba(255,140,42,.12);--cedar-line:rgba(255,140,42,.35);
+  --accent:#ffb677;--user-bg:rgba(255,140,42,.13);--user-bd:rgba(255,140,42,.28);
+  --bg:        color-mix(in oklab, #ff8c2a 6%, #120a07);
+  --surface:   color-mix(in oklab, #ff8c2a 8%, #1c130d);
+  --s2:        color-mix(in oklab, #ff8c2a 12%, #251b13);
+  --s3:        color-mix(in oklab, #ff8c2a 16%, #2f231a);
+  --border:    color-mix(in oklab, #ff8c2a 16%, #3a2c22);
+  --border2:   color-mix(in oklab, #ff8c2a 22%, #46362b);
+}
+[data-theme="ember"][data-mode="light"] {
+  --cedar:#a83c08;--cedar-2:#c45a17;--cedar-deep:#7e2c05;--cedar-glow:#a83c08;--cedar-lt:#c45a17;
+  --cedar-dim:rgba(168,60,8,.10);--cedar-line:rgba(168,60,8,.30);
+  --accent:#a83c08;--user-bg:rgba(168,60,8,.10);--user-bd:rgba(168,60,8,.28);
+  --bg:        color-mix(in oklab, #ff8c2a 5%, #faf2ea);
+  --surface:   color-mix(in oklab, #ff8c2a 3%, #fdf8f1);
+  --s2:        color-mix(in oklab, #ff8c2a 9%, #f0e3d3);
+  --s3:        color-mix(in oklab, #ff8c2a 12%, #e7d8c4);
+  --border:    color-mix(in oklab, #ff8c2a 20%, #d8c3aa);
+  --border2:   color-mix(in oklab, #ff8c2a 26%, #c9b196);
+}
 
-[data-theme="petal"][data-mode="dark"] { --cedar:#e598a3;--cedar-2:#eeb1b9;--cedar-deep:#bd6e7b;--cedar-glow:#f0c2c8;--cedar-lt:#eeb1b9;--cedar-dim:rgba(229,152,163,.12);--cedar-line:rgba(229,152,163,.35);--accent:#f0c2c8;--user-bg:rgba(229,152,163,.13);--user-bd:rgba(229,152,163,.28); }
-[data-theme="petal"][data-mode="light"] { --cedar:#bf606b;--cedar-2:#d57878;--cedar-deep:#9c4956;--cedar-glow:#bf606b;--cedar-lt:#d57878;--cedar-dim:rgba(191,96,107,.10);--cedar-line:rgba(191,96,107,.30);--accent:#bf606b;--user-bg:rgba(191,96,107,.10);--user-bd:rgba(191,96,107,.28); }
+/* Lavender */
+[data-theme="lavender"][data-mode="dark"] {
+  --cedar:#b894ed;--cedar-2:#cdaef3;--cedar-deep:#8e6dc6;--cedar-glow:#d6b8ff;--cedar-lt:#cdaef3;
+  --cedar-dim:rgba(184,148,237,.12);--cedar-line:rgba(184,148,237,.35);
+  --accent:#d6b8ff;--user-bg:rgba(184,148,237,.13);--user-bd:rgba(184,148,237,.28);
+  --bg:        color-mix(in oklab, #b894ed 7%, #0d0a14);
+  --surface:   color-mix(in oklab, #b894ed 9%, #15101e);
+  --s2:        color-mix(in oklab, #b894ed 14%, #1d1729);
+  --s3:        color-mix(in oklab, #b894ed 18%, #251e35);
+  --border:    color-mix(in oklab, #b894ed 18%, #2e2641);
+  --border2:   color-mix(in oklab, #b894ed 24%, #3a3052);
+}
+[data-theme="lavender"][data-mode="light"] {
+  --cedar:#7c33de;--cedar-2:#9554f5;--cedar-deep:#5e1eb8;--cedar-glow:#7c33de;--cedar-lt:#9554f5;
+  --cedar-dim:rgba(124,51,222,.10);--cedar-line:rgba(124,51,222,.30);
+  --accent:#7c33de;--user-bg:rgba(124,51,222,.10);--user-bd:rgba(124,51,222,.28);
+  --bg:        color-mix(in oklab, #b894ed 6%, #f3eefa);
+  --surface:   color-mix(in oklab, #b894ed 4%, #f9f4fc);
+  --s2:        color-mix(in oklab, #b894ed 10%, #e8dff3);
+  --s3:        color-mix(in oklab, #b894ed 14%, #ddd0eb);
+  --border:    color-mix(in oklab, #b894ed 22%, #cdbde0);
+  --border2:   color-mix(in oklab, #b894ed 28%, #bba9d2);
+}
 
-[data-theme="glass"][data-mode="dark"] { --cedar:#1cc8e8;--cedar-2:#3edcff;--cedar-deep:#0c95b0;--cedar-glow:#5be4ff;--cedar-lt:#3edcff;--cedar-dim:rgba(28,200,232,.12);--cedar-line:rgba(28,200,232,.35);--accent:#5be4ff;--user-bg:rgba(28,200,232,.13);--user-bd:rgba(28,200,232,.28); }
-[data-theme="glass"][data-mode="light"] { --cedar:#0f8db4;--cedar-2:#10a4ce;--cedar-deep:#0a6b8a;--cedar-glow:#0f8db4;--cedar-lt:#10a4ce;--cedar-dim:rgba(15,141,180,.10);--cedar-line:rgba(15,141,180,.30);--accent:#0f8db4;--user-bg:rgba(15,141,180,.10);--user-bd:rgba(15,141,180,.28); }
+/* Petal */
+[data-theme="petal"][data-mode="dark"] {
+  --cedar:#e598a3;--cedar-2:#eeb1b9;--cedar-deep:#bd6e7b;--cedar-glow:#f0c2c8;--cedar-lt:#eeb1b9;
+  --cedar-dim:rgba(229,152,163,.12);--cedar-line:rgba(229,152,163,.35);
+  --accent:#f0c2c8;--user-bg:rgba(229,152,163,.13);--user-bd:rgba(229,152,163,.28);
+  --bg:        color-mix(in oklab, #e598a3 6%, #120a0c);
+  --surface:   color-mix(in oklab, #e598a3 8%, #1c1216);
+  --s2:        color-mix(in oklab, #e598a3 12%, #25181d);
+  --s3:        color-mix(in oklab, #e598a3 16%, #2f1f25);
+  --border:    color-mix(in oklab, #e598a3 16%, #3a262d);
+  --border2:   color-mix(in oklab, #e598a3 22%, #463038);
+}
+[data-theme="petal"][data-mode="light"] {
+  --cedar:#bf606b;--cedar-2:#d57878;--cedar-deep:#9c4956;--cedar-glow:#bf606b;--cedar-lt:#d57878;
+  --cedar-dim:rgba(191,96,107,.10);--cedar-line:rgba(191,96,107,.30);
+  --accent:#bf606b;--user-bg:rgba(191,96,107,.10);--user-bd:rgba(191,96,107,.28);
+  --bg:        color-mix(in oklab, #e598a3 5%, #faf0f1);
+  --surface:   color-mix(in oklab, #e598a3 3%, #fdf6f6);
+  --s2:        color-mix(in oklab, #e598a3 9%, #f0dde0);
+  --s3:        color-mix(in oklab, #e598a3 12%, #e7d0d3);
+  --border:    color-mix(in oklab, #e598a3 20%, #d8babe);
+  --border2:   color-mix(in oklab, #e598a3 26%, #c9a8ad);
+}
+
+/* Glass */
+[data-theme="glass"][data-mode="dark"] {
+  --cedar:#1cc8e8;--cedar-2:#3edcff;--cedar-deep:#0c95b0;--cedar-glow:#5be4ff;--cedar-lt:#3edcff;
+  --cedar-dim:rgba(28,200,232,.12);--cedar-line:rgba(28,200,232,.35);
+  --accent:#5be4ff;--user-bg:rgba(28,200,232,.13);--user-bd:rgba(28,200,232,.28);
+  --bg:        color-mix(in oklab, #1cc8e8 7%, #06141a);
+  --surface:   color-mix(in oklab, #1cc8e8 9%, #0c1f27);
+  --s2:        color-mix(in oklab, #1cc8e8 13%, #122832);
+  --s3:        color-mix(in oklab, #1cc8e8 17%, #18323e);
+  --border:    color-mix(in oklab, #1cc8e8 18%, #213c4a);
+  --border2:   color-mix(in oklab, #1cc8e8 24%, #2c4a5c);
+}
+[data-theme="glass"][data-mode="light"] {
+  --cedar:#0f8db4;--cedar-2:#10a4ce;--cedar-deep:#0a6b8a;--cedar-glow:#0f8db4;--cedar-lt:#10a4ce;
+  --cedar-dim:rgba(15,141,180,.10);--cedar-line:rgba(15,141,180,.30);
+  --accent:#0f8db4;--user-bg:rgba(15,141,180,.10);--user-bd:rgba(15,141,180,.28);
+  --bg:        color-mix(in oklab, #1cc8e8 6%, #ecf5f8);
+  --surface:   color-mix(in oklab, #1cc8e8 4%, #f4fafc);
+  --s2:        color-mix(in oklab, #1cc8e8 12%, #d8e8ee);
+  --s3:        color-mix(in oklab, #1cc8e8 16%, #c9dde5);
+  --border:    color-mix(in oklab, #1cc8e8 22%, #b8d0d9);
+  --border2:   color-mix(in oklab, #1cc8e8 28%, #a8c2cc);
+}
 
 [data-theme="obsidian"][data-mode="dark"] {
   --bg:        #000000;
