@@ -379,6 +379,190 @@ export function Toggle({
   );
 }
 
+// ── Modal — scrim + Cedar-styled dialog ─────────────────────
+export function CedarModal({
+  open,
+  onClose,
+  title,
+  eyebrow,
+  children,
+  footer,
+  width = 520,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: ReactNode;
+  eyebrow?: ReactNode;
+  children: ReactNode;
+  footer?: ReactNode;
+  width?: number;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.55)",
+        backdropFilter: "blur(3px)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        paddingTop: "12vh",
+        zIndex: 100,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width,
+          maxWidth: "92vw",
+          background: "var(--surface)",
+          border: "1px solid var(--border2)",
+          borderRadius: 14,
+          boxShadow: "var(--shadow-2)",
+          overflow: "hidden",
+          fontFamily: "var(--fn)",
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            position: "relative",
+            padding: "18px 22px 14px",
+            borderBottom: "1px solid var(--border)",
+            overflow: "hidden",
+          }}
+        >
+          <TopoLines height={80} opacity={0.4} />
+          {eyebrow && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ width: 16, height: 1, background: "var(--cedar-glow)" }} />
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--fm)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".16em",
+                  color: "var(--cedar-2)",
+                }}
+              >
+                {eyebrow}
+              </span>
+            </div>
+          )}
+          <h2
+            style={{
+              fontFamily: "var(--fd)",
+              fontSize: 22,
+              fontWeight: 400,
+              color: "var(--text)",
+              lineHeight: 1.15,
+              margin: 0,
+              letterSpacing: "-.01em",
+              position: "relative",
+            }}
+          >
+            {title}
+          </h2>
+        </div>
+        <div style={{ padding: "18px 22px" }}>{children}</div>
+        {footer && (
+          <div
+            style={{
+              padding: "12px 22px",
+              borderTop: "1px solid var(--border)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: 8,
+              background: "var(--bg)",
+            }}
+          >
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── CedarTextField + CedarTextArea — themed inputs for use inside modals
+export function CedarLabel({ children }: { children: ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 10.5,
+        fontFamily: "var(--fm)",
+        textTransform: "uppercase",
+        letterSpacing: ".14em",
+        color: "var(--muted)",
+        marginBottom: 5,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const _inpStyle: CSSProperties = {
+  width: "100%",
+  padding: "8px 10px",
+  background: "var(--bg)",
+  border: "1px solid var(--border)",
+  borderRadius: 7,
+  color: "var(--text)",
+  fontSize: 13,
+  fontFamily: "var(--fn)",
+  outline: "none",
+};
+
+export function CedarInput(props: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      {...props}
+      style={{
+        ..._inpStyle,
+        ...(props.style || {}),
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderColor = "var(--cedar-line)";
+        props.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        props.onBlur?.(e);
+      }}
+    />
+  );
+}
+
+export function CedarTextArea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      style={{
+        ..._inpStyle,
+        fontFamily: "var(--fn)",
+        lineHeight: 1.55,
+        resize: "vertical",
+        ...(props.style || {}),
+      }}
+      onFocus={(e) => {
+        e.currentTarget.style.borderColor = "var(--cedar-line)";
+        props.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        props.onBlur?.(e);
+      }}
+    />
+  );
+}
+
 // ── Eyebrow label ────────────────────────────────────────────
 export function Eyebrow({ children }: { children: ReactNode }) {
   return (

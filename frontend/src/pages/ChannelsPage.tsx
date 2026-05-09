@@ -10,7 +10,17 @@ import { useEffect, useRef, useState } from "react";
 import { Briefcase, Layers, Plus, Send, Wand2, X, Power, AlertTriangle } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api, type ProjectSummary } from "@/api/client";
-import { CedarPage, CedarPageHeader, Btn, Tag, TopoLines } from "@/components/CedarUI";
+import {
+  CedarPage,
+  CedarPageHeader,
+  CedarModal,
+  CedarInput,
+  CedarTextArea,
+  CedarLabel,
+  Btn,
+  Tag,
+  TopoLines,
+} from "@/components/CedarUI";
 import SecondaryNav from "@/components/SecondaryNav";
 
 type Channel = Awaited<ReturnType<typeof api.getChannelApp>>;
@@ -472,21 +482,7 @@ function ProjectBanner({
   onOpen: (projectId: string) => void;
 }) {
   const linked = projects.find((p) => p.channel_id === channelId);
-  const create = async () => {
-    const name = window.prompt("Project name (defaults to channel name):", channelName);
-    if (!name?.trim()) return;
-    try {
-      const p = await api.createProject({
-        name: name.trim(),
-        brief: channelTopic || "",
-        channel_id: channelId,
-      });
-      onCreated();
-      onOpen(p.id);
-    } catch (e) {
-      alert(`Project create failed: ${e}`);
-    }
-  };
+  const [showCreate, setShowCreate] = useState(false);
 
   if (linked) {
     return (
@@ -532,9 +528,122 @@ function ProjectBanner({
         and project memory.
       </span>
       <div style={{ flex: 1 }} />
-      <Btn size="sm" kind="soft" icon={<Plus size={11} />} onClick={create}>
+      <Btn size="sm" kind="soft" icon={<Plus size={11} />} onClick={() => setShowCreate(true)}>
         Create project
       </Btn>
+      <PromoteToProjectModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        defaultName={channelName}
+        defaultBrief={channelTopic || ""}
+        channelId={channelId}
+        onCreated={(id) => { onCreated(); onOpen(id); }}
+      />
     </div>
+  );
+}
+
+function PromoteToProjectModal({
+  open,
+  onClose,
+  defaultName,
+  defaultBrief,
+  channelId,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  defaultName: string;
+  defaultBrief: string;
+  channelId: string;
+  onCreated: (id: string) => void;
+}) {
+  const [name, setName] = useState(defaultName);
+  const [brief, setBrief] = useState(defaultBrief);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) {
+      setName(defaultName);
+      setBrief(defaultBrief);
+      setError(null);
+      setSubmitting(false);
+    }
+  }, [open, defaultName, defaultBrief]);
+
+  const submit = async () => {
+    const n = name.trim();
+    if (!n) { setError("Name required."); return; }
+    setSubmitting(true);
+    try {
+      const p = await api.createProject({
+        name: n,
+        brief: brief.trim(),
+        channel_id: channelId,
+      });
+      onCreated(p.id);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      eyebrow="promote channel"
+      title={
+        <>
+          Wrap this channel in a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>project</em>.
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={submitting}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={submitting}>
+            {submitting ? "Creating…" : "Create project"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Name</CedarLabel>
+          <CedarInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(); }}
+          />
+        </div>
+        <div>
+          <CedarLabel>Brief</CedarLabel>
+          <CedarTextArea
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            rows={6}
+            placeholder="What is the orchestrator working on?"
+          />
+        </div>
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }

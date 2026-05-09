@@ -8,6 +8,10 @@ import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
+  CedarModal,
+  CedarInput,
+  CedarTextArea,
+  CedarLabel,
   Btn,
   Tag,
   TopoLines,
@@ -34,7 +38,7 @@ const STATUS_TAG: Record<string, "cedar" | "dawn" | "muted" | "stone"> = {
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
 
   const refresh = () => api.listProjects().then(setProjects).catch(() => {});
 
@@ -44,20 +48,9 @@ export default function ProjectsPage() {
     return () => clearInterval(t);
   }, []);
 
-  const newProject = async () => {
-    const name = window.prompt("Project name:");
-    if (!name?.trim()) return;
-    const brief = window.prompt("One-line brief (optional):") ?? "";
-    setCreating(true);
-    try {
-      const created = await api.createProject({ name: name.trim(), brief: brief.trim() });
-      await refresh();
-      navigate(`/projects/${encodeURIComponent(created.id)}`);
-    } catch (e) {
-      alert(`Create failed: ${e}`);
-    } finally {
-      setCreating(false);
-    }
+  const handleCreated = async (id: string) => {
+    await refresh();
+    navigate(`/projects/${encodeURIComponent(id)}`);
   };
 
   const open = projects.filter((p) => p.status === "active").length;
@@ -76,8 +69,8 @@ export default function ProjectsPage() {
           }
           sub={`${open} active · ${totalTasks} open tasks across the grove. Each project wraps a channel with a brief, a task list, and a project-scoped memory namespace.`}
           right={
-            <Btn kind="solid" icon={<Plus size={13} />} onClick={newProject} disabled={creating}>
-              {creating ? "Creating…" : "New project"}
+            <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowCreate(true)}>
+              New project
             </Btn>
           }
         />
@@ -95,7 +88,9 @@ export default function ProjectsPage() {
                 track artifacts across multiple agent sessions.
               </div>
               <div style={{ marginTop: 14 }}>
-                <Btn kind="solid" icon={<Plus size={13} />} onClick={newProject}>Start one</Btn>
+                <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowCreate(true)}>
+                  Start one
+                </Btn>
               </div>
             </div>
           </CedarCard>
@@ -191,6 +186,128 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
+      <NewProjectModal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={handleCreated}
+      />
     </CedarPage>
+  );
+}
+
+function NewProjectModal({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (id: string) => void | Promise<void>;
+}) {
+  const [name, setName] = useState("");
+  const [brief, setBrief] = useState("");
+  const [repoPath, setRepoPath] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setBrief("");
+      setRepoPath("");
+      setError(null);
+      setCreating(false);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    const n = name.trim();
+    if (!n) {
+      setError("Project name is required.");
+      return;
+    }
+    setCreating(true);
+    setError(null);
+    try {
+      const p = await api.createProject({
+        name: n,
+        brief: brief.trim(),
+        repo_path: repoPath.trim(),
+      });
+      await onCreated(p.id);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      eyebrow="new project"
+      title={
+        <>
+          Plant a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>cedar</em>.
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={creating}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={creating}>
+            {creating ? "Creating…" : "Create project"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Name</CedarLabel>
+          <CedarInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Auth refactor"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(); }}
+          />
+        </div>
+        <div>
+          <CedarLabel>Brief</CedarLabel>
+          <CedarTextArea
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+            placeholder="What is the orchestrator working on? You can edit this later."
+            rows={6}
+          />
+          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+            Markdown supported. The orchestrator reads this every turn.
+          </div>
+        </div>
+        <div>
+          <CedarLabel>Repo path (optional)</CedarLabel>
+          <CedarInput
+            value={repoPath}
+            onChange={(e) => setRepoPath(e.target.value)}
+            placeholder="/Users/you/code/this-project"
+          />
+        </div>
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }

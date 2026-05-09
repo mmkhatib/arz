@@ -9,6 +9,10 @@ import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
+  CedarModal,
+  CedarInput,
+  CedarTextArea,
+  CedarLabel,
   Btn,
   Tag,
   SegSeg,
@@ -35,6 +39,7 @@ export default function ProjectDetailPage() {
   const [tab, setTab] = useState<Tab>("brief");
   const [briefDraft, setBriefDraft] = useState("");
   const [editingBrief, setEditingBrief] = useState(false);
+  const [showAddTask, setShowAddTask] = useState(false);
 
   const refresh = async () => {
     if (!id) return;
@@ -72,16 +77,7 @@ export default function ProjectDetailPage() {
     }
   };
 
-  const addTask = async () => {
-    const title = window.prompt("Task title:");
-    if (!title?.trim()) return;
-    try {
-      await api.createProjectTask(project.id, { title: title.trim() });
-      await refresh();
-    } catch (e) {
-      alert(`Add task failed: ${e}`);
-    }
-  };
+  const addTask = () => setShowAddTask(true);
 
   const setTaskStatus = async (task: ProjectTask, status: ProjectTaskStatus) => {
     try {
@@ -322,6 +318,131 @@ export default function ProjectDetailPage() {
           </CedarCard>
         )}
       </div>
+      <NewTaskModal
+        open={showAddTask}
+        onClose={() => setShowAddTask(false)}
+        onSubmit={async (body) => {
+          try {
+            await api.createProjectTask(project.id, body);
+            await refresh();
+          } catch (e) {
+            alert(`Add task failed: ${e}`);
+          }
+        }}
+      />
     </CedarPage>
+  );
+}
+
+function NewTaskModal({
+  open,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmit: (body: { title: string; description?: string; assignee?: string | null }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [assignee, setAssignee] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setTitle("");
+      setDescription("");
+      setAssignee("");
+      setError(null);
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    const t = title.trim();
+    if (!t) {
+      setError("Title required.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit({
+        title: t,
+        description: description.trim() || undefined,
+        assignee: assignee.trim().replace(/^@/, "") || null,
+      });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      eyebrow="new task"
+      title={
+        <>
+          Add a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>task</em>.
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={submitting}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={submitting}>
+            {submitting ? "Adding…" : "Add task"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Title</CedarLabel>
+          <CedarInput
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. wire up token refresh test"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(); }}
+          />
+        </div>
+        <div>
+          <CedarLabel>Description (optional)</CedarLabel>
+          <CedarTextArea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Context, links, edge cases."
+            rows={4}
+          />
+        </div>
+        <div>
+          <CedarLabel>Assignee (optional)</CedarLabel>
+          <CedarInput
+            value={assignee}
+            onChange={(e) => setAssignee(e.target.value)}
+            placeholder="agent name (e.g. coder)"
+          />
+        </div>
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }
