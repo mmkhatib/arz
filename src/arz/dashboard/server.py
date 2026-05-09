@@ -267,7 +267,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.4.0", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.4.1", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -321,6 +321,14 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
             provider = KiroCliProvider(model=model)
         elif provider_name == "codex":
             provider = CodexProvider(model=model, system_prompt=sys_prompt or None)
+        elif provider_name == "gemini":
+            from arz.providers.gemini import GeminiProvider
+
+            provider = GeminiProvider(model=model or None)
+        elif provider_name == "ollama":
+            from arz.providers.ollama import OllamaProvider
+
+            provider = OllamaProvider(model=model or None)
         else:
             return f"(unsupported provider {provider_name!r})"
 
