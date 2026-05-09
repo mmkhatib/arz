@@ -248,9 +248,36 @@ class MemoryFTS:
 
     @staticmethod
     def _sanitize_query(q: str) -> str:
-        # Strip characters that the FTS5 parser hates outside of phrase quotes.
-        bad = '()*"!:^'
-        return "".join(c if c not in bad else " " for c in q).strip()
+        """Convert a free-form user query into a safe FTS5 MATCH expression.
+
+        FTS5 has a fussy mini-language: backticks are column-quotes, `-` is
+        NOT, `+` is phrase-or, `:` is column-restrict, parens group, `*`
+        prefix-matches, double-quotes phrase. A user pasting a code fence
+        with backticks (``` ``` ```) or a Windows path like ``C:\\Users``
+        blew up ``memory_fts MATCH ?`` with the FTS5 backtick parse error.
+
+        Strategy: keep only Unicode letters/digits/whitespace, drop
+        everything else, then join the surviving tokens with spaces. FTS5
+        treats bare space-separated tokens as implicit AND, which is the
+        behavior we want for recall.
+        """
+        import re
+
+        cleaned = re.sub(r"[^\w\s]+", " ", q, flags=re.UNICODE)
+        tokens = [t for t in cleaned.split() if t]
+        # Drop tokens that the FTS5 parser would still reject — e.g. a
+        # leading underscore-only run, or anything starting with a digit
+        # that isn't a real word. The simple identifier-ish filter below
+        # is enough; we don't need to be clever, recall just degrades
+        # gracefully when terms get pruned.
+        safe: list[str] = []
+        for t in tokens:
+            if t.isnumeric():
+                safe.append(t)
+                continue
+            if t[0].isalpha() or "_" in t:
+                safe.append(t)
+        return " ".join(safe).strip()
 
 
 _singleton: MemoryFTS | None = None

@@ -7,7 +7,7 @@ import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
 import ThemeDropdown from "./ThemeDropdown";
-import { GitBranch, Zap } from "lucide-react";
+import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
 
 function ThinkingDots() {
@@ -59,6 +59,17 @@ function SessionTitle({
     }
   };
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-title-menu]")) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpen]);
+
   if (editing) {
     return (
       <input
@@ -70,29 +81,72 @@ function SessionTitle({
           if (e.key === "Enter") commit();
           else if (e.key === "Escape") { setDraft(title); setEditing(false); }
         }}
-        className="flex-1 min-w-0 bg-[var(--bg)] border border-[var(--cedar)]/40 rounded px-2 py-0.5 text-[13px] font-medium text-[var(--text)] focus:outline-none"
+        className="flex-1 min-w-0 bg-[var(--bg)] border border-[var(--cedar-line)] rounded-md px-2.5 py-1 text-[13px] font-medium text-[var(--text)] focus:outline-none"
         maxLength={200}
       />
     );
   }
 
+  // MeshClaw-style: title sits in a bordered box that doubles as a
+  // dropdown trigger. On hover, two compact actions appear (Edit and
+  // ✨ AI rename) — these are duplicated inside the dropdown menu so
+  // they're discoverable without hover (e.g. on touch).
   return (
-    <div className="group flex items-center gap-1.5 min-w-0">
-      <h2
-        className="text-[13px] font-medium text-[var(--text)] truncate cursor-text"
-        title="Click to rename"
-        onClick={() => setEditing(true)}
-      >
-        {title}
-      </h2>
+    <div className="relative group flex items-center min-w-0" data-title-menu>
       <button
-        onClick={regenerate}
-        disabled={regenerating || messageCount < 2}
-        title={messageCount < 2 ? "Send a message first" : "Rename this chat using the current model"}
-        className="text-[11px] text-[var(--muted)] hover:text-[var(--cedar)] disabled:opacity-30 disabled:cursor-not-allowed shrink-0 transition-colors"
+        onClick={() => setMenuOpen((o) => !o)}
+        title="Session options"
+        className={[
+          "flex items-center gap-2 min-w-0 px-2.5 py-1 rounded-md border transition-colors",
+          menuOpen
+            ? "border-[var(--cedar-line)] bg-[var(--cedar-dim)]"
+            : "border-[var(--border)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
+        ].join(" ")}
       >
-        {regenerating ? "…" : "✨"}
+        <h2 className="text-[13px] font-medium text-[var(--text)] truncate max-w-[420px]">
+          {title}
+        </h2>
+        <ChevronDown size={12} className="text-[var(--muted)] shrink-0" />
       </button>
+
+      {/* Hover-revealed quick actions */}
+      <div className="ml-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+        <button
+          onClick={() => setEditing(true)}
+          title="Rename"
+          className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)]"
+        >
+          <Edit3 size={11} />
+        </button>
+        <button
+          onClick={regenerate}
+          disabled={regenerating || messageCount < 2}
+          title={messageCount < 2 ? "Send a message first" : "Rename with AI"}
+          className="w-6 h-6 flex items-center justify-center rounded text-[var(--cedar-glow)] hover:bg-[var(--cedar-dim)] disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          {regenerating ? <span className="text-[11px]">…</span> : <Sparkles size={11} />}
+        </button>
+      </div>
+
+      {menuOpen && (
+        <div className="absolute left-0 top-full mt-1 z-40 min-w-[200px] rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl py-1">
+          <button
+            onClick={() => { setEditing(true); setMenuOpen(false); }}
+            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)]"
+          >
+            <Edit3 size={12} className="text-[var(--muted)]" />
+            Rename manually
+          </button>
+          <button
+            onClick={() => { void regenerate(); setMenuOpen(false); }}
+            disabled={messageCount < 2}
+            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)] disabled:opacity-40"
+          >
+            <Sparkles size={12} className="text-[var(--cedar-glow)]" />
+            Rename with AI
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -134,10 +188,10 @@ function ExportMenu({ sessionId }: { sessionId: string }) {
         onClick={() => setOpen((v) => !v)}
         title="Export / share"
         className={[
-          "text-[12px] px-2 py-1 rounded-lg transition-colors",
+          "flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] transition-colors",
           open
-            ? "bg-[var(--cedar)]/20 text-[var(--cedar)]"
-            : "text-[var(--muted)] hover:text-[var(--text)]",
+            ? "border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)]"
+            : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
         ].join(" ")}
       >
         ⤓ Export
@@ -163,6 +217,101 @@ function ExportMenu({ sessionId }: { sessionId: string }) {
             className="block w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--bg)]"
           >
             {copied ? "Link copied ✓" : "Copy session link"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoreMenu({
+  sessionId,
+  autonudgeGoal,
+  autonudgeIdleS,
+  onForked,
+  onAutonudgeChange,
+}: {
+  sessionId: string;
+  autonudgeGoal: string | null;
+  autonudgeIdleS: number;
+  onForked: (id: string) => void;
+  onAutonudgeChange: (goal: string | null, idle_s: number) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isAutoOn = !!(autonudgeGoal && autonudgeIdleS > 0);
+
+  useEffect(() => {
+    if (!open) return;
+    const onClick = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-more-menu]")) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  const fork = async () => {
+    setOpen(false);
+    try {
+      const f = await api.forkSession(sessionId);
+      onForked(f.id);
+    } catch (e) {
+      console.error("fork failed", e);
+    }
+  };
+
+  const toggleAuto = async () => {
+    setOpen(false);
+    if (isAutoOn) {
+      await api.setAutoNudge(sessionId, { goal: null, idle_s: 0 });
+      onAutonudgeChange(null, 0);
+      return;
+    }
+    const goal = window.prompt(
+      "AutoNudge goal — what should this session keep working on?",
+      autonudgeGoal ?? "",
+    );
+    if (!goal) return;
+    const idleStr = window.prompt(
+      "Nudge after how many seconds of idle?",
+      String(autonudgeIdleS || 120),
+    );
+    const idle_s = Math.max(30, parseInt(idleStr || "120", 10) || 120);
+    await api.setAutoNudge(sessionId, { goal, idle_s, reset_iterations: true });
+    onAutonudgeChange(goal, idle_s);
+  };
+
+  return (
+    <div className="relative" data-more-menu>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="More actions"
+        className={[
+          "flex items-center justify-center w-8 h-7 rounded-md border transition-colors",
+          open
+            ? "border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)]"
+            : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
+        ].join(" ")}
+      >
+        <MoreHorizontal size={13} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-40 min-w-[220px] rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl py-1">
+          <button
+            onClick={fork}
+            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)]"
+          >
+            <GitBranch size={12} className="text-[var(--muted)]" />
+            Fork session
+          </button>
+          <button
+            onClick={toggleAuto}
+            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)]"
+          >
+            <Zap size={12} className={isAutoOn ? "text-amber-400" : "text-[var(--muted)]"} />
+            {isAutoOn
+              ? `AutoNudge ON · disable (${autonudgeIdleS}s)`
+              : "AutoNudge — set goal"}
           </button>
         </div>
       )}
@@ -631,67 +780,32 @@ export default function ChatPanel({
         <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
           <ThemeDropdown />
-          <button
-            onClick={async () => {
-              try {
-                const fork = await api.forkSession(sessionId);
-                onSessionForked?.(fork.id);
-              } catch (e) {
-                console.error("fork failed", e);
-              }
-            }}
-            title="Fork this session — clones full history into a new tab"
-            className="text-[12px] px-2 py-1 rounded-lg text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)] flex items-center gap-1"
-          >
-            <GitBranch size={12} /> Fork
-          </button>
-          <button
-            onClick={async () => {
-              const isOn = !!(autonudgeGoal && autonudgeIdleS > 0);
-              if (isOn) {
-                await api.setAutoNudge(sessionId, { goal: null, idle_s: 0 });
-                setAutonudgeGoal(null);
-                setAutonudgeIdleS(0);
-                return;
-              }
-              const goal = window.prompt("AutoNudge goal — what should this session keep working on?", autonudgeGoal ?? "");
-              if (!goal) return;
-              const idleStr = window.prompt("Nudge after how many seconds of idle?", String(autonudgeIdleS || 120));
-              const idle_s = Math.max(30, parseInt(idleStr || "120", 10) || 120);
-              await api.setAutoNudge(sessionId, { goal, idle_s, reset_iterations: true });
-              setAutonudgeGoal(goal);
-              setAutonudgeIdleS(idle_s);
-            }}
-            title={
-              autonudgeGoal && autonudgeIdleS > 0
-                ? `AutoNudge ON · every ${autonudgeIdleS}s · "${autonudgeGoal}" — click to disable`
-                : "AutoNudge — keep this session working toward a goal when idle"
-            }
-            className={[
-              "text-[12px] px-2 py-1 rounded-lg flex items-center gap-1",
-              autonudgeGoal && autonudgeIdleS > 0
-                ? "text-amber-400 bg-amber-400/10 hover:bg-amber-400/20"
-                : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--bg)]",
-            ].join(" ")}
-          >
-            <Zap size={12} />
-            {autonudgeGoal && autonudgeIdleS > 0 ? "Auto ON" : "Auto"}
-          </button>
           <ExportMenu sessionId={sessionId} />
           {onToggleActivity && (
             <button
               onClick={onToggleActivity}
               title="Toggle activity pane"
               className={[
-                "text-[12px] px-2 py-1 rounded-lg transition-colors",
+                "flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] transition-colors",
                 activityOpen
-                  ? "bg-[var(--cedar)]/20 text-[var(--cedar)]"
-                  : "text-[var(--muted)] hover:text-[var(--text)]",
+                  ? "border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)]"
+                  : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
               ].join(" ")}
             >
-              ⚡ Activity
+              <ActivityIcon size={12} />
+              Activity
             </button>
           )}
+          <MoreMenu
+            sessionId={sessionId}
+            autonudgeGoal={autonudgeGoal}
+            autonudgeIdleS={autonudgeIdleS}
+            onForked={(id) => onSessionForked?.(id)}
+            onAutonudgeChange={(goal, idle_s) => {
+              setAutonudgeGoal(goal);
+              setAutonudgeIdleS(idle_s);
+            }}
+          />
         </div>
       </div>
 

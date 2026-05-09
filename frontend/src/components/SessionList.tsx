@@ -1,9 +1,29 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Trash2, Palette } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Trash2,
+  Folder as FolderIcon,
+  FolderPlus,
+} from "lucide-react";
+import * as LucideIcons from "lucide-react";
 import { api } from "@/api/client";
 import type { SearchHit, SessionSummary } from "@/api/client";
 
-const SESSION_COLORS = ["#2d6a4f", "#5b6a2d", "#6a2d5b", "#2d5b6a", "#6a4f2d", "#4f2d6a"];
+export interface FolderItem {
+  id: string;
+  name: string;
+  icon: string;
+  session_ids: string[];
+  created_at: number;
+}
+
+function renderFolderIcon(name: string, size = 13) {
+  const Comp =
+    (LucideIcons as unknown as Record<string, React.ComponentType<{ size?: number }>>)[name] ||
+    FolderIcon;
+  return <Comp size={size} />;
+}
 
 interface ProviderBadge {
   label: string;
@@ -87,34 +107,71 @@ export default function SessionList({
   onResume,
 }: Props) {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
-  const [colorPickerFor, setColorPickerFor] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SessionSummary[] | null>(null);
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
-  const [colorMap, setColorMap] = useState<Record<string, number | null>>({});
   const [history, setHistory] = useState<SessionSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyHoveredId, setHistoryHoveredId] = useState<string | null>(null);
+  const [folders, setFolders] = useState<FolderItem[]>([]);
+  const [openFolders, setOpenFolders] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("arz:folders-open");
+      return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
+  const [movingSession, setMovingSession] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Refetch history only when a session is removed from the active list
-  // (the typical event that grows history). New sessions don't move into
-  // history, and rerendering shouldn't refetch — coupling to the array
-  // reference would refire on every state update for zero benefit.
   const activeSessionCount = sessions.length;
   useEffect(() => {
     api.fetchHistory().then(setHistory).catch(() => {});
   }, [activeSessionCount]);
 
-  const handleSetColor = (id: string, color: number | null) => {
-    setColorMap((prev) => ({ ...prev, [id]: color }));
-    api.setSessionColor(id, color).catch(() => {});
+  const refreshFolders = () => api.listFolders().then(setFolders).catch(() => {});
+  useEffect(() => { refreshFolders(); }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("arz:folders-open", JSON.stringify([...openFolders])); } catch {}
+  }, [openFolders]);
+
+  const toggleFolderOpen = (id: string) => {
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   };
 
-  const getColor = (session: SessionSummary): number | null => {
-    if (session.id in colorMap) return colorMap[session.id];
-    return session.color ?? null;
+  const createFolder = async () => {
+    const name = window.prompt("Folder name (LLM picks the icon):");
+    if (!name?.trim()) return;
+    try {
+      await api.createFolder(name.trim());
+      await refreshFolders();
+    } catch (e) {
+      alert(`Folder create failed: ${e}`);
+    }
   };
+
+  const deleteFolder = async (id: string) => {
+    if (!confirm("Delete this folder? Sessions inside it move back to the unfiled list.")) return;
+    try { await api.deleteFolder(id); await refreshFolders(); } catch {}
+  };
+
+  const moveToFolder = async (sessionId: string, folderId: string | null) => {
+    try {
+      await api.moveSessionToFolder(sessionId, folderId);
+      await refreshFolders();
+    } catch {}
+    setMovingSession(null);
+  };
+
+  // Fast lookup of which folder a session belongs to.
+  const sessionFolderMap: Record<string, string> = {};
+  for (const f of folders) {
+    for (const sid of f.session_ids) sessionFolderMap[sid] = f.id;
+  }
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -268,140 +325,96 @@ export default function SessionList({
             {query ? "No results." : "No sessions yet."}
           </p>
         )}
-        {displayed.map((s) => {
-          const isActive = s.id === activeId;
-          const isPinned = pinnedIds.has(s.id);
-          const isHovered = hoveredId === s.id;
-          const colorIdx = getColor(s);
-          const badge = providerBadge(s.provider, globalProvider);
-          const hits = hitsBySession?.[s.id];
+        {/* Folders — render first (open ones expand to show their sessions) */}
+        {!query && folders.map((f) => {
+          const isOpen = openFolders.has(f.id);
+          const folderSessions = displayed.filter((s) => sessionFolderMap[s.id] === f.id);
           return (
-            <div
-              key={s.id}
-              className={[
-                "group relative flex flex-col pr-1 transition-colors",
-                isActive ? "bg-[var(--user-bg)]" : "hover:bg-[var(--border)]",
-              ].join(" ")}
-              style={colorIdx != null && !isActive ? { backgroundColor: SESSION_COLORS[colorIdx] + "22" } : undefined}
-              onMouseEnter={() => setHoveredId(s.id)}
-              onMouseLeave={() => setHoveredId(null)}
-            >
-              <div className="flex items-center">
+            <div key={f.id} className="border-b border-[var(--hairline)]">
+              <div
+                className="group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-[var(--s2)]"
+                onClick={() => toggleFolderOpen(f.id)}
+              >
+                {isOpen ? <ChevronDown size={11} className="text-[var(--muted)]" /> : <ChevronRight size={11} className="text-[var(--muted)]" />}
+                <span className="text-[var(--cedar-glow)]">{renderFolderIcon(f.icon)}</span>
+                <span className="text-[12.5px] text-[var(--text)] truncate flex-1">{f.name}</span>
+                <span className="text-[10px] font-mono text-[var(--muted)]">{folderSessions.length}</span>
                 <button
-                  onClick={() => onSelect(s.id)}
-                  className={[
-                    "flex-1 text-left px-4 py-2.5 text-[13px] truncate flex items-center gap-1.5",
-                    isActive ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]",
-                  ].join(" ")}
+                  onClick={(e) => { e.stopPropagation(); deleteFolder(f.id); }}
+                  title="Delete folder"
+                  className="opacity-0 group-hover:opacity-100 w-5 h-5 flex items-center justify-center rounded text-[var(--muted)] hover:text-red-400"
                 >
-                  {isPinned && (
-                    <span className="text-[10px] text-[var(--accent)]">●</span>
-                  )}
-                  {s.streaming && (
-                    <span
-                      title="Generating reply…"
-                      className="shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse"
-                      aria-label="streaming"
-                    />
-                  )}
-                  <span className="truncate flex-1">{s.title}</span>
-                  {hits && hits.length > 1 && (
-                    <span className="shrink-0 text-[9px] text-[var(--accent)] font-mono">
-                      {hits.length}
-                    </span>
-                  )}
-                  <span className={[
-                    "shrink-0 text-[9px] px-1.5 py-0.5 rounded font-medium",
-                    badge.className,
-                  ].join(" ")}>
-                    {badge.label}
-                  </span>
+                  <Trash2 size={10} />
                 </button>
-
-                {/* Action buttons — visible on hover */}
-                {isHovered && (
-                  <div className="flex items-center gap-0.5 shrink-0 pr-1">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onTogglePin(s.id); }}
-                      title={isPinned ? "Unpin" : "Pin to top"}
-                      className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--border)] transition-colors"
-                    >
-                      {isPinned ? "★" : "☆"}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setColorPickerFor((prev) => (prev === s.id ? null : s.id));
-                      }}
-                      title="Color"
-                      className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)] transition-colors"
-                    >
-                      <Palette size={11} />
-                    </button>
-                    {onArchive && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onArchive(s.id, true); }}
-                        title="Archive (move to History)"
-                        className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)] transition-colors"
-                      >
-                        ⌄
-                      </button>
-                    )}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onDelete(s.id); }}
-                      title="Close session"
-                      className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-red-400 hover:bg-[var(--border)] transition-colors"
-                    >
-                      ×
-                    </button>
-                  </div>
-                )}
               </div>
-
-              {hits && hits[0] && (
-                <div
-                  onClick={() => onSelect(s.id)}
-                  className="px-4 pb-1.5 -mt-1 text-[11px] text-[var(--muted)] truncate cursor-pointer"
-                  title={`${hits[0].role}: ${hits[0].snippet.replace(/<\/?mark>/g, "")}`}
-                >
-                  {renderSnippet(hits[0].snippet)}
-                </div>
-              )}
-
-              {colorPickerFor === s.id && (
-                <div className="flex items-center gap-1 px-4 pb-1.5">
-                  {[0, 1, 2, 3, 4, 5].map((idx) => (
-                    <button
-                      key={idx}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const newColor = colorIdx === idx ? null : idx;
-                        handleSetColor(s.id, newColor);
-                      }}
-                      title={`Color ${idx + 1}`}
-                      className={[
-                        "w-3.5 h-3.5 rounded-full transition-opacity",
-                        colorIdx === idx ? "opacity-100 ring-1 ring-[var(--text)]" : "opacity-70 hover:opacity-100",
-                      ].join(" ")}
-                      style={{ backgroundColor: SESSION_COLORS[idx] }}
-                    />
-                  ))}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSetColor(s.id, null);
-                      setColorPickerFor(null);
-                    }}
-                    title="Clear color"
-                    className="w-3.5 h-3.5 flex items-center justify-center text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-                  >
-                    ✕
-                  </button>
-                </div>
-              )}
+              {isOpen && folderSessions.map((s) => (
+                <SessionRow
+                  key={s.id}
+                  s={s}
+                  isActive={s.id === activeId}
+                  isPinned={pinnedIds.has(s.id)}
+                  isHovered={hoveredId === s.id}
+                  badge={providerBadge(s.provider, globalProvider)}
+                  hits={hitsBySession?.[s.id]}
+                  onSelect={() => onSelect(s.id)}
+                  onTogglePin={() => onTogglePin(s.id)}
+                  onArchive={onArchive ? () => onArchive(s.id, true) : undefined}
+                  onDelete={() => onDelete(s.id)}
+                  onMoveToFolder={() => setMovingSession(movingSession === s.id ? null : s.id)}
+                  onMouseEnter={() => setHoveredId(s.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  indent
+                  movingTarget={movingSession === s.id}
+                  folders={folders}
+                  currentFolderId={f.id}
+                  pickFolder={(fid) => moveToFolder(s.id, fid)}
+                />
+              ))}
             </div>
           );
         })}
+
+        {/* Sessions not in any folder */}
+        {displayed.filter((s) => !sessionFolderMap[s.id]).map((s) => {
+          const isActive = s.id === activeId;
+          const isPinned = pinnedIds.has(s.id);
+          const isHovered = hoveredId === s.id;
+          const badge = providerBadge(s.provider, globalProvider);
+          const hits = hitsBySession?.[s.id];
+          return (
+            <SessionRow
+              key={s.id}
+              s={s}
+              isActive={isActive}
+              isPinned={isPinned}
+              isHovered={isHovered}
+              badge={badge}
+              hits={hits}
+              onSelect={() => onSelect(s.id)}
+              onTogglePin={() => onTogglePin(s.id)}
+              onArchive={onArchive ? () => onArchive(s.id, true) : undefined}
+              onDelete={() => onDelete(s.id)}
+              onMoveToFolder={() => setMovingSession(movingSession === s.id ? null : s.id)}
+              onMouseEnter={() => setHoveredId(s.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              movingTarget={movingSession === s.id}
+              folders={folders}
+              currentFolderId={null}
+              pickFolder={(fid) => moveToFolder(s.id, fid)}
+            />
+          );
+        })}
+
+        {/* New folder button */}
+        {!query && (
+          <button
+            onClick={createFolder}
+            className="mt-2 mx-3 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] border border-dashed border-[var(--border)]"
+          >
+            <FolderPlus size={11} />
+            New folder
+          </button>
+        )}
 
       </div>
 
@@ -491,5 +504,157 @@ export default function SessionList({
       />
       </aside>
     </>
+  );
+}
+
+// ── Single session row ────────────────────────────────────────
+function SessionRow({
+  s,
+  isActive,
+  isPinned,
+  isHovered,
+  badge,
+  hits,
+  indent,
+  movingTarget,
+  folders,
+  currentFolderId,
+  pickFolder,
+  onSelect,
+  onTogglePin,
+  onArchive,
+  onDelete,
+  onMoveToFolder,
+  onMouseEnter,
+  onMouseLeave,
+}: {
+  s: SessionSummary;
+  isActive: boolean;
+  isPinned: boolean;
+  isHovered: boolean;
+  badge: ProviderBadge;
+  hits?: SearchHit[];
+  indent?: boolean;
+  movingTarget: boolean;
+  folders: FolderItem[];
+  currentFolderId: string | null;
+  pickFolder: (folderId: string | null) => void;
+  onSelect: () => void;
+  onTogglePin: () => void;
+  onArchive?: () => void;
+  onDelete: () => void;
+  onMoveToFolder: () => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+}) {
+  return (
+    <div
+      className={[
+        "group relative flex flex-col pr-1 transition-colors",
+        isActive ? "bg-[var(--user-bg)]" : "hover:bg-[var(--s2)]",
+        indent ? "pl-3" : "",
+      ].join(" ")}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
+    >
+      <div className="flex items-center">
+        <button
+          onClick={onSelect}
+          className={[
+            "flex-1 text-left px-4 py-2.5 text-[13px] truncate flex items-center gap-1.5",
+            isActive ? "text-[var(--text)]" : "text-[var(--muted)] group-hover:text-[var(--text)]",
+          ].join(" ")}
+        >
+          {isPinned && <span className="text-[10px] text-[var(--cedar-glow)]">●</span>}
+          {s.streaming && (
+            <span
+              title="Generating reply…"
+              className="shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse"
+            />
+          )}
+          <span className="truncate flex-1">{s.title}</span>
+          {hits && hits.length > 1 && (
+            <span className="shrink-0 text-[9px] text-[var(--cedar-glow)] font-mono">{hits.length}</span>
+          )}
+          <span
+            className={[
+              "shrink-0 text-[9px] px-1.5 py-0.5 rounded font-medium",
+              badge.className,
+            ].join(" ")}
+          >
+            {badge.label}
+          </span>
+        </button>
+
+        {isHovered && (
+          <div className="flex items-center gap-0.5 shrink-0 pr-1">
+            <button
+              onClick={(e) => { e.stopPropagation(); onTogglePin(); }}
+              title={isPinned ? "Unpin" : "Pin to top"}
+              className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--cedar-glow)] hover:bg-[var(--s2)] transition-colors"
+            >
+              {isPinned ? "★" : "☆"}
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); onMoveToFolder(); }}
+              title="Move to folder"
+              className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] transition-colors"
+            >
+              <FolderIcon size={11} />
+            </button>
+            {onArchive && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onArchive(); }}
+                title="Archive"
+                className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] transition-colors"
+              >
+                ⌄
+              </button>
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              title="Close session"
+              className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-red-400 hover:bg-[var(--s2)] transition-colors"
+            >
+              ×
+            </button>
+          </div>
+        )}
+      </div>
+
+      {hits && hits[0] && (
+        <div
+          onClick={onSelect}
+          className="px-4 pb-1.5 -mt-1 text-[11px] text-[var(--muted)] truncate cursor-pointer"
+          title={`${hits[0].role}: ${hits[0].snippet.replace(/<\/?mark>/g, "")}`}
+        >
+          {renderSnippet(hits[0].snippet)}
+        </div>
+      )}
+
+      {movingTarget && (
+        <div className="px-4 pb-2 flex flex-wrap gap-1 items-center text-[10px] text-[var(--muted)]">
+          <span className="font-mono">move to:</span>
+          {currentFolderId !== null && (
+            <button
+              onClick={(e) => { e.stopPropagation(); pickFolder(null); }}
+              className="px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] hover:border-[var(--cedar-line)] text-[var(--text)]"
+            >
+              unfiled
+            </button>
+          )}
+          {folders.filter((f) => f.id !== currentFolderId).map((f) => (
+            <button
+              key={f.id}
+              onClick={(e) => { e.stopPropagation(); pickFolder(f.id); }}
+              className="px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] hover:border-[var(--cedar-line)] text-[var(--text)] flex items-center gap-1"
+            >
+              <span className="text-[var(--cedar-glow)]">{renderFolderIcon(f.icon, 10)}</span>
+              {f.name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

@@ -784,6 +784,28 @@ export const api = {
     });
   },
 
+  // Folders — group sessions under named buckets, icons LLM-picked.
+  listFolders: () =>
+    request<{ id: string; name: string; icon: string; session_ids: string[]; created_at: number }[]>("/folders"),
+  createFolder: (name: string) =>
+    request<{ id: string; name: string; icon: string; session_ids: string[]; created_at: number }>("/folders", {
+      method: "POST",
+      body: JSON.stringify({ name }),
+    }),
+  updateFolder: (id: string, patch: { name?: string; icon?: string }) =>
+    request<{ id: string; name: string; icon: string; session_ids: string[]; created_at: number }>(`/folders/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+  deleteFolder: async (id: string): Promise<void> => {
+    await fetch(`${BASE}/folders/${encodeURIComponent(id)}`, { method: "DELETE" });
+  },
+  moveSessionToFolder: (sessionId: string, folderId: string | null) =>
+    request<{ ok: boolean }>("/folders/move", {
+      method: "POST",
+      body: JSON.stringify({ session_id: sessionId, folder_id: folderId }),
+    }),
+
   listActionItems: () => request<ActionItem[]>("/action-items"),
   createActionItem: (text: string) =>
     request<ActionItem>("/action-items", {

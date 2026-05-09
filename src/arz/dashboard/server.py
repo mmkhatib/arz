@@ -28,6 +28,7 @@ from arz.dashboard.routes.compare import router as compare_router
 from arz.dashboard.routes.consolidator import router as consolidator_router
 from arz.dashboard.routes.cron import router as cron_router
 from arz.dashboard.routes.files import router as files_router
+from arz.dashboard.routes.folders import router as folders_router
 from arz.dashboard.routes.health import router as health_router
 from arz.dashboard.routes.heartbeat import router as heartbeat_router
 from arz.dashboard.routes.hooks import router as hooks_router
@@ -266,7 +267,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.3.6", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.4.0", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -473,6 +474,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(installer_router)
     app.include_router(consolidator_router)
     app.include_router(action_items_router)
+    app.include_router(folders_router)
 
     if _STATIC_DIR.exists():
         # SPA fallback: any non-/api path that doesn't match a real file
