@@ -50,13 +50,29 @@ export interface ToolEntry {
   time: string;
 }
 
-function ToolEntryCard({ entry, isLast, isActive }: { entry: ToolEntry; isLast: boolean; isActive: boolean }) {
+function ToolEntryCard({
+  entry,
+  isLast,
+  isActive,
+  onOpenFile,
+}: {
+  entry: ToolEntry;
+  isLast: boolean;
+  isActive: boolean;
+  onOpenFile?: (path: string) => void;
+}) {
   const inputText = useStreamText(entry.input || "");
   const outputText = useStreamText(entry.result || "");
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const expanded = manualOpen !== null ? manualOpen : isLast;
   const wasLast = useRef(isLast);
   const wasActive = useRef(isActive);
+  const filePath = useMemo(() => {
+    try {
+      const obj = JSON.parse(entry.input);
+      return (obj?.file_path || obj?.path || obj?.filename || obj?.target_file) ?? null;
+    } catch { return null; }
+  }, [entry.input]);
 
   useEffect(() => {
     if (wasLast.current && !isLast) { const t = setTimeout(() => setManualOpen(false), 2000); return () => clearTimeout(t); }
@@ -77,6 +93,15 @@ function ToolEntryCard({ entry, isLast, isActive }: { entry: ToolEntry; isLast: 
       <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-[var(--bg)] transition-colors" onClick={() => setManualOpen(!expanded)}>
         <Wrench size={12} className="text-amber-400 shrink-0" />
         <span className="text-[13px] text-[var(--text)] truncate flex-1">{entry.name}</span>
+        {filePath && onOpenFile && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenFile(filePath); }}
+            title={`Open ${filePath}`}
+            className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--cedar-dim)] text-[var(--cedar-glow)] hover:bg-[var(--cedar-line)] shrink-0"
+          >
+            open
+          </button>
+        )}
         {isActive ? <span className="w-2 h-2 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" /> : <span className="text-[10px] text-green-400 shrink-0">✓</span>}
         <span className="text-[10px] text-[var(--muted)]/60 font-mono shrink-0">{entry.time}</span>
         <span className="text-[12px] text-[var(--muted)] bg-[var(--bg)] px-1 rounded shrink-0">{expanded ? "▾" : "▸"}</span>
@@ -498,7 +523,15 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
                 ) : (
                   [...toolEntries].reverse().map((entry, ri) => {
                     const origIdx = toolEntries.length - 1 - ri;
-                    return <ToolEntryCard key={entry.callId + ri} entry={entry} isLast={origIdx === lastToolIdx} isActive={origIdx === activeIdx} />;
+                    return (
+                      <ToolEntryCard
+                        key={entry.callId + ri}
+                        entry={entry}
+                        isLast={origIdx === lastToolIdx}
+                        isActive={origIdx === activeIdx}
+                        onOpenFile={(p) => { setTab("files"); setSelectedFile(p); }}
+                      />
+                    );
                   })
                 )
               )}

@@ -1,16 +1,80 @@
 import { useMemo, useEffect, useRef, useState } from "react";
 import type { ToolEntry } from "@/components/ActivityPane";
 
-const FILE_TOOLS = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"]);
+// Tools across providers that touch files. Lenient list — claude-code,
+// kiro, codex, gemini, ollama, anthropic SDK all use slightly different
+// names. Anything that looks like a file op gets in.
+const FILE_TOOLS = new Set([
+  // Claude Code
+  "Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Glob", "Grep",
+  // Kiro / Codex / generic
+  "read_file", "write_file", "edit_file", "create_file",
+  "view_file", "view", "list_files", "file_search",
+  "str_replace_editor", "str_replace_based_edit_tool", "str_replace",
+  "write_to_file", "apply_patch",
+  // Anthropic computer-use / common shapes
+  "open_file", "save_file", "create",
+]);
 
+// Keys that commonly hold the file path inside a tool input JSON.
+const PATH_KEYS = [
+  "file_path", "path", "filepath", "filename", "file",
+  "target_file", "source_file", "notebook_path",
+  "pattern", // Glob/Grep
+  "uri",
+];
+
+// Try hard to extract a usable path from a tool's input. Accepts JSON,
+// quoted JSON-strings, or plain text with a path token.
 function extractPath(toolName: string, toolInput: string): string | null {
-  if (!FILE_TOOLS.has(toolName)) return null;
+  if (!toolName || !toolInput) return null;
+  const lower = toolName.toLowerCase();
+  const looksLikeFileTool =
+    FILE_TOOLS.has(toolName) ||
+    /file|read|write|edit|view|notebook/.test(lower);
+  if (!looksLikeFileTool) return null;
+
+  // 1. JSON object with a known key.
   try {
     const obj = JSON.parse(toolInput);
-    return (obj.file_path || obj.path || obj.pattern || null) as string | null;
+    if (obj && typeof obj === "object") {
+      for (const k of PATH_KEYS) {
+        const v = (obj as Record<string, unknown>)[k];
+        if (typeof v === "string" && v.trim()) return v.trim();
+      }
+      // Some tools nest input under "params" or "args".
+      for (const wrap of ["params", "args", "arguments"]) {
+        const inner = (obj as Record<string, unknown>)[wrap];
+        if (inner && typeof inner === "object") {
+          for (const k of PATH_KEYS) {
+            const v = (inner as Record<string, unknown>)[k];
+            if (typeof v === "string" && v.trim()) return v.trim();
+          }
+        }
+      }
+    } else if (typeof obj === "string" && looksLikePath(obj)) {
+      return obj;
+    }
   } catch {
-    return null;
+    /* not JSON */
   }
+
+  // 2. Plain string input — may itself be a path or a quoted path.
+  const trimmed = toolInput.trim();
+  if (looksLikePath(trimmed)) return trimmed;
+
+  // 3. Find a path-looking token in the raw text (handles tool inputs
+  //    that include file paths as the first arg).
+  const m = trimmed.match(/(?:["']?)([\/\w.\-_~]*\/[\w.\-_]+\.[\w]+)(?:["']?)/);
+  if (m) return m[1];
+
+  return null;
+}
+
+function looksLikePath(s: string): boolean {
+  if (!s || s.length > 500) return false;
+  // Heuristic: contains a slash and an extension, OR is an absolute path.
+  return /^\/?[\w.\-_~/]+\.[a-z0-9]{1,8}$/i.test(s) || s.startsWith("/");
 }
 
 export interface TouchedFile {
@@ -38,22 +102,14 @@ function saveToStorage(sessionId: string, files: TouchedFile[]) {
   } catch {}
 }
 
-/**
- * Tracks files touched during a session.
- * - Persists to localStorage per session.
- * - Reloads when sessionId changes (e.g., switching sessions in the sidebar).
- * - Accepts seedPaths (from loaded message history) to pre-populate the list.
- */
 export function useTouchedFiles(
   sessionId: string,
   toolEntries: ToolEntry[],
   seedPaths?: string[],
 ): TouchedFile[] {
-  // Extra = files loaded from localStorage or seeded from history
   const [extra, setExtra] = useState<TouchedFile[]>(() => loadFromStorage(sessionId));
   const prevSessionId = useRef(sessionId);
 
-  // Reload from localStorage when sessionId changes
   useEffect(() => {
     if (sessionId !== prevSessionId.current) {
       prevSessionId.current = sessionId;
@@ -61,11 +117,9 @@ export function useTouchedFiles(
     }
   }, [sessionId]);
 
-  // Merge seed paths (from message history) into extra once, without duplicates
   const seedRef = useRef<string[]>([]);
   useEffect(() => {
     if (!seedPaths || seedPaths.length === 0) return;
-    // Only process paths we haven't seen for this session
     const newSeeds = seedPaths.filter((p) => !seedRef.current.includes(p));
     if (newSeeds.length === 0) return;
     seedRef.current = [...seedRef.current, ...newSeeds];
@@ -78,12 +132,8 @@ export function useTouchedFiles(
     });
   }, [seedPaths]);
 
-  // Reset seed tracking when sessionId changes
-  useEffect(() => {
-    seedRef.current = [];
-  }, [sessionId]);
+  useEffect(() => { seedRef.current = []; }, [sessionId]);
 
-  // Derive from live toolEntries and merge with extra
   const files = useMemo(() => {
     const extraPaths = new Set(extra.map((f) => f.path));
     const newFromTools: TouchedFile[] = [];
@@ -98,10 +148,12 @@ export function useTouchedFiles(
     return [...extra, ...newFromTools];
   }, [toolEntries, extra]);
 
-  // Persist whenever files list grows
   useEffect(() => {
     if (files.length > 0) saveToStorage(sessionId, files);
   }, [sessionId, files]);
 
   return files;
 }
+
+// Re-export so other modules can mirror seed-extraction logic.
+export { extractPath as extractPathFromToolInput, FILE_TOOLS };

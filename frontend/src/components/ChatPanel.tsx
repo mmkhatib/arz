@@ -208,6 +208,7 @@ interface Props {
   onTitleChange?: (title: string) => void;
   onSseEvent?: (type: string, summary?: string) => void;
   onSeedFiles?: (paths: string[]) => void;
+  onSeedTools?: (tools: { callId: string; name: string; input: string; result?: string; time: string; done: boolean }[]) => void;
   onFileOpen?: (path: string) => void;
   onOpenSidebar?: () => void;
   /** Counter from parent — when it changes, the input bar refocuses. */
@@ -225,6 +226,7 @@ export default function ChatPanel({
   onTitleChange,
   onSseEvent,
   onSeedFiles,
+  onSeedTools,
   onFileOpen,
   onOpenSidebar,
   focusSignal,
@@ -276,22 +278,32 @@ export default function ChatPanel({
         if (s.streaming) {
           reattachStream().catch(() => {});
         }
-        // Seed file paths from message history so the Files tab is pre-populated
-        if (onSeedFiles) {
-          const FILE_TOOL_NAMES = new Set(["Read", "Write", "Edit", "MultiEdit", "Glob", "Grep"]);
-          const paths: string[] = [];
-          const seen = new Set<string>();
-          for (const msg of s.messages) {
-            for (const tc of msg.tool_calls ?? []) {
-              if (!FILE_TOOL_NAMES.has(tc.name)) continue;
-              try {
-                const obj = JSON.parse(tc.input) as Record<string, unknown>;
-                const p = (obj.file_path || obj.path || obj.pattern) as string | undefined;
+        // Seed file paths AND tool entries from message history so the Files
+        // and Tools tabs are pre-populated even when the session was finished
+        // before the user opened the activity rail.
+        if (onSeedFiles || onSeedTools) {
+          import("@/hooks/useTouchedFiles").then(({ extractPathFromToolInput }) => {
+            const paths: string[] = [];
+            const seen = new Set<string>();
+            const tools: { callId: string; name: string; input: string; result?: string; time: string; done: boolean }[] = [];
+            let i = 0;
+            for (const msg of s.messages) {
+              for (const tc of msg.tool_calls ?? []) {
+                const p = extractPathFromToolInput(tc.name, tc.input);
                 if (p && !seen.has(p)) { seen.add(p); paths.push(p); }
-              } catch {}
+                tools.push({
+                  callId: `seed-${i++}`,
+                  name: tc.name,
+                  input: tc.input ?? "",
+                  result: (tc as { result?: string }).result,
+                  time: new Date(msg.created_at).toLocaleTimeString(),
+                  done: true,
+                });
+              }
             }
-          }
-          if (paths.length > 0) onSeedFiles(paths);
+            if (paths.length > 0) onSeedFiles?.(paths);
+            if (tools.length > 0) onSeedTools?.(tools);
+          });
         }
       })
       .catch((e: Error) => setError(e.message));

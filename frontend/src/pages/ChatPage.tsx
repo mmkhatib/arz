@@ -125,15 +125,20 @@ export default function ChatPage() {
 
   // On session switch: load persisted activity from localStorage instead of clearing
   useEffect(() => {
-    setSseLog([]);
     setSeedPaths([]);
     setRequestedFile(null);
-    if (!activeId) { setToolEntries([]); return; }
+    if (!activeId) { setToolEntries([]); setSseLog([]); return; }
     try {
       const raw = localStorage.getItem(`arz:activity:${activeId}`);
       setToolEntries(raw ? (JSON.parse(raw) as ToolEntry[]) : []);
     } catch {
       setToolEntries([]);
+    }
+    try {
+      const rawSse = localStorage.getItem(`arz:sselog:${activeId}`);
+      setSseLog(rawSse ? (JSON.parse(rawSse) as SseLogEntry[]) : []);
+    } catch {
+      setSseLog([]);
     }
   }, [activeId]);
 
@@ -148,6 +153,15 @@ export default function ChatPage() {
       localStorage.setItem(`arz:activity:${activeId}`, JSON.stringify(slim));
     } catch {}
   }, [activeId, toolEntries]);
+
+  // Persist SSE log too — capped at last 200 entries to keep storage tidy.
+  useEffect(() => {
+    if (!activeId || sseLog.length === 0) return;
+    try {
+      const slim = sseLog.slice(-200);
+      localStorage.setItem(`arz:sselog:${activeId}`, JSON.stringify(slim));
+    } catch {}
+  }, [activeId, sseLog]);
 
   const handleCreate = () => {
     setShowNewSession(true);
@@ -313,6 +327,14 @@ export default function ChatPage() {
                 { type, summary, time: new Date().toLocaleTimeString() },
               ])}
               onSeedFiles={handleSeedFiles}
+              onSeedTools={(tools) =>
+                setToolEntries((prev) => {
+                  // Merge — only add seed entries we don't already have.
+                  const have = new Set(prev.map((e) => `${e.name}|${e.input}`));
+                  const fresh = tools.filter((t) => !have.has(`${t.name}|${t.input}`));
+                  return fresh.length > 0 ? [...fresh, ...prev] : prev;
+                })
+              }
               onFileOpen={handleFileOpen}
               activityOpen={activityOpen}
               onToggleActivity={() => setActivityOpen((v) => !v)}
