@@ -132,6 +132,8 @@ def gateway(
     import logging
 
     class _QuietPolling(logging.Filter):
+        # Skip GET access logs for endpoints the dashboard polls every few
+        # seconds. They drown out everything that actually matters.
         _SKIP = (
             "/api/health",
             "/api/cron",
@@ -141,10 +143,31 @@ def gateway(
             "/api/installer/status",
             "/api/chat/",  # SSE reattach + polling status
             "/api/settings",
+            "/api/channels",  # active-channel poll fires every 2s
+            "/api/projects",  # detail-page poll fires every 15s
+            "/api/folders",
+            "/api/agents",
+            "/api/action-items",
+            "/api/mcp/servers",
+            "/api/lessons",
+            "/api/memory/files",
+            "/api/tools",
+            "/api/prompts",
+            "/api/heartbeat",
+            "/api/subagents",
+            "/api/taskrun",
+            "/api/audit",
+            "/api/analytics",
+            "/api/files/read",
+            "/api/sessions/history",
         )
 
         def filter(self, record: logging.LogRecord) -> bool:
             msg = record.getMessage()
+            # Only quiet GETs — POST/PATCH/DELETE always log so the
+            # important state-changing requests stay visible.
+            if ' "GET ' not in msg:
+                return True
             return not any(p in msg for p in self._SKIP)
 
     logging.getLogger("uvicorn.access").addFilter(_QuietPolling())

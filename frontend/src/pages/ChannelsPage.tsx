@@ -31,6 +31,7 @@ import {
   Archive,
   Layers,
   UserPlus,
+  FolderOpen,
 } from "lucide-react";
 import { api, type ProjectSummary, type ProjectTask } from "@/api/client";
 import {
@@ -87,6 +88,7 @@ export default function ChannelsPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const feedRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const prevArchivedCount = useRef(0);
 
   // Per-message expand state. Default: collapsed unless the message
   // is from the current user. expandAll toggles all bubbles open.
@@ -191,6 +193,16 @@ export default function ChannelsPage() {
 
   const activeChannels = channels.filter((c) => c.status !== "dismissed");
   const archivedChannels = channels.filter((c) => c.status === "dismissed");
+
+  // Auto-open the History drawer the first time the archive count grows
+  // — keeps a freshly-closed channel discoverable without the user
+  // hunting for the toggle.
+  useEffect(() => {
+    if (archivedChannels.length > prevArchivedCount.current) {
+      setHistoryOpen(true);
+    }
+    prevArchivedCount.current = archivedChannels.length;
+  }, [archivedChannels.length]);
 
   const allMsgIds = useMemo(() => active?.messages.map((m) => m.id) ?? [], [active]);
   const toggleExpand = (id: number) => {
@@ -332,6 +344,28 @@ export default function ChannelsPage() {
                   >
                     {expandAll ? "Collapse all" : "Expand all"}
                   </Btn>
+                  {linkedProject?.repo_path && (
+                    <Btn
+                      size="sm"
+                      kind="outline"
+                      icon={<FolderOpen size={11} />}
+                      onClick={() => {
+                        // Open the folder via file:// — works on most desktops.
+                        // Fall back to copying the path so the user always has
+                        // a way to reach it.
+                        const path = linkedProject.repo_path;
+                        try {
+                          window.open(`file://${path}`, "_blank");
+                        } catch {
+                          /* ignore */
+                        }
+                        navigator.clipboard?.writeText(path).catch(() => {});
+                      }}
+                      title={`Project folder: ${linkedProject.repo_path} — opens in OS, also copied to clipboard`}
+                    >
+                      Folder
+                    </Btn>
+                  )}
                   <Btn
                     size="sm"
                     kind="outline"
@@ -622,52 +656,58 @@ function ChannelNav({
         ))}
       </div>
 
-      {/* History drawer — pinned to bottom */}
-      {archivedChannels.length > 0 && (
-        <div
+      {/* History drawer — always visible at the bottom of the rail so
+          closed channels are findable even when the count is currently
+          zero. Header stays pinned; rows scroll inside when expanded. */}
+      <div
+        style={{
+          borderTop: "1px solid var(--border)",
+          display: "flex",
+          flexDirection: "column",
+          maxHeight: historyOpen && archivedChannels.length > 0 ? "40%" : undefined,
+          minHeight: 0,
+          flexShrink: 0,
+        }}
+      >
+        <button
+          onClick={onToggleHistory}
+          disabled={archivedChannels.length === 0}
           style={{
-            borderTop: "1px solid var(--border)",
+            all: "unset",
+            cursor: archivedChannels.length === 0 ? "default" : "pointer",
             display: "flex",
-            flexDirection: "column",
-            maxHeight: historyOpen ? "40%" : undefined,
-            minHeight: 0,
-            flexShrink: 0,
+            alignItems: "center",
+            gap: 6,
+            padding: "10px 14px",
+            fontSize: 11,
+            color: archivedChannels.length === 0 ? "var(--muted)" : "var(--text2)",
+            textTransform: "uppercase",
+            letterSpacing: ".1em",
+            fontFamily: "var(--fm)",
+            opacity: archivedChannels.length === 0 ? 0.6 : 1,
           }}
         >
-          <button
-            onClick={onToggleHistory}
-            style={{
-              all: "unset",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "10px 14px",
-              fontSize: 11,
-              color: "var(--muted)",
-              textTransform: "uppercase",
-              letterSpacing: ".1em",
-              fontFamily: "var(--fm)",
-            }}
-          >
-            {historyOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-            History ({archivedChannels.length})
-          </button>
-          {historyOpen && (
-            <div style={{ overflowY: "auto", flex: 1 }}>
-              {archivedChannels.map((c) => (
-                <ChannelRow
-                  key={c.id}
-                  c={c}
-                  active={c.id === activeId}
-                  onPick={() => onPick(c.id)}
-                  archived
-                />
-              ))}
-            </div>
+          {historyOpen && archivedChannels.length > 0 ? (
+            <ChevronDown size={11} />
+          ) : (
+            <ChevronRight size={11} />
           )}
-        </div>
-      )}
+          History ({archivedChannels.length})
+        </button>
+        {historyOpen && archivedChannels.length > 0 && (
+          <div style={{ overflowY: "auto", flex: 1 }}>
+            {archivedChannels.map((c) => (
+              <ChannelRow
+                key={c.id}
+                c={c}
+                active={c.id === activeId}
+                onPick={() => onPick(c.id)}
+                archived
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </aside>
   );
 }
