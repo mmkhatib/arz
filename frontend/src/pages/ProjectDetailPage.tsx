@@ -2,7 +2,7 @@
 // Buttons let the user edit the project (in a Cedar modal) and kick
 // off the orchestrator on a tied channel.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -67,6 +67,7 @@ export default function ProjectDetailPage() {
   const [kickoffBusy, setKickoffBusy] = useState(false);
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const lastTickRef = useRef<number>(Date.now());
 
   const refresh = async () => {
     if (!id) return;
@@ -80,10 +81,21 @@ export default function ProjectDetailPage() {
 
   useEffect(() => {
     refresh();
-    const t = setInterval(refresh, 15_000);
-    return () => clearInterval(t);
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const terminal = project && ["done", "blocked", "failed"].includes(project.status);
+      const due = (Date.now() - lastTickRef.current) >= (terminal ? 60_000 : 20_000);
+      if (due) {
+        lastTickRef.current = Date.now();
+        refresh();
+      }
+    };
+    const t = setInterval(tick, 5_000);
+    const onVis = () => { if (!document.hidden) { lastTickRef.current = Date.now(); refresh(); } };
+    document.addEventListener("visibilitychange", onVis);
+    return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, [id, project?.status]);
 
   if (!project) {
     return (

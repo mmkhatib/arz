@@ -58,8 +58,19 @@ _STATIC_DIR = Path(__file__).parent.parent / "static"
 
 
 def _spawn_cron_run(app: FastAPI, entry: CronEntry) -> None:
-    """Schedule an async cron run on the running event loop."""
-    asyncio.create_task(_run_cron_entry(app, entry))
+    """Schedule an async cron run on the gateway event loop.
+
+    APScheduler fires us from a worker thread that has no running loop,
+    so we hand the coroutine to the loop captured at startup via
+    ``run_coroutine_threadsafe``. If startup hasn't captured one yet,
+    fall back to a fresh thread-local loop.
+    """
+    loop = getattr(app.state, "event_loop", None)
+    coro = _run_cron_entry(app, entry)
+    if loop is not None and loop.is_running():
+        asyncio.run_coroutine_threadsafe(coro, loop)
+    else:
+        asyncio.run(coro)
 
 
 async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
@@ -193,6 +204,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             app.state.yolo_sessions.add(s.id)
     indexed = app.state.search_index.rebuild(app.state.session_manager)
     log.info("Search index ready", sessions=indexed)
+    app.state.event_loop = asyncio.get_running_loop()
     app.state.cron_registry.start()
     log.info("Cron scheduler started")
     try:
@@ -268,7 +280,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.4", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.5", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
