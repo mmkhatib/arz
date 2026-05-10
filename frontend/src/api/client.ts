@@ -206,6 +206,7 @@ export interface ProjectSummary {
   channel_id: string | null;
   tasks: ProjectTask[];
   open_tasks: number;
+  success_criteria: string[];
   created_at: number;
   updated_at: number;
   autopilot_idle_s: number;
@@ -823,6 +824,12 @@ export const api = {
   },
 
   // Folders — group sessions under named buckets, icons LLM-picked.
+  kickoffProject: (id: string, body?: { members?: string[]; initial_message?: string }) =>
+    request<{ project_id: string; channel_id: string }>(
+      `/projects/${encodeURIComponent(id)}/kickoff`,
+      { method: "POST", body: JSON.stringify(body || {}) },
+    ),
+
   draftProjectIntake: (body: {
     goal: string;
     folder?: string;

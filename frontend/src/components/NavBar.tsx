@@ -188,7 +188,7 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
         >
           <Keyboard size={14} />
         </button>
-        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.5.3</span>}
+        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.6.0</span>}
       </div>
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
     </nav>

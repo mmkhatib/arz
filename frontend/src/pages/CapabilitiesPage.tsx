@@ -1,12 +1,16 @@
 // Capabilities — MCP servers, prompts, builtin tools.
 // Tabs across the top, then content.
 
-import { useEffect, useState } from "react";
-import { Wrench, Sparkles, Server } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Wrench, Sparkles, Server, Plus, Loader2 } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
+  CedarModal,
+  CedarInput,
+  CedarTextArea,
+  CedarLabel,
   Btn,
   Tag,
   SegSeg,
@@ -22,11 +26,15 @@ export default function CapabilitiesPage() {
   const [mcps, setMcps] = useState<McpServer[]>([]);
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
   const [tools, setTools] = useState<ToolView[]>([]);
+  const [showInstall, setShowInstall] = useState(false);
+
+  const refreshMcps = () => api.listMcpServers().then(setMcps).catch(() => {});
 
   useEffect(() => {
-    api.listMcpServers().then(setMcps).catch(() => {});
+    refreshMcps();
     api.listPrompts().then(setPrompts).catch(() => {});
     api.listTools().then(setTools).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -42,30 +50,67 @@ export default function CapabilitiesPage() {
           }
           sub={`${mcps.length} MCP servers · ${prompts.length} saved prompts · ${tools.length} builtin tools`}
           right={
-            <SegSeg<Tab>
-              value={tab}
-              onChange={setTab}
-              options={[
-                { value: "mcp", label: "MCP" },
-                { value: "prompts", label: "Prompts" },
-                { value: "tools", label: "Tools" },
-              ]}
-            />
+            <>
+              <SegSeg<Tab>
+                value={tab}
+                onChange={setTab}
+                options={[
+                  { value: "mcp", label: "MCP" },
+                  { value: "prompts", label: "Prompts" },
+                  { value: "tools", label: "Tools" },
+                ]}
+              />
+              {tab === "mcp" && (
+                <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowInstall(true)}>
+                  Install MCP
+                </Btn>
+              )}
+            </>
           }
         />
       </div>
       <div style={{ padding: "24px 32px 32px" }}>
-        {tab === "mcp" && <McpView mcps={mcps} setMcps={setMcps} />}
+        {tab === "mcp" && (
+          <McpView mcps={mcps} setMcps={setMcps} onAdd={() => setShowInstall(true)} />
+        )}
         {tab === "prompts" && <PromptsView prompts={prompts} setPrompts={setPrompts} />}
         {tab === "tools" && <ToolsView tools={tools} />}
       </div>
+      <InstallMcpModal
+        open={showInstall}
+        onClose={() => setShowInstall(false)}
+        onInstalled={() => { refreshMcps(); }}
+      />
     </CedarPage>
   );
 }
 
-function McpView({ mcps, setMcps }: { mcps: McpServer[]; setMcps: (m: McpServer[]) => void }) {
+function McpView({
+  mcps,
+  setMcps,
+  onAdd,
+}: {
+  mcps: McpServer[];
+  setMcps: (m: McpServer[]) => void;
+  onAdd: () => void;
+}) {
   if (mcps.length === 0) {
-    return <Empty title="No MCP servers" sub="Configure servers in ~/.claude/.mcp.json or ~/.kiro/mcp.json." icon={<Server size={28} />} />;
+    return (
+      <CedarCard padding={48}>
+        <div style={{ textAlign: "center", color: "var(--muted)" }}>
+          <Server size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
+            No MCP servers yet.
+          </div>
+          <div style={{ fontSize: 13, marginTop: 8, marginBottom: 14 }}>
+            Install one from a git URL, an npm package, or a local path.
+          </div>
+          <Btn kind="solid" icon={<Plus size={13} />} onClick={onAdd}>
+            Install MCP
+          </Btn>
+        </div>
+      </CedarCard>
+    );
   }
   const grouped: Record<string, McpServer[]> = {};
   for (const m of mcps) (grouped[m.source] ||= []).push(m);
@@ -310,5 +355,217 @@ function Empty({ title, sub, icon }: { title: string; sub: string; icon: React.R
         <div style={{ fontSize: 13, marginTop: 8 }}>{sub}</div>
       </div>
     </CedarCard>
+  );
+}
+
+// ── Install MCP modal ────────────────────────────────────────
+function InstallMcpModal({
+  open,
+  onClose,
+  onInstalled,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onInstalled: () => void;
+}) {
+  const [source, setSource] = useState("");
+  const [command, setCommand] = useState("");
+  const [args, setArgs] = useState("");
+  const [env, setEnv] = useState("");
+  const [installing, setInstalling] = useState(false);
+  const [log, setLog] = useState("");
+  const [done, setDone] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setSource("");
+      setCommand("");
+      setArgs("");
+      setEnv("");
+      setInstalling(false);
+      setLog("");
+      setDone(false);
+      abortRef.current?.abort();
+      abortRef.current = null;
+    }
+  }, [open]);
+
+  const start = async () => {
+    const src = source.trim();
+    if (!src) {
+      setLog("error: source required\n");
+      return;
+    }
+    let envObj: Record<string, string> = {};
+    if (env.trim()) {
+      try {
+        envObj = JSON.parse(env);
+        if (typeof envObj !== "object" || Array.isArray(envObj)) throw new Error("env must be a JSON object");
+      } catch (e) {
+        setLog(`error parsing env JSON: ${e}\n`);
+        return;
+      }
+    }
+    setInstalling(true);
+    setDone(false);
+    setLog(`$ install ${src}\n\n`);
+    abortRef.current?.abort();
+    abortRef.current = new AbortController();
+    try {
+      const res = await api.installMcp(
+        {
+          source: src,
+          command: command.trim() || undefined,
+          args: args.trim() ? args.split(/\s+/) : undefined,
+          env: envObj,
+        },
+        abortRef.current.signal,
+      );
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        setLog((l) => l + `\nerror: ${res.status} ${txt}\n`);
+        return;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) return;
+      const decoder = new TextDecoder();
+      while (true) {
+        const { value, done: rdone } = await reader.read();
+        if (rdone) break;
+        setLog((l) => l + decoder.decode(value, { stream: true }));
+      }
+      setDone(true);
+      onInstalled();
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") {
+        setLog((l) => l + `\nerror: ${e}\n`);
+      }
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const cancel = () => {
+    abortRef.current?.abort();
+    setInstalling(false);
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      width={680}
+      eyebrow="install mcp"
+      title={
+        <>
+          Pull in a new <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>MCP server</em>.
+        </>
+      }
+      footer={
+        <>
+          {installing ? (
+            <Btn kind="danger" onClick={cancel}>Cancel install</Btn>
+          ) : (
+            <Btn kind="ghost" onClick={onClose}>{done ? "Close" : "Cancel"}</Btn>
+          )}
+          {!done && (
+            <Btn kind="solid" onClick={start} disabled={installing || !source.trim()}>
+              {installing ? (
+                <>
+                  <Loader2 size={11} className="animate-spin" /> Installing…
+                </>
+              ) : (
+                "Install"
+              )}
+            </Btn>
+          )}
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Source</CedarLabel>
+          <CedarInput
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            placeholder="https://github.com/owner/repo  •  npm:@scope/pkg  •  /abs/path"
+            autoFocus
+            disabled={installing}
+          />
+          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+            Git URL clones + installs deps · npm: installs globally · local path is registered as-is.
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <div>
+            <CedarLabel>Launch command (optional)</CedarLabel>
+            <CedarInput
+              value={command}
+              onChange={(e) => setCommand(e.target.value)}
+              placeholder="npx · uv · python · …"
+              disabled={installing}
+            />
+          </div>
+          <div>
+            <CedarLabel>Args (space separated)</CedarLabel>
+            <CedarInput
+              value={args}
+              onChange={(e) => setArgs(e.target.value)}
+              placeholder="-y @owner/server"
+              disabled={installing}
+            />
+          </div>
+        </div>
+        <div>
+          <CedarLabel>Env (JSON object, optional)</CedarLabel>
+          <CedarTextArea
+            value={env}
+            onChange={(e) => setEnv(e.target.value)}
+            placeholder='{"GITHUB_TOKEN": "ghp_…"}'
+            rows={3}
+            style={{ fontFamily: "var(--fm)", fontSize: 12 }}
+            disabled={installing}
+          />
+        </div>
+        {log && (
+          <div>
+            <CedarLabel>Output</CedarLabel>
+            <pre
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: "10px 12px",
+                fontFamily: "var(--fm)",
+                fontSize: 11.5,
+                color: "var(--text2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                maxHeight: 280,
+                overflowY: "auto",
+                margin: 0,
+              }}
+            >
+              {log}
+            </pre>
+          </div>
+        )}
+        {done && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--cedar-glow)",
+              background: "var(--cedar-dim)",
+              border: "1px solid var(--cedar-line)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            ✓ Server installed and registered. It will appear in the MCP list.
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }

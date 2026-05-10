@@ -48,6 +48,8 @@ class Project:
     tasks: list[Task] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
+    # PM-drafted, user-editable success criteria
+    success_criteria: list[str] = field(default_factory=list)
     # Walk-away mode config
     autopilot_idle_s: int = 0  # 0 = disabled
     autopilot_max_iterations: int = 50

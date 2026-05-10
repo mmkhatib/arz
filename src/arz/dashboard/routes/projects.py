@@ -36,6 +36,7 @@ def _project_to_dict(p: Project) -> dict:
         "channel_id": p.channel_id,
         "tasks": [asdict(t) for t in p.tasks],
         "open_tasks": p.open_tasks(),
+        "success_criteria": list(p.success_criteria),
         "created_at": p.created_at,
         "updated_at": p.updated_at,
         "autopilot_idle_s": p.autopilot_idle_s,
@@ -54,6 +55,7 @@ class CreateBody(BaseModel):
     brief: str = ""
     repo_path: str = ""
     channel_id: str | None = None
+    success_criteria: list[str] = []
 
 
 class PatchBody(BaseModel):
@@ -62,6 +64,7 @@ class PatchBody(BaseModel):
     repo_path: str | None = None
     status: Literal["active", "paused", "done", "archived"] | None = None
     channel_id: str | None = None
+    success_criteria: list[str] | None = None
     autopilot_idle_s: int | None = None
     autopilot_max_iterations: int | None = None
     budget_tokens: int | None = None
@@ -107,6 +110,9 @@ async def create_project(body: CreateBody) -> dict:
     p = store.create(name=name, brief=body.brief or "", repo_path=body.repo_path or "")
     if body.channel_id:
         p.channel_id = body.channel_id
+    if body.success_criteria:
+        p.success_criteria = list(body.success_criteria)
+    if body.channel_id or body.success_criteria:
         store.save(p)
     return _project_to_dict(p)
 
@@ -129,6 +135,79 @@ async def patch_project(project_id: str, body: PatchBody) -> dict:
 async def delete_project(project_id: str) -> None:
     if not get_project_store().delete(project_id):
         raise HTTPException(status_code=404, detail="project not found")
+
+
+class KickoffBody(BaseModel):
+    members: list[str] = []  # custom agent names; first becomes orchestrator
+    initial_message: str = ""
+
+
+@router.post("/api/projects/{project_id}/kickoff")
+async def kickoff_project(project_id: str, body: KickoffBody) -> dict:
+    """Wire (or create) a Channel for this project and post the brief +
+    open task list to its orchestrator. Returns the channel slug so the
+    frontend can route the user straight into the chat."""
+    from arz.channel_runner import get_channel_runner
+    from arz.channels import ChannelMember, get_channel_store
+
+    store = get_project_store()
+    p = store.get(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="project not found")
+
+    ch_store = get_channel_store()
+
+    # Either reuse the linked channel or create a fresh one.
+    channel = ch_store.get(p.channel_id) if p.channel_id else None
+    if channel is None:
+        members_in = body.members or [
+            "orchestrator",
+            "coder",
+            "reviewer",
+            "test-writer",
+        ]
+        members = [
+            ChannelMember(agent=m, role="orchestrator" if i == 0 else "specialist")
+            for i, m in enumerate(members_in)
+            if m.strip()
+        ]
+        if not members:
+            raise HTTPException(status_code=422, detail="at least one member required")
+        try:
+            channel = ch_store.create(
+                p.name,
+                members,
+                topic=(p.brief.split("\n")[0][:200] if p.brief else f"Kickoff for {p.name}"),
+                preset="custom",
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e)) from e
+        p.channel_id = channel.id
+        store.save(p)
+
+    # Compose the kickoff message — orchestrator already gets the brief +
+    # task list injected via channel_runner._build_context, so this can be
+    # short and action-oriented.
+    open_tasks = [t for t in p.tasks if t.status not in ("done", "failed")]
+    user_msg = body.initial_message.strip() or (
+        f"Kick off project '{p.name}'. There are {len(open_tasks)} open task"
+        f"{'' if len(open_tasks) == 1 else 's'} in the project. "
+        "Read the brief, decide what to start first, and delegate."
+    )
+
+    runner = get_channel_runner()
+    if runner is not None:
+        # Drive the orchestrator turn in the background — frontend just
+        # routes the user into the channel and watches it stream.
+        import asyncio as _asyncio
+
+        _asyncio.create_task(runner.post_user(channel.id, user_msg))
+    else:
+        ch_store.post(channel.id, "user", user_msg)
+
+    p.status = "active"
+    store.save(p)
+    return {"project_id": p.id, "channel_id": channel.id}
 
 
 # ── tasks ─────────────────────────────────────────────────────────

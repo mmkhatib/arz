@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Briefcase, Layers, Plus, Send, Wand2, X, Power, AlertTriangle } from "lucide-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type ProjectSummary } from "@/api/client";
 import {
   CedarPage,
@@ -65,8 +65,23 @@ function fmtAge(ts: number): string {
 
 export default function ChannelsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Honor ?ch=<slug> in the URL: auto-select that channel on first
+  // load. Cleared from the URL after we apply it so back-nav doesn't
+  // fight the user's later picks.
+  useEffect(() => {
+    const ch = searchParams.get("ch");
+    if (ch) {
+      setActiveId(ch);
+      const next = new URLSearchParams(searchParams);
+      next.delete("ch");
+      setSearchParams(next, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [active, setActive] = useState<Channel | null>(null);
   const [composer, setComposer] = useState("");
   const [showCreate, setShowCreate] = useState(false);
