@@ -715,6 +715,11 @@ export const api = {
   channelPresetsApp: () =>
     request<{ id: string; name: string; topic: string;
               members: { agent: string; role: string }[] }[]>("/channels/_/presets"),
+  addChannelMember: (slug: string, agent: string, role: "orchestrator" | "specialist" = "specialist") =>
+    request<unknown>(`/channels/${slug}/members`, {
+      method: "POST",
+      body: JSON.stringify({ agent, role }),
+    }),
 
   /** Hand off a markdown file + batch of selection-anchored comments to a
    *  subagent for in-place editing. */

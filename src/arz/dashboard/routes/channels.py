@@ -119,22 +119,54 @@ async def post_message(slug: str, request: Request) -> dict:
     in_reply_to = body.get("in_reply_to")
     if not text:
         raise HTTPException(status_code=422, detail="text required")
-    try:
-        msg = get_channel_store().post(slug, from_, text, in_reply_to)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Channel not found")
 
     if from_ == "user":
+        # Channel runner posts the user message AND drives the orchestrator
+        # in one shot. Posting here too produces a duplicate. Auto-wake an
+        # archived/idle channel so user posts always re-activate it.
         from arz.channel_runner import get_channel_runner
+        from arz.channels import get_channel_store as _get_store
+
+        store = _get_store()
+        try:
+            ch = store.get(slug)
+        except Exception:
+            ch = None
+        if ch is None:
+            raise HTTPException(status_code=404, detail="Channel not found")
+        if ch.status != "active":
+            store.wake(slug)
 
         runner = get_channel_runner()
         if runner is not None:
             import asyncio
+            import logging as _log
 
-            asyncio.create_task(runner.post_user(slug, text))
+            _logger = _log.getLogger(__name__)
 
-    out = msg.model_dump()
-    return out
+            async def _run() -> None:
+                try:
+                    await runner.post_user(slug, text)
+                except Exception:
+                    _logger.exception("channel_runner.post_user failed", extra={"channel": slug})
+
+            asyncio.create_task(_run())
+        else:
+            # No runner wired — just persist the message so it doesn't vanish.
+            try:
+                store.post(slug, from_, text, in_reply_to)
+            except KeyError:
+                raise HTTPException(status_code=404, detail="Channel not found")
+        # Return the most-recent message snapshot so the UI sees the post immediately.
+        ch2 = store.get(slug)
+        last = ch2.messages[-1] if ch2 and ch2.messages else None
+        return last.model_dump() if last else {"id": 0}
+
+    try:
+        msg = get_channel_store().post(slug, from_, text, in_reply_to)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    return msg.model_dump()
 
 
 @router.post("/api/channels/{slug}/wake", status_code=status.HTTP_200_OK)

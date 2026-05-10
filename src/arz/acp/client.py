@@ -58,7 +58,7 @@ _STDOUT_LIMIT = 10 * 1024 * 1024  # 10 MB — tool outputs can be large
 _INIT_TIMEOUT = 60.0
 _PROMPT_TIMEOUT = 7200.0  # 2 hours
 _CLIENT_NAME = "arz"
-_CLIENT_VERSION = "0.6.0"
+_CLIENT_VERSION = "0.7.0"
 
 
 class AcpError(Exception):
