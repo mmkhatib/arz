@@ -70,7 +70,25 @@ export default function AnalyticsPage() {
                   { value: "breakdown", label: "Breakdown" },
                 ]}
               />
-              <Btn icon={<Download size={12} />}>CSV</Btn>
+              <Btn
+                icon={<Download size={12} />}
+                onClick={() => {
+                  const rows: string[] = ["date,messages,tokens"];
+                  const tokMap = new Map(toksAll.map((t) => [t.date, t.count]));
+                  for (const m of msgsAll) {
+                    rows.push(`${m.date},${m.count},${tokMap.get(m.date) ?? 0}`);
+                  }
+                  const blob = new Blob([rows.join("\n")], { type: "text/csv" });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `arz-analytics-${new Date().toISOString().slice(0, 10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                CSV
+              </Btn>
             </>
           }
         />

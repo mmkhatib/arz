@@ -9,6 +9,10 @@ import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
+  CedarModal,
+  CedarInput,
+  CedarTextArea,
+  CedarLabel,
   Btn,
   Tag,
   SegSeg,
@@ -25,7 +29,9 @@ export default function SchedulePage() {
   useEffect(() => { localStorage.setItem("arz:schedule-variant", variant); }, [variant]);
 
   const [crons, setCrons] = useState<CronEntry[]>([]);
-  useEffect(() => { api.listCrons().then(setCrons).catch(() => {}); }, []);
+  const [showAdd, setShowAdd] = useState(false);
+  const refresh = () => api.listCrons().then(setCrons).catch(() => {});
+  useEffect(() => { refresh(); }, []);
 
   const enabled = crons.filter((c) => c.enabled).length;
 
@@ -52,7 +58,9 @@ export default function SchedulePage() {
                   { value: "list", label: "List" },
                 ]}
               />
-              <Btn kind="solid" icon={<Plus size={13} />}>New job</Btn>
+              <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowAdd(true)}>
+                New job
+              </Btn>
             </>
           }
         />
@@ -62,7 +70,127 @@ export default function SchedulePage() {
         {variant === "tape" && <TapeView crons={crons} />}
         {variant === "list" && <ListView crons={crons} />}
       </div>
+      <NewJobModal open={showAdd} onClose={() => setShowAdd(false)} onSaved={refresh} />
     </CedarPage>
+  );
+}
+
+function NewJobModal({
+  open,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [schedule, setSchedule] = useState("0 9 * * *");
+  const [prompt, setPrompt] = useState("");
+  const [persistent, setPersistent] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setSchedule("0 9 * * *");
+      setPrompt("");
+      setPersistent(false);
+      setError(null);
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    if (!name.trim() || !prompt.trim() || !schedule.trim()) {
+      setError("Name, schedule, and prompt all required.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.createCron(name.trim(), prompt.trim(), schedule.trim(), true, persistent);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      width={580}
+      eyebrow="new job"
+      title={
+        <>
+          Schedule a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>recurring</em> task.
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={submitting}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={submitting}>
+            {submitting ? "Saving…" : "Schedule"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Name</CedarLabel>
+          <CedarInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Morning brief" autoFocus />
+        </div>
+        <div>
+          <CedarLabel>Schedule (cron expression)</CedarLabel>
+          <CedarInput
+            value={schedule}
+            onChange={(e) => setSchedule(e.target.value)}
+            placeholder="0 9 * * *"
+            style={{ fontFamily: "var(--fm)" }}
+          />
+          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+            Examples: <code>0 9 * * *</code> daily 9am · <code>@hourly</code> · <code>*/15 * * * *</code> every 15 min
+          </div>
+        </div>
+        <div>
+          <CedarLabel>Prompt</CedarLabel>
+          <CedarTextArea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            rows={5}
+            placeholder="What should the agent do when this fires?"
+          />
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" }}>
+          <input
+            type="checkbox"
+            checked={persistent}
+            onChange={(e) => setPersistent(e.target.checked)}
+            style={{ accentColor: "var(--cedar)" }}
+          />
+          Persistent session (reuses the same chat across fires — costs grow over time)
+        </label>
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }
 

@@ -107,7 +107,12 @@ export default function OverviewPage() {
           }
           right={
             <>
-              <Btn kind="soft" icon={<Sparkles size={13} />}>
+              <Btn
+                kind="soft"
+                icon={<Sparkles size={13} />}
+                onClick={() => navigate("/autonomy")}
+                title="Recent autonomous actions, scheduled fires, and memory writes"
+              >
                 What changed today?
               </Btn>
               <Btn kind="solid" icon={<Plus size={13} />} onClick={() => navigate("/")}>

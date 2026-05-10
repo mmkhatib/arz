@@ -7,6 +7,9 @@ import {
   CedarPage,
   CedarPageHeader,
   CedarCard,
+  CedarModal,
+  CedarTextArea,
+  CedarLabel,
   Btn,
   Tag,
   SegSeg,
@@ -66,7 +69,9 @@ export default function MemoryPage() {
   useEffect(() => { localStorage.setItem("arz:memory-variant", variant); }, [variant]);
 
   const [lessons, setLessons] = useState<Lesson[]>([]);
-  useEffect(() => { api.listLessons().then(setLessons).catch(() => {}); }, []);
+  const [showAdd, setShowAdd] = useState(false);
+  const refreshLessons = () => api.listLessons().then(setLessons).catch(() => {});
+  useEffect(() => { refreshLessons(); }, []);
   const memories = useMemo(() => lessons.map(lessonToMemory), [lessons]);
 
   return (
@@ -92,7 +97,9 @@ export default function MemoryPage() {
                   { value: "forest", label: "Forest" },
                 ]}
               />
-              <Btn kind="solid" icon={<Plus size={13} />}>Remember…</Btn>
+              <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowAdd(true)}>
+                Remember…
+              </Btn>
             </>
           }
         />
@@ -102,7 +109,122 @@ export default function MemoryPage() {
         {variant === "list" && <ListView memories={memories} />}
         {variant === "forest" && <ForestView memories={memories} />}
       </div>
+      <RememberModal open={showAdd} onClose={() => setShowAdd(false)} onSaved={refreshLessons} />
     </CedarPage>
+  );
+}
+
+function RememberModal({
+  open,
+  onClose,
+  onSaved,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [text, setText] = useState("");
+  const [category, setCategory] = useState<"preference" | "tool" | "knowledge">("knowledge");
+  const [pinned, setPinned] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setText("");
+      setCategory("knowledge");
+      setPinned(false);
+      setError(null);
+      setSubmitting(false);
+    }
+  }, [open]);
+
+  const submit = async () => {
+    const t = text.trim();
+    if (!t) {
+      setError("Memory text required.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.addLesson(category, t, pinned);
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      eyebrow="remember"
+      title={
+        <>
+          Plant a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>memory</em>.
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={submitting}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={submitting}>
+            {submitting ? "Saving…" : "Remember"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Category</CedarLabel>
+          <SegSeg
+            value={category}
+            onChange={(v) => setCategory(v as typeof category)}
+            options={[
+              { value: "knowledge", label: "Knowledge" },
+              { value: "preference", label: "Preference" },
+              { value: "tool", label: "Tool" },
+            ]}
+          />
+        </div>
+        <div>
+          <CedarLabel>Memory text</CedarLabel>
+          <CedarTextArea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={5}
+            placeholder="What should arzeh remember?"
+            autoFocus
+          />
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" }}>
+          <input
+            type="checkbox"
+            checked={pinned}
+            onChange={(e) => setPinned(e.target.checked)}
+            style={{ accentColor: "var(--cedar)" }}
+          />
+          Pin this memory (won't be evicted by the consolidator)
+        </label>
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }
 

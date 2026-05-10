@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
-  Briefcase,
   Layers,
   Plus,
   Trash2,
@@ -15,7 +14,11 @@ import {
   CheckCircle2,
   X as XIcon,
   FileText,
+  Bot,
+  ScrollText,
+  Activity,
 } from "lucide-react";
+import type { NavigateFunction } from "react-router-dom";
 import {
   CedarPage,
   CedarPageHeader,
@@ -302,19 +305,8 @@ export default function ProjectDetailPage() {
           />
         )}
 
-        {(tab === "subagents" || tab === "log") && (
-          <CedarCard padding={48}>
-            <div style={{ textAlign: "center", color: "var(--muted)" }}>
-              <Briefcase size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
-              <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
-                {tab === "subagents" ? "Subagents" : "Log"} aggregator coming up.
-              </div>
-              <div style={{ fontSize: 13, marginTop: 8 }}>
-                Will roll up across all sessions tied to this project.
-              </div>
-            </div>
-          </CedarCard>
-        )}
+        {tab === "subagents" && <SubagentsTab project={project} navigate={navigate} />}
+        {tab === "log" && <LogTab project={project} />}
       </div>
 
       <NewTaskModal
@@ -1084,5 +1076,256 @@ function EditProjectModal({
         )}
       </div>
     </CedarModal>
+  );
+}
+
+// ── Subagents tab — derived from task assignees + status ──
+function SubagentsTab({
+  project,
+  navigate,
+}: {
+  project: ProjectSummary;
+  navigate: NavigateFunction;
+}) {
+  const byAssignee: Record<string, ProjectTask[]> = {};
+  for (const t of project.tasks) {
+    if (!t.assignee) continue;
+    (byAssignee[t.assignee] ||= []).push(t);
+  }
+  const agents = Object.entries(byAssignee).sort();
+
+  if (agents.length === 0) {
+    return (
+      <CedarCard padding={48}>
+        <div style={{ textAlign: "center", color: "var(--muted)" }}>
+          <Bot size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
+            No subagents assigned yet.
+          </div>
+          <div style={{ fontSize: 13, marginTop: 8 }}>
+            Tasks with an @assignee surface their agent here. Open the channel and let the
+            orchestrator delegate, or set assignees on the Tasks tab.
+          </div>
+          {project.channel_id && (
+            <div style={{ marginTop: 14 }}>
+              <Btn
+                kind="solid"
+                icon={<Layers size={13} />}
+                onClick={() =>
+                  navigate(`/channels?ch=${encodeURIComponent(project.channel_id!)}`)
+                }
+              >
+                Open channel
+              </Btn>
+            </div>
+          )}
+        </div>
+      </CedarCard>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+        gap: 14,
+      }}
+    >
+      {agents.map(([agent, tasks]) => {
+        const open = tasks.filter((t) => !["done", "failed"].includes(t.status));
+        const inFlight = tasks.find((t) => t.status === "in_progress");
+        const done = tasks.filter((t) => t.status === "done").length;
+        return (
+          <CedarCard key={agent} padding={16}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+              <div
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 8,
+                  background: "var(--cedar-dim)",
+                  border: "1px solid var(--cedar-line)",
+                  color: "var(--cedar-glow)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                }}
+              >
+                <Bot size={14} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "var(--fd)", fontSize: 17, color: "var(--text)" }}>
+                  @{agent}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--muted)",
+                    fontFamily: "var(--fm)",
+                    textTransform: "uppercase",
+                    letterSpacing: ".08em",
+                  }}
+                >
+                  {open.length} open · {done} done
+                </div>
+              </div>
+              {inFlight && (
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: "var(--cedar-glow)",
+                    boxShadow: "0 0 6px var(--cedar-glow)",
+                  }}
+                  title="Has a task in progress"
+                />
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {tasks.slice(0, 6).map((t) => (
+                <div
+                  key={t.id}
+                  style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
+                >
+                  <Tag color={statusTagColor(t.status)}>{t.status.replace("_", " ")}</Tag>
+                  <span
+                    style={{
+                      flex: 1,
+                      color: "var(--text)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t.title}
+                  </span>
+                </div>
+              ))}
+              {tasks.length > 6 && (
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--muted)",
+                    fontFamily: "var(--fm)",
+                  }}
+                >
+                  +{tasks.length - 6} more
+                </div>
+              )}
+            </div>
+          </CedarCard>
+        );
+      })}
+    </div>
+  );
+}
+
+function statusTagColor(
+  s: ProjectTaskStatus,
+): "cedar" | "dawn" | "ember" | "stone" | "muted" {
+  return s === "in_progress"
+    ? "cedar"
+    : s === "blocked"
+    ? "dawn"
+    : s === "failed"
+    ? "ember"
+    : s === "done"
+    ? "stone"
+    : "muted";
+}
+
+// ── Log tab — task lifecycle + artifact events, reverse-chrono ──
+function LogTab({ project }: { project: ProjectSummary }) {
+  type Entry = { ts: number; kind: string; text: string; taskId: string };
+  const entries: Entry[] = [];
+  for (const t of project.tasks) {
+    entries.push({ ts: t.created_at, kind: "created", text: t.title, taskId: t.id });
+    if (t.started_at)
+      entries.push({ ts: t.started_at, kind: "started", text: t.title, taskId: t.id });
+    if (t.finished_at)
+      entries.push({
+        ts: t.finished_at,
+        kind: t.status === "failed" ? "failed" : "done",
+        text: t.title,
+        taskId: t.id,
+      });
+    for (const a of t.artifacts || [])
+      entries.push({ ts: t.updated_at, kind: "artifact", text: a, taskId: t.id });
+  }
+  entries.sort((a, b) => b.ts - a.ts);
+
+  if (entries.length === 0) {
+    return (
+      <CedarCard padding={48}>
+        <div style={{ textAlign: "center", color: "var(--muted)" }}>
+          <ScrollText size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
+            No activity yet.
+          </div>
+          <div style={{ fontSize: 13, marginTop: 8 }}>
+            As tasks change status and artifacts get produced, they show up here.
+          </div>
+        </div>
+      </CedarCard>
+    );
+  }
+
+  const kindColor: Record<string, string> = {
+    created: "var(--text3)",
+    started: "var(--cedar-glow)",
+    done: "var(--stone)",
+    failed: "var(--ember)",
+    artifact: "var(--cedar-2)",
+  };
+
+  return (
+    <CedarCard padding={0}>
+      {entries.map((e, i) => (
+        <div
+          key={i}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "180px 90px 1fr",
+            gap: 12,
+            padding: "10px 16px",
+            borderBottom: "1px solid var(--hairline)",
+            alignItems: "center",
+          }}
+        >
+          <span style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+            {new Date(e.ts * 1000).toLocaleString()}
+          </span>
+          <span
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--fm)",
+              color: kindColor[e.kind] || "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".12em",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+            }}
+          >
+            <Activity size={10} />
+            {e.kind}
+          </span>
+          <span
+            style={{
+              fontSize: 12.5,
+              color: "var(--text)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={e.text}
+          >
+            {e.text}
+          </span>
+        </div>
+      ))}
+    </CedarCard>
   );
 }
