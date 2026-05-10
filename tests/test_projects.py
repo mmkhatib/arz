@@ -123,6 +123,32 @@ def test_task_tags_create_update_done_delete(
     assert all(t.id != "t2" for t in p4.tasks)
 
 
+def test_default_workspace_root_is_sibling_of_arz_checkout() -> None:
+    from arz.projects import default_workspace_root
+
+    root = default_workspace_root()
+    assert root.name == "projects"
+    # Should not be inside the arz repo itself.
+    arz_repo = Path(__file__).resolve().parent.parent
+    assert arz_repo not in root.resolve().parents
+    assert root.resolve() != arz_repo.resolve()
+
+
+def test_create_without_repo_path_assigns_default(tmp_path: Path) -> None:
+    s = ProjectStore(root=tmp_path)
+    p = s.create("auto folder demo")
+    assert p.repo_path
+    assert p.repo_path.endswith(p.id)
+    assert "/projects/" in p.repo_path or p.repo_path.endswith(f"/{p.id}")
+
+
+def test_create_honors_explicit_repo_path(tmp_path: Path) -> None:
+    s = ProjectStore(root=tmp_path)
+    explicit = str(tmp_path / "elsewhere")
+    p = s.create("explicit demo", repo_path=explicit)
+    assert p.repo_path == explicit
+
+
 def test_open_tasks_counts_correctly(store: ProjectStore) -> None:
     p = store.create("x")
     store.add_task(p.id, Task(id="a", title="x", status="planned"))

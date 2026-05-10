@@ -407,7 +407,11 @@ function NewProjectModal({
               placeholder="/Users/you/code/my-project (where work happens)"
             />
             <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
-              Optional. Subagents will run in this directory when they touch files.
+              Optional. Leave blank to use a sibling folder next to arz (e.g.
+              <code style={{ color: "var(--cedar-2)", margin: "0 4px" }}>
+                ~/workspace/projects/&lt;slug&gt;
+              </code>
+              ) so subagents never touch the arz source.
             </div>
           </div>
         </div>

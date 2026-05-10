@@ -18,6 +18,28 @@ from typing import Literal
 
 _ROOT = Path.home() / ".arz" / "projects"
 
+
+def default_workspace_root() -> Path:
+    """Where new project workspaces land when the user doesn't pick one.
+
+    Picks the directory next to the running arz checkout so the
+    orchestrator never modifies the arz source itself. For example,
+    when arz is at ``~/workspace/arz``, projects default to
+    ``~/workspace/projects/<slug>/``.
+
+    Falls back to ``~/projects`` when the arz install isn't laid out
+    that way (e.g. installed via pip into site-packages).
+    """
+    here = Path(__file__).resolve()
+    # ``arz/projects.py`` → src/arz/projects.py → walk up to repo root
+    candidates = [here.parent.parent.parent, here.parent.parent]
+    for cand in candidates:
+        if (cand / "pyproject.toml").exists() or (cand / "src" / "arz").exists():
+            sibling = cand.parent / "projects"
+            return sibling
+    return Path.home() / "projects"
+
+
 ProjectStatus = Literal["active", "paused", "done", "archived"]
 TaskStatus = Literal["planned", "in_progress", "blocked", "done", "failed"]
 
@@ -146,7 +168,18 @@ class ProjectStore:
         if self._project_file(pid).exists():
             pid = f"{pid}-{uuid.uuid4().hex[:6]}"
         self._scaffold(pid)
-        p = Project(id=pid, name=name.strip()[:120], brief=brief, repo_path=repo_path)
+        # If the user didn't pick a folder, drop one next to the arz
+        # checkout so subagents have a real working directory and never
+        # touch the arz source. Created on demand.
+        final_repo = repo_path.strip() if repo_path else ""
+        if not final_repo:
+            ws = default_workspace_root() / pid
+            try:
+                ws.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            final_repo = str(ws)
+        p = Project(id=pid, name=name.strip()[:120], brief=brief, repo_path=final_repo)
         self.save(p)
         return p
 
