@@ -457,6 +457,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ input }),
     }),
+  getToolSource: (name: string) =>
+    request<{ source: string }>(`/tools/${encodeURIComponent(name)}/source`),
+  putToolSource: (name: string, source: string) =>
+    request<ToolView>(`/tools/${encodeURIComponent(name)}/source`, {
+      method: "PUT",
+      body: JSON.stringify({ source }),
+    }),
+  createTool: (name: string, source?: string) =>
+    request<ToolView>("/tools", {
+      method: "POST",
+      body: JSON.stringify({ name, source }),
+    }),
+  deleteTool: (name: string) =>
+    request<void>(`/tools/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
   // ── Analytics ──
   analyticsMessagesByDay: (days = 30) =>

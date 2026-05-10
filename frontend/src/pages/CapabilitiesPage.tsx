@@ -2,7 +2,7 @@
 // Tabs across the top, then content.
 
 import { useEffect, useRef, useState } from "react";
-import { Wrench, Sparkles, Server, Plus, Loader2 } from "lucide-react";
+import { Wrench, Sparkles, Server, Plus, Loader2, RefreshCw, Trash2, Play, Pencil } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
@@ -27,13 +27,17 @@ export default function CapabilitiesPage() {
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
   const [tools, setTools] = useState<ToolView[]>([]);
   const [showInstall, setShowInstall] = useState(false);
+  const [showNewPrompt, setShowNewPrompt] = useState(false);
+  const [editingTool, setEditingTool] = useState<{ name: string; isNew: boolean } | null>(null);
 
   const refreshMcps = () => api.listMcpServers().then(setMcps).catch(() => {});
+  const refreshTools = () => api.listTools().then(setTools).catch(() => {});
+  const refreshPrompts = () => api.listPrompts().then(setPrompts).catch(() => {});
 
   useEffect(() => {
     refreshMcps();
-    api.listPrompts().then(setPrompts).catch(() => {});
-    api.listTools().then(setTools).catch(() => {});
+    refreshPrompts();
+    refreshTools();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -65,6 +69,33 @@ export default function CapabilitiesPage() {
                   Install MCP
                 </Btn>
               )}
+              {tab === "prompts" && (
+                <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowNewPrompt(true)}>
+                  New prompt
+                </Btn>
+              )}
+              {tab === "tools" && (
+                <>
+                  <Btn
+                    kind="soft"
+                    icon={<RefreshCw size={12} />}
+                    onClick={async () => {
+                      await api.reloadTools();
+                      refreshTools();
+                    }}
+                    title="Re-scan ~/.arz/tools/"
+                  >
+                    Reload
+                  </Btn>
+                  <Btn
+                    kind="solid"
+                    icon={<Plus size={13} />}
+                    onClick={() => setEditingTool({ name: "", isNew: true })}
+                  >
+                    New tool
+                  </Btn>
+                </>
+              )}
             </>
           }
         />
@@ -73,13 +104,30 @@ export default function CapabilitiesPage() {
         {tab === "mcp" && (
           <McpView mcps={mcps} setMcps={setMcps} onAdd={() => setShowInstall(true)} />
         )}
-        {tab === "prompts" && <PromptsView prompts={prompts} setPrompts={setPrompts} />}
-        {tab === "tools" && <ToolsView tools={tools} />}
+        {tab === "prompts" && (
+          <PromptsView
+            prompts={prompts}
+            setPrompts={setPrompts}
+            showNew={showNewPrompt}
+            closeNew={() => setShowNewPrompt(false)}
+          />
+        )}
+        {tab === "tools" && (
+          <ToolsView tools={tools} onEdit={(name) => setEditingTool({ name, isNew: false })} />
+        )}
       </div>
       <InstallMcpModal
         open={showInstall}
         onClose={() => setShowInstall(false)}
         onInstalled={() => { refreshMcps(); }}
+      />
+      <ToolEditorModal
+        open={editingTool !== null}
+        initialName={editingTool?.name ?? ""}
+        isNew={editingTool?.isNew ?? true}
+        onClose={() => setEditingTool(null)}
+        onSaved={() => { refreshTools(); setEditingTool(null); }}
+        onDeleted={() => { refreshTools(); setEditingTool(null); }}
       />
     </CedarPage>
   );
@@ -210,18 +258,29 @@ function McpView({
   );
 }
 
-function PromptsView({ prompts, setPrompts }: { prompts: PromptTemplate[]; setPrompts: (p: PromptTemplate[]) => void }) {
+function PromptsView({
+  prompts,
+  setPrompts,
+  showNew,
+  closeNew,
+}: {
+  prompts: PromptTemplate[];
+  setPrompts: (p: PromptTemplate[]) => void;
+  showNew: boolean;
+  closeNew: () => void;
+}) {
   const [draft, setDraft] = useState({ title: "", body: "" });
+  useEffect(() => { if (!showNew) setDraft({ title: "", body: "" }); }, [showNew]);
   const submit = async () => {
     if (!draft.title.trim() || !draft.body.trim()) return;
     try {
       const created = await api.createPrompt(draft.title, draft.body);
       setPrompts([...prompts, created]);
-      setDraft({ title: "", body: "" });
+      closeNew();
     } catch {}
   };
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 18 }}>
+    <>
       <CedarCard padding={18}>
         <div
           style={{
@@ -235,8 +294,10 @@ function PromptsView({ prompts, setPrompts }: { prompts: PromptTemplate[]; setPr
         >
           Saved prompts ({prompts.length})
         </div>
-        {prompts.length === 0 && <div style={{ fontSize: 12.5, color: "var(--muted)" }}>None yet.</div>}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {prompts.length === 0 && (
+          <div style={{ fontSize: 12.5, color: "var(--muted)" }}>None yet — click “New prompt”.</div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 10 }}>
           {prompts.map((p) => (
             <div
               key={p.slug}
@@ -247,7 +308,22 @@ function PromptsView({ prompts, setPrompts }: { prompts: PromptTemplate[]; setPr
                 background: "var(--surface)",
               }}
             >
-              <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{p.title}</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: "var(--text)" }}>{p.title}</div>
+                <Btn
+                  size="sm"
+                  kind="ghost"
+                  icon={<Trash2 size={11} />}
+                  title="Delete prompt"
+                  onClick={async () => {
+                    if (!confirm(`Delete prompt "${p.title}"?`)) return;
+                    try {
+                      await api.deletePrompt(p.slug);
+                      setPrompts(prompts.filter((x) => x.slug !== p.slug));
+                    } catch {}
+                  }}
+                />
+              </div>
               <div
                 style={{
                   fontSize: 11.5,
@@ -269,80 +345,255 @@ function PromptsView({ prompts, setPrompts }: { prompts: PromptTemplate[]; setPr
           ))}
         </div>
       </CedarCard>
-      <CedarCard padding={18}>
-        <div
-          style={{
-            fontSize: 10.5,
-            color: "var(--muted)",
-            fontFamily: "var(--fm)",
-            textTransform: "uppercase",
-            letterSpacing: ".12em",
-            marginBottom: 12,
-          }}
-        >
-          New prompt
+      <CedarModal
+        open={showNew}
+        onClose={closeNew}
+        width={640}
+        eyebrow="new prompt"
+        title="Save a reusable prompt."
+        footer={
+          <>
+            <Btn kind="ghost" onClick={closeNew}>Cancel</Btn>
+            <Btn kind="solid" icon={<Sparkles size={13} />} onClick={submit} disabled={!draft.title.trim() || !draft.body.trim()}>
+              Save prompt
+            </Btn>
+          </>
+        }
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <CedarLabel>Title</CedarLabel>
+            <CedarInput
+              value={draft.title}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+              placeholder="Short, memorable name"
+              autoFocus
+            />
+          </div>
+          <div>
+            <CedarLabel>Body</CedarLabel>
+            <CedarTextArea
+              value={draft.body}
+              onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+              placeholder="Prompt body…"
+              rows={10}
+            />
+          </div>
         </div>
-        <input
-          value={draft.title}
-          onChange={(e) => setDraft({ ...draft, title: e.target.value })}
-          placeholder="Title"
-          style={{
-            width: "100%",
-            padding: "8px 10px",
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            borderRadius: 7,
-            color: "var(--text)",
-            fontSize: 13,
-            fontFamily: "var(--fn)",
-            marginBottom: 10,
-          }}
-        />
-        <textarea
-          value={draft.body}
-          onChange={(e) => setDraft({ ...draft, body: e.target.value })}
-          placeholder="Prompt body…"
-          rows={8}
-          style={{
-            width: "100%",
-            padding: "10px",
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            borderRadius: 7,
-            color: "var(--text)",
-            fontSize: 13,
-            fontFamily: "var(--fn)",
-            resize: "vertical",
-          }}
-        />
-        <div style={{ marginTop: 10, display: "flex", justifyContent: "flex-end" }}>
-          <Btn kind="solid" icon={<Sparkles size={13} />} onClick={submit} disabled={!draft.title.trim() || !draft.body.trim()}>
-            Save
-          </Btn>
-        </div>
-      </CedarCard>
-    </div>
+      </CedarModal>
+    </>
   );
 }
 
-function ToolsView({ tools }: { tools: ToolView[] }) {
+function ToolsView({ tools, onEdit }: { tools: ToolView[]; onEdit: (name: string) => void }) {
   if (tools.length === 0) {
-    return <Empty title="No tools loaded" sub="Builtin tools live under src/arz/tools/." icon={<Wrench size={28} />} />;
+    return <Empty title="No tools loaded" sub='Click "New tool" to write one. Tools live in ~/.arz/tools/.' icon={<Wrench size={28} />} />;
   }
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
       {tools.map((t) => (
-        <CedarCard key={t.name} padding={14}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <Wrench size={13} style={{ color: "var(--cedar-2)" }} />
-            <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>{t.name}</span>
+        <CedarCard key={t.name} padding={14} hoverable onClick={() => onEdit(t.name)} style={{ cursor: "pointer" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Wrench size={13} style={{ color: "var(--cedar-2)" }} />
+              <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>{t.name}</span>
+            </div>
+            <Pencil size={11} style={{ color: "var(--text3)" }} />
           </div>
           <div style={{ fontSize: 11.5, color: "var(--text3)", lineHeight: 1.5 }}>
             {t.description?.slice(0, 140) || "—"}
           </div>
+          {t.error && (
+            <div style={{ marginTop: 8, fontSize: 11, color: "var(--danger, #b25)", fontFamily: "var(--fm)" }}>
+              load error — click to fix
+            </div>
+          )}
         </CedarCard>
       ))}
     </div>
+  );
+}
+
+function ToolEditorModal({
+  open,
+  initialName,
+  isNew,
+  onClose,
+  onSaved,
+  onDeleted,
+}: {
+  open: boolean;
+  initialName: string;
+  isNew: boolean;
+  onClose: () => void;
+  onSaved: () => void;
+  onDeleted: () => void;
+}) {
+  const [name, setName] = useState(initialName);
+  const [source, setSource] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [testInput, setTestInput] = useState("{}");
+  const [testOut, setTestOut] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setName(initialName);
+    setErr(null);
+    setTestOut(null);
+    setTestInput("{}");
+    if (isNew || !initialName) {
+      setSource("");
+      return;
+    }
+    api.getToolSource(initialName).then((r) => setSource(r.source)).catch((e) => setErr(String(e)));
+  }, [open, initialName, isNew]);
+
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      if (isNew) {
+        if (!name.trim()) { setErr("name required"); return; }
+        await api.createTool(name.trim(), source || undefined);
+      } else {
+        await api.putToolSource(name, source);
+      }
+      onSaved();
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setTestOut(null);
+    setErr(null);
+    let payload: Record<string, unknown> = {};
+    try { payload = JSON.parse(testInput || "{}"); } catch (e) { setErr(`bad JSON: ${e}`); return; }
+    try {
+      const r = await api.invokeTool(name, payload);
+      setTestOut(r.result);
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const del = async () => {
+    if (!confirm(`Delete tool "${name}"? File will be removed from ~/.arz/tools/.`)) return;
+    try {
+      await api.deleteTool(name);
+      onDeleted();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  return (
+    <CedarModal
+      open={open}
+      onClose={onClose}
+      width={780}
+      eyebrow={isNew ? "new tool" : "edit tool"}
+      title={
+        <>
+          {isNew ? "Author a new " : "Edit "}
+          <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>Python tool</em>.
+        </>
+      }
+      footer={
+        <>
+          {!isNew && (
+            <Btn kind="danger" icon={<Trash2 size={11} />} onClick={del} disabled={busy}>
+              Delete
+            </Btn>
+          )}
+          <Btn kind="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn kind="solid" onClick={save} disabled={busy || (isNew && !name.trim())}>
+            {busy ? <><Loader2 size={11} className="animate-spin" /> Saving…</> : "Save + reload"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <CedarLabel>Tool name</CedarLabel>
+          <CedarInput
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="lowercase_with_underscores"
+            disabled={!isNew}
+          />
+          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+            Saved as <code>~/.arz/tools/{name || "<name>"}.py</code>. Must define <code>tool_spec</code> dict and <code>async def run(input)</code>.
+          </div>
+        </div>
+        <div>
+          <CedarLabel>Source</CedarLabel>
+          <textarea
+            value={source}
+            onChange={(e) => setSource(e.target.value)}
+            spellCheck={false}
+            rows={18}
+            style={{
+              width: "100%",
+              padding: 12,
+              background: "var(--bg)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              color: "var(--text)",
+              fontSize: 12,
+              fontFamily: "var(--fm)",
+              lineHeight: 1.55,
+              resize: "vertical",
+              tabSize: 4,
+            }}
+            placeholder={isNew ? "Leave empty to start from template…" : ""}
+          />
+        </div>
+        {!isNew && (
+          <div style={{ borderTop: "1px solid var(--hairline)", paddingTop: 12 }}>
+            <CedarLabel>Quick test — input JSON</CedarLabel>
+            <div style={{ display: "flex", gap: 8 }}>
+              <CedarInput
+                value={testInput}
+                onChange={(e) => setTestInput(e.target.value)}
+                placeholder='{"query": "hello"}'
+                style={{ flex: 1, fontFamily: "var(--fm)" }}
+              />
+              <Btn kind="soft" icon={<Play size={11} />} onClick={test} disabled={busy}>
+                Run
+              </Btn>
+            </div>
+            {testOut !== null && (
+              <pre
+                style={{
+                  marginTop: 8,
+                  background: "var(--bg)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 6,
+                  padding: 10,
+                  fontFamily: "var(--fm)",
+                  fontSize: 11.5,
+                  color: "var(--text2)",
+                  whiteSpace: "pre-wrap",
+                  maxHeight: 180,
+                  overflowY: "auto",
+                }}
+              >
+                {testOut}
+              </pre>
+            )}
+          </div>
+        )}
+        {err && (
+          <div style={{ fontSize: 11.5, color: "#e88", fontFamily: "var(--fm)" }}>
+            {err}
+          </div>
+        )}
+      </div>
+    </CedarModal>
   );
 }
 
