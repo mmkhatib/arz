@@ -52,13 +52,16 @@ const NAV_ZONES: { zone: string; items: NavEntry[] }[] = [
   {
     zone: "Mind",
     items: [
-      { id: "memory",       label: "Memory",       icon: <Brain size={16} /> },
-      { id: "capabilities", label: "Capabilities", icon: <Puzzle size={16} /> },
+      { id: "memory", label: "Memory", icon: <Brain size={16} /> },
+      { id: "agents", label: "Agents", icon: <Bot size={16} /> },
     ],
   },
   {
     zone: "Work",
     items: [
+      { id: "projects", label: "Projects",  icon: <Briefcase size={16} /> },
+      { id: "channels", label: "Channels",  icon: <Layers size={16} /> },
+      { id: "board",    label: "Operations", icon: <Columns3 size={16} /> },
       {
         id: "schedule",
         label: "Schedule",
@@ -70,23 +73,20 @@ const NAV_ZONES: { zone: string; items: NavEntry[] }[] = [
             </span>
           ) : null,
       },
-      { id: "projects", label: "Projects", icon: <Briefcase size={16} /> },
-      { id: "autopilot", label: "Autopilot", icon: <Wand2 size={16} /> },
-      { id: "autonomy",  label: "Autonomy",  icon: <Activity size={16} /> },
-      { id: "board",     label: "Operations", icon: <Columns3 size={16} /> },
-      { id: "agents",    label: "Agents",    icon: <Bot size={16} /> },
     ],
   },
   {
     zone: "Reach",
     items: [
-      { id: "channels", label: "Channels", icon: <Layers size={16} /> },
-      { id: "models",   label: "Models",   icon: <Cpu size={16} /> },
+      { id: "capabilities", label: "Capabilities", icon: <Puzzle size={16} /> },
+      { id: "models",       label: "Models",       icon: <Cpu size={16} /> },
     ],
   },
   {
     zone: "System",
     items: [
+      { id: "autopilot", label: "Autopilot", icon: <Wand2 size={16} /> },
+      { id: "autonomy",  label: "Autonomy",  icon: <Activity size={16} /> },
       { id: "analytics", label: "Analytics", icon: <BarChart3 size={16} /> },
       { id: "settings",  label: "Settings",  icon: <SettingsIcon size={16} /> },
     ],
@@ -188,7 +188,7 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
         >
           <Keyboard size={14} />
         </button>
-        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.7.2</span>}
+        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.7.3</span>}
       </div>
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
     </nav>
