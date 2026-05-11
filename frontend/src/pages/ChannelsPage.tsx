@@ -518,34 +518,17 @@ export default function ChannelsPage() {
                     Members
                   </span>
                   {active.members.map((m) => (
-                    <span
+                    <MemberPill
                       key={m.agent}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 6,
-                        padding: "3px 9px 3px 6px",
-                        background: "var(--s2)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 14,
-                        fontSize: 11.5,
-                        color: "var(--text)",
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: "50%",
-                          background: m.role === "orchestrator" ? "var(--cedar-glow)" : "var(--text3)",
-                          boxShadow: m.role === "orchestrator" ? "0 0 4px var(--cedar-glow)" : undefined,
-                        }}
-                      />
-                      @{m.agent}
-                      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--fm)" }}>
-                        · {m.role}
-                      </span>
-                    </span>
+                      agent={m.agent}
+                      role={m.role}
+                      working={(active.busy_agents ?? []).includes(m.agent)}
+                      blocked={
+                        !!linkedProject?.tasks.find(
+                          (t) => t.assignee === m.agent && t.status === "blocked",
+                        )
+                      }
+                    />
                   ))}
                   <span
                     style={{
@@ -917,6 +900,85 @@ function ChannelRow({
 }
 
 // ── Channel bubble (collapsible) ──────────────────────────────
+// Per-member pill with activity light. Solid = idle, pulsing =
+// working, red = blocked. Reuses arz-pulse keyframes from index.css.
+function MemberPill({
+  agent,
+  role,
+  working,
+  blocked,
+}: {
+  agent: string;
+  role: string;
+  working: boolean;
+  blocked: boolean;
+}) {
+  let state: "idle" | "working" | "blocked";
+  if (blocked) state = "blocked";
+  else if (working) state = "working";
+  else state = "idle";
+
+  const dotColor =
+    state === "blocked"
+      ? "var(--ember)"
+      : role === "orchestrator"
+      ? "var(--cedar-glow)"
+      : state === "working"
+      ? "var(--cedar-glow)"
+      : "var(--text3)";
+  const glow =
+    state === "blocked"
+      ? "0 0 5px var(--ember)"
+      : state === "working" || role === "orchestrator"
+      ? "0 0 4px var(--cedar-glow)"
+      : undefined;
+  const borderColor =
+    state === "blocked"
+      ? "var(--ember)"
+      : state === "working"
+      ? "var(--cedar-line)"
+      : "var(--border)";
+  const bg =
+    state === "working"
+      ? "var(--cedar-dim)"
+      : state === "blocked"
+      ? "rgba(180, 70, 70, 0.12)"
+      : "var(--s2)";
+
+  return (
+    <span
+      title={`${agent} — ${state}`}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        padding: "3px 9px 3px 6px",
+        background: bg,
+        border: `1px solid ${borderColor}`,
+        borderRadius: 14,
+        fontSize: 11.5,
+        color: "var(--text)",
+        transition: "background 200ms, border-color 200ms",
+      }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: dotColor,
+          boxShadow: glow,
+          animation: state === "working" ? "arz-pulse 1.1s ease-in-out infinite" : undefined,
+        }}
+      />
+      @{agent}
+      <span style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+        · {role}
+      </span>
+    </span>
+  );
+}
+
 function ThinkingBubble({ agent }: { agent: string }) {
   return (
     <div
