@@ -409,20 +409,35 @@ function GridView({
   );
 }
 
-// ISO 8601 week number. Thursday-anchored — matches `date.isocalendar`
-// on the backend so week labels here line up with anything cronner /
-// scheduler reports.
-function isoWeek(d: Date): number {
-  const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-  const dayNr = (target.getUTCDay() + 6) % 7;
-  target.setUTCDate(target.getUTCDate() - dayNr + 3);
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const diff = (target.getTime() - firstThursday.getTime()) / 86400000;
-  return 1 + Math.round((diff - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+// "Week of <Mon dd>" label — Monday-anchored, short month form.
+function weekOfLabel(weekStartSunday: Date): string {
+  const mon = new Date(weekStartSunday);
+  mon.setDate(weekStartSunday.getDate() + 1);
+  return mon.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// Color bucket from rank-percentile across all non-zero days, so the
+// "darker = more active" rule is actually true. Linear-on-max made a
+// single big outlier squish every other day toward "lightest" even
+// when those days had real activity.
+function bucketColor(count: number, q: number[]): string {
+  if (count === 0) return "var(--s2)";
+  if (q.length === 0) return "var(--cedar-glow)";
+  // q is [q25, q50, q75] of non-zero counts
+  if (count <= q[0]) return "rgba(118, 200, 156, .20)";
+  if (count <= q[1]) return "rgba(118, 200, 156, .40)";
+  if (count <= q[2]) return "rgba(118, 200, 156, .65)";
+  return "var(--cedar-glow)";
+}
+function quartiles(values: number[]): number[] {
+  const nz = values.filter((v) => v > 0).sort((a, b) => a - b);
+  if (nz.length === 0) return [];
+  const pick = (p: number) => nz[Math.min(nz.length - 1, Math.floor(nz.length * p))];
+  return [pick(0.25), pick(0.5), pick(0.75)];
 }
 
 function WeeksHeatmap({ msgs }: { msgs: DayPoint[] }) {
-  const { weeks, monthLabels, weekNumbers } = useMemo(() => {
+  const { weeks, weekLabels } = useMemo(() => {
     const map = new Map<string, number>();
     for (const d of msgs) map.set(d.date, d.count);
     const today = new Date();
@@ -432,29 +447,21 @@ function WeeksHeatmap({ msgs }: { msgs: DayPoint[] }) {
     const start = new Date(startOfThisWeek);
     start.setDate(startOfThisWeek.getDate() - 11 * 7);
     const ws: { date: string; count: number }[][] = [];
-    const ml: { week: number; label: string }[] = [];
-    const wn: number[] = [];
-    let lastMonth = -1;
+    const wl: string[] = [];
     for (let w = 0; w < 12; w++) {
       const col: { date: string; count: number }[] = [];
+      const colStart = new Date(start.getTime() + w * 7 * 86_400_000);
+      wl.push(weekOfLabel(colStart));
       for (let d = 0; d < 7; d++) {
-        const dt = new Date(start.getTime() + (w * 7 + d) * 86_400_000);
+        const dt = new Date(colStart.getTime() + d * 86_400_000);
         const key = dt.toISOString().slice(0, 10);
         col.push({ date: key, count: map.get(key) ?? 0 });
-        if (d === 0) {
-          wn.push(isoWeek(dt));
-          const m = dt.getMonth();
-          if (m !== lastMonth) {
-            lastMonth = m;
-            ml.push({ week: w, label: dt.toLocaleString(undefined, { month: "short" }) });
-          }
-        }
       }
       ws.push(col);
     }
-    return { weeks: ws, monthLabels: ml, weekNumbers: wn };
+    return { weeks: ws, weekLabels: wl };
   }, [msgs]);
-  const max = Math.max(1, ...weeks.flat().map((c) => c.count));
+  const qs = useMemo(() => quartiles(weeks.flat().map((c) => c.count)), [weeks]);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8 }}>
       {/* Y axis — every weekday */}
@@ -477,27 +484,17 @@ function WeeksHeatmap({ msgs }: { msgs: DayPoint[] }) {
         <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 3 }}>
           {weeks.map((col, wi) => (
             <div key={wi} style={{ display: "grid", gridTemplateRows: "repeat(7, 16px)", gap: 3 }}>
-              {col.map((c) => {
-                const v = c.count / max;
-                const bg = c.count === 0
-                  ? "var(--s2)"
-                  : v < 0.25
-                  ? "rgba(118, 200, 156, .25)"
-                  : v < 0.6
-                  ? "rgba(118, 200, 156, .55)"
-                  : "var(--cedar-glow)";
-                return (
-                  <div
-                    key={c.date}
-                    title={`${c.date} · ${c.count} msgs`}
-                    style={{ background: bg, borderRadius: 2 }}
-                  />
-                );
-              })}
+              {col.map((c) => (
+                <div
+                  key={c.date}
+                  title={`${c.date} · ${c.count} msgs`}
+                  style={{ background: bucketColor(c.count, qs), borderRadius: 2 }}
+                />
+              ))}
             </div>
           ))}
         </div>
-        {/* Week numbers row */}
+        {/* Week-of axis — Monday of each column. */}
         <div
           style={{
             display: "grid",
@@ -510,26 +507,9 @@ function WeeksHeatmap({ msgs }: { msgs: DayPoint[] }) {
             textAlign: "center",
           }}
         >
-          {weekNumbers.map((wn, i) => (
-            <div key={i} title={`ISO week ${wn}`}>W{wn}</div>
+          {weekLabels.map((lbl, i) => (
+            <div key={i} title={`Week of ${lbl} (Mon)`}>{lbl}</div>
           ))}
-        </div>
-        {/* Month axis */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(12, 1fr)",
-            gap: 3,
-            marginTop: 2,
-            fontSize: 9.5,
-            color: "var(--muted)",
-            fontFamily: "var(--fm)",
-          }}
-        >
-          {Array.from({ length: 12 }).map((_, wi) => {
-            const ml = monthLabels.find((m) => m.week === wi);
-            return <div key={wi}>{ml?.label ?? ""}</div>;
-          })}
         </div>
       </div>
     </div>
@@ -542,7 +522,7 @@ function DaysHeatmap({ msgs }: { msgs: DayPoint[] }) {
     for (const d of msgs) map.set(d.date, d.count);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const out: { date: string; count: number; dow: string; dom: number; week: number }[] = [];
+    const out: { date: string; count: number; dow: string; dom: number; mon: string }[] = [];
     for (let i = 13; i >= 0; i--) {
       const dt = new Date(today.getTime() - i * 86_400_000);
       const key = dt.toISOString().slice(0, 10);
@@ -551,61 +531,50 @@ function DaysHeatmap({ msgs }: { msgs: DayPoint[] }) {
         count: map.get(key) ?? 0,
         dow: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dt.getDay()],
         dom: dt.getDate(),
-        week: isoWeek(dt),
+        mon: dt.toLocaleDateString(undefined, { month: "short" }),
       });
     }
     return out;
   }, [msgs]);
-  const max = Math.max(1, ...days.map((d) => d.count));
+  const qs = useMemo(() => quartiles(days.map((d) => d.count)), [days]);
   return (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(14, 1fr)", gap: 6 }}>
-      {days.map((d) => {
-        const v = d.count / max;
-        const bg = d.count === 0
-          ? "var(--s2)"
-          : v < 0.25
-          ? "rgba(118, 200, 156, .25)"
-          : v < 0.6
-          ? "rgba(118, 200, 156, .55)"
-          : "var(--cedar-glow)";
-        return (
+      {days.map((d) => (
+        <div
+          key={d.date}
+          title={`${d.date} · ${d.count} msgs`}
+          style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}
+        >
           <div
-            key={d.date}
-            title={`${d.date} · W${d.week} · ${d.count} msgs`}
-            style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}
+            style={{
+              width: "100%",
+              aspectRatio: "1",
+              background: bucketColor(d.count, qs),
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontFamily: "var(--fm)",
+              fontSize: 11,
+              color: d.count === 0 ? "var(--muted)" : "var(--text)",
+            }}
           >
-            <div
-              style={{
-                width: "100%",
-                aspectRatio: "1",
-                background: bg,
-                borderRadius: 4,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontFamily: "var(--fm)",
-                fontSize: 11,
-                color: d.count === 0 ? "var(--muted)" : "var(--text)",
-              }}
-            >
-              {d.count > 0 ? d.count : ""}
-            </div>
-            <div
-              style={{
-                fontSize: 10,
-                color: "var(--muted)",
-                fontFamily: "var(--fm)",
-                lineHeight: 1.2,
-                textAlign: "center",
-              }}
-            >
-              <div style={{ color: "var(--text2)" }}>{d.dom}</div>
-              <div>{d.dow}</div>
-              <div style={{ color: "var(--cedar-2)", fontSize: 9 }}>W{d.week}</div>
-            </div>
+            {d.count > 0 ? d.count : ""}
           </div>
-        );
-      })}
+          <div
+            style={{
+              fontSize: 10,
+              color: "var(--muted)",
+              fontFamily: "var(--fm)",
+              lineHeight: 1.2,
+              textAlign: "center",
+            }}
+          >
+            <div style={{ color: "var(--text2)" }}>{d.mon} {d.dom}</div>
+            <div>{d.dow}</div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
