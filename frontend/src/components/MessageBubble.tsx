@@ -128,13 +128,19 @@ export default function MessageBubble({
         </div>
       )}
 
-      <div className="flex flex-col gap-0.5 max-w-[75%]">
+      <div
+        className="flex flex-col gap-0.5"
+        style={{ maxWidth: isUser ? "72%" : "calc(100% - 36px)" }}
+      >
         <div
           className={[
-            "px-4 py-2.5 rounded-2xl text-[14px] break-words",
+            "text-[14px] break-words",
             isUser
-              ? "bg-[var(--user-bg)] text-[var(--text)] rounded-br-sm whitespace-pre-wrap"
-              : "bg-[var(--asst-bg)] border border-[var(--border)] text-[var(--text)] rounded-bl-sm",
+              ? "px-3.5 py-2 rounded-[14px] rounded-br-[4px] bg-[var(--user-bg)] border border-[var(--user-bd)] text-[var(--text)] whitespace-pre-wrap"
+              // Assistant: no bubble. Markdown sits flush with the cedar
+              // mark — matches the design spec ("only the user has a
+              // bubble, Arz speaks plainly").
+              : "text-[var(--text)]",
           ].join(" ")}
         >
           {isUser ? (

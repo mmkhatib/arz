@@ -573,27 +573,171 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
               )}
 
               {/* Logs tab */}
-              {tab === "logs" && (
-                sseLog.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                    <ScrollText size={24} /><span className="text-[13px]">No events yet</span>
-                  </div>
-                ) : (
-                  <div className="px-2 flex flex-col gap-0.5">
-                    {sseLog.map((entry, i) => (
-                      <div key={i} className="flex items-center gap-2 px-2 py-1 rounded text-[10px] font-mono hover:bg-[var(--bg)]">
-                        <span className="text-[var(--cedar)] shrink-0">{entry.type}</span>
-                        {entry.summary && <span className="text-[var(--muted)] truncate flex-1">{entry.summary}</span>}
-                        <span className="text-[var(--muted)]/40 shrink-0">{entry.time}</span>
-                      </div>
-                    ))}
-                  </div>
-                )
-              )}
+              {tab === "logs" && <ActivityLogView entries={sseLog} />}
             </div>
           </>
         )}
       </div>
     </aside>
+  );
+}
+
+// ── ActivityLogView — design-matched log w/ level filters ──────
+// Maps SSE event types onto five levels (asst / tool / sub / memory /
+// warn) so the chip filter is meaningful. Anything else lands in "sys".
+const LEVEL_META: Record<string, { color: string; glyph: string; label: string }> = {
+  sys:    { color: "var(--text3)",      glyph: "·", label: "sys" },
+  user:   { color: "var(--stone)",      glyph: "›", label: "user" },
+  asst:   { color: "var(--cedar-glow)", glyph: "✦", label: "asst" },
+  tool:   { color: "var(--cedar-2)",    glyph: "⚒", label: "tool" },
+  sub:    { color: "var(--dawn)",       glyph: "⊚", label: "sub" },
+  memory: { color: "var(--pine)",       glyph: "◉", label: "memory" },
+  warn:   { color: "var(--ember)",      glyph: "!", label: "warn" },
+};
+
+function classifyLevel(type: string): keyof typeof LEVEL_META {
+  const t = type.toLowerCase();
+  if (t.includes("tool")) return "tool";
+  if (t.includes("subagent") || t.includes("spawn")) return "sub";
+  if (t.includes("memory") || t.includes("recall")) return "memory";
+  if (t.includes("error") || t.includes("warn") || t.includes("fail")) return "warn";
+  if (t.includes("user")) return "user";
+  if (t === "text_chunk" || t === "complete" || t.includes("asst")) return "asst";
+  return "sys";
+}
+
+function ActivityLogView({ entries }: { entries: { type: string; time: string; summary?: string }[] }) {
+  const [filter, setFilter] = useState<string>("all");
+  const [query, setQuery] = useState("");
+  const filters: { key: string; label: string }[] = [
+    { key: "all", label: "all" },
+    { key: "asst", label: "asst" },
+    { key: "tool", label: "tool" },
+    { key: "sub", label: "sub" },
+    { key: "memory", label: "memory" },
+    { key: "warn", label: "warn" },
+    { key: "sys", label: "sys" },
+  ];
+  const decorated = useMemo(
+    () => entries.map((e) => ({ ...e, level: classifyLevel(e.type) })),
+    [entries],
+  );
+  const q = query.trim().toLowerCase();
+  const visible = decorated.filter((e) => {
+    if (filter !== "all" && e.level !== filter) return false;
+    if (q && !`${e.type} ${e.summary ?? ""}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const counts: Record<string, number> = { all: decorated.length };
+  for (const e of decorated) counts[e.level] = (counts[e.level] ?? 0) + 1;
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+        <ScrollText size={24} />
+        <span className="text-[13px]">No events yet</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div
+        className="flex items-center gap-2 px-2.5 py-2 border-b border-[var(--hairline)] overflow-x-auto"
+        style={{ scrollbarWidth: "thin" }}
+      >
+        {filters.map((f) => {
+          const on = filter === f.key;
+          const c = counts[f.key] ?? 0;
+          return (
+            <button
+              key={f.key}
+              onClick={() => setFilter(f.key)}
+              className="shrink-0 transition-colors"
+              style={{
+                padding: "3px 9px",
+                fontSize: 10.5,
+                fontFamily: "var(--fm)",
+                borderRadius: 4,
+                background: on ? "var(--cedar-dim)" : "transparent",
+                color: on ? "var(--cedar-glow)" : "var(--text3)",
+                border: `1px solid ${on ? "var(--cedar-line)" : "transparent"}`,
+                textTransform: "uppercase",
+                letterSpacing: ".05em",
+                cursor: "pointer",
+              }}
+            >
+              {f.label} <span style={{ opacity: 0.55 }}>{c}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="px-2.5 py-1.5 border-b border-[var(--hairline)]">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Filter events…"
+          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded px-2 py-1 text-[11px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar-line)]"
+          style={{ fontFamily: "var(--fn)" }}
+        />
+      </div>
+      <div className="flex-1 overflow-y-auto py-1" style={{ fontFamily: "var(--fm)", fontSize: 11 }}>
+        {visible.map((e, i) => {
+          const m = LEVEL_META[e.level];
+          return (
+            <div
+              key={i}
+              className="flex gap-2 px-3 py-1 items-baseline transition-colors hover:bg-[var(--s2)]"
+              style={{ borderLeft: `2px solid transparent` }}
+            >
+              <span className="text-[var(--muted)] shrink-0" style={{ fontSize: 9.5, width: 56 }}>
+                {e.time}
+              </span>
+              <span
+                className="shrink-0 text-center"
+                style={{ color: m.color, fontSize: 10, width: 12 }}
+                title={m.label}
+              >
+                {m.glyph}
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[var(--text2)] truncate">{e.type}</div>
+                {e.summary && (
+                  <div
+                    className="text-[var(--muted)] truncate"
+                    style={{ marginTop: 1 }}
+                    title={e.summary}
+                  >
+                    {e.summary}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {visible.length === 0 && (
+          <div className="px-3 py-6 text-center text-[var(--muted)]" style={{ fontSize: 11 }}>
+            No events match.
+          </div>
+        )}
+      </div>
+      <div
+        className="flex items-center gap-2 px-2.5 py-1.5 border-t border-[var(--hairline)]"
+        style={{ fontFamily: "var(--fm)", fontSize: 10 }}
+      >
+        <span
+          className="rounded-full"
+          style={{
+            width: 5,
+            height: 5,
+            background: "var(--cedar-glow)",
+            animation: "arz-pulse 1.6s infinite",
+          }}
+        />
+        <span className="text-[var(--muted)] flex-1">streaming · SSE</span>
+        <span className="text-[var(--muted)]">
+          {visible.length}/{entries.length}
+        </span>
+      </div>
+    </div>
   );
 }

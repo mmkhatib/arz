@@ -1,5 +1,18 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot } from "lucide-react";
+
+// Per-provider accent — matches the chat badges + analytics legend.
+const PROVIDER_ACCENT: Record<string, string> = {
+  "claude-code": "#e8884a",
+  "kiro-cli":    "#5fa0d6",
+  codex:         "#6abf7c",
+  gemini:        "#7cb8c8",
+  ollama:        "#c878d6",
+  anthropic:     "#a884e8",
+};
+function providerAccent(p?: string | null): string {
+  return (p && PROVIDER_ACCENT[p]) || "var(--cedar-glow)";
+}
 import type { UploadedFile } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
@@ -347,21 +360,78 @@ export default function InputBar({
 
         {/* Bottom icon row */}
         <div className="flex items-center justify-between px-2.5 pb-2 pt-0.5 gap-2">
-          {/* Left: model + approval mode + context ring */}
-          <div className="flex items-center gap-0.5 min-w-0 overflow-visible flex-1">
-            {/* Model picker — every provider with onModelChange gets one */}
+          {/* Left: provider chip + model + agent + approval mode */}
+          <div className="flex items-center gap-1.5 min-w-0 overflow-visible flex-1 flex-wrap">
+            {/* Provider chip — locked. The CLI/provider stays in color and
+                isn't switchable from here. To change CLI, fork a new session. */}
+            <span
+              title={`Provider: ${PROVIDER_LABELS[provider ?? ""] ?? provider}`}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                height: 26,
+                padding: "0 9px",
+                background: "var(--bg)",
+                border: `1px solid ${providerAccent(provider)}`,
+                borderRadius: 6,
+                fontSize: 11.5,
+                fontFamily: "var(--fn)",
+              }}
+            >
+              <ContextRing pct={contextPct} estimated={contextEstimated} />
+              <span
+                style={{
+                  fontFamily: "var(--fm)",
+                  fontSize: 9.5,
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".08em",
+                }}
+              >
+                cli
+              </span>
+              <span style={{ color: providerAccent(provider), fontWeight: 500 }}>
+                {PROVIDER_LABELS[provider ?? ""] ?? provider}
+              </span>
+            </span>
+
+            {/* Model picker — same composer chip shape as the others */}
             {onModelChange ? (
               <div className="relative shrink-0">
                 <button
-                  onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); }}
-                  className="h-7 px-2 rounded-lg text-[12px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] flex items-center gap-1.5 transition-all whitespace-nowrap mr-2"
+                  onClick={() => { setModelOpen((v) => !v); setApprovalOpen(false); setAgentOpen(false); }}
                   title="Switch model"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    height: 26,
+                    padding: "0 8px",
+                    background: "var(--bg)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    color: "var(--text2)",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                    fontFamily: "var(--fn)",
+                  }}
                 >
-                  <ContextRing pct={contextPct} estimated={contextEstimated} />
-                  <span className="text-[10px] text-[var(--cedar)] mr-1">{PROVIDER_LABELS[provider ?? ""] ?? provider ?? ""}</span>
-                  <span className="truncate max-w-[180px]">
+                  <span
+                    style={{
+                      fontFamily: "var(--fm)",
+                      fontSize: 9.5,
+                      color: "var(--muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                    }}
+                  >
+                    model
+                  </span>
+                  <span style={{ color: "var(--text)", fontWeight: 500 }} className="truncate max-w-[180px]">
                     {activeModel?.label ?? effectiveModel ?? "Model"}
                   </span>
+                  <ChevronDown size={9} className="text-[var(--muted)]" />
                 </button>
                 <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
                   <div className="px-1 py-0.5 min-w-[220px]">
@@ -400,25 +470,45 @@ export default function InputBar({
                   </div>
                 </Popover>
               </div>
-            ) : (
-              <div className="h-7 px-2 flex items-center gap-1.5 mr-2">
-                <ContextRing pct={contextPct} estimated={contextEstimated} />
-                <span className="text-[12px] font-mono text-[var(--cedar)] whitespace-nowrap">
-                  {PROVIDER_LABELS[provider ?? ""] ?? provider}
-                </span>
-              </div>
-            )}
+            ) : null}
 
             {/* Agent picker */}
             {onAgentChange && (
               <div className="relative shrink-0">
                 <button
                   onClick={() => { setAgentOpen((v) => !v); setModelOpen(false); setApprovalOpen(false); }}
-                  className="h-7 px-2 rounded-lg text-[12px] font-mono flex items-center gap-1 transition-all hover:bg-[var(--surface)] whitespace-nowrap text-[var(--muted)] hover:text-[var(--text)]"
                   title="Switch agent"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    height: 26,
+                    padding: "0 8px",
+                    background: "var(--bg)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    color: "var(--text2)",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                    fontFamily: "var(--fn)",
+                  }}
                 >
-                  <span className="text-[10px]">🤖</span>
-                  <span className="truncate max-w-[120px]">{agent ?? "no agent"}</span>
+                  <Bot size={11} className="text-[var(--cedar-2)]" />
+                  <span
+                    style={{
+                      fontFamily: "var(--fm)",
+                      fontSize: 9.5,
+                      color: "var(--muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                    }}
+                  >
+                    agent
+                  </span>
+                  <span style={{ color: "var(--text)", fontWeight: 500 }} className="truncate max-w-[120px]">
+                    {agent ?? "none"}
+                  </span>
+                  <ChevronDown size={9} className="text-[var(--muted)]" />
                 </button>
                 <Popover open={agentOpen} onClose={() => setAgentOpen(false)}>
                   <div className="min-w-[220px] max-w-[280px]">
@@ -452,15 +542,37 @@ export default function InputBar({
             {onApprovalModeChange && (
               <div className="relative shrink-0">
                 <button
-                  onClick={() => { setApprovalOpen((v) => !v); setModelOpen(false); }}
-                  className={[
-                    "h-7 px-2 rounded-lg text-[12px] font-mono flex items-center gap-1 transition-all hover:bg-[var(--surface)] whitespace-nowrap",
-                    activeApproval.color,
-                  ].join(" ")}
+                  onClick={() => { setApprovalOpen((v) => !v); setModelOpen(false); setAgentOpen(false); }}
                   title={`Approval mode: ${activeApproval.label}`}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    height: 26,
+                    padding: "0 8px",
+                    background: approvalMode === "yolo" ? "rgba(180, 70, 70, 0.15)" : "var(--bg)",
+                    border: `1px solid ${approvalMode === "yolo" ? "var(--ember)" : "var(--border)"}`,
+                    borderRadius: 6,
+                    color: "var(--text2)",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                    fontFamily: "var(--fn)",
+                  }}
                 >
-                  <span className="shrink-0">{activeApproval.icon}</span>
-                  {activeApproval.label}
+                  <span className={["shrink-0", activeApproval.color].join(" ")}>{activeApproval.icon}</span>
+                  <span
+                    style={{
+                      fontFamily: "var(--fm)",
+                      fontSize: 9.5,
+                      color: "var(--muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                    }}
+                  >
+                    approval
+                  </span>
+                  <span style={{ color: "var(--text)", fontWeight: 500 }}>{activeApproval.label}</span>
+                  <ChevronDown size={9} className="text-[var(--muted)]" />
                 </button>
                 <Popover open={approvalOpen} onClose={() => setApprovalOpen(false)}>
                   <div className="px-1 py-0.5">
