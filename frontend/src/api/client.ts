@@ -182,6 +182,7 @@ export interface McpServer {
 
 export type ProjectStatus = "active" | "paused" | "done" | "archived";
 export type ProjectTaskStatus = "planned" | "in_progress" | "blocked" | "done" | "failed";
+export type ProjectTaskPriority = "low" | "normal" | "high" | "critical";
 
 export interface ProjectTask {
   id: string;
@@ -191,6 +192,7 @@ export interface ProjectTask {
   description: string;
   depends_on: string[];
   artifacts: string[];
+  priority: ProjectTaskPriority;
   created_at: number;
   updated_at: number;
   started_at: number | null;
@@ -870,6 +872,10 @@ export const api = {
   listProjects: () =>
     request<ProjectSummary[]>("/projects"),
   getProject: (id: string) => request<ProjectSummary>(`/projects/${encodeURIComponent(id)}`),
+  listProjectFiles: (id: string) =>
+    request<{ files: { path: string; rel_path: string; size: number; mtime: number; declared: boolean }[]; truncated?: boolean }>(
+      `/projects/${encodeURIComponent(id)}/files`,
+    ),
   createProject: (body: { name: string; brief?: string; repo_path?: string; channel_id?: string | null }) =>
     request<ProjectSummary>("/projects", { method: "POST", body: JSON.stringify(body) }),
   patchProject: (id: string, body: Partial<ProjectSummary>) =>
@@ -880,7 +886,7 @@ export const api = {
   deleteProject: async (id: string): Promise<void> => {
     await fetch(`${BASE}/projects/${encodeURIComponent(id)}`, { method: "DELETE" });
   },
-  createProjectTask: (projectId: string, body: { title: string; description?: string; assignee?: string | null; depends_on?: string[] }) =>
+  createProjectTask: (projectId: string, body: { title: string; description?: string; assignee?: string | null; depends_on?: string[]; priority?: ProjectTaskPriority }) =>
     request<ProjectTask>(`/projects/${encodeURIComponent(projectId)}/tasks`, {
       method: "POST",
       body: JSON.stringify(body),

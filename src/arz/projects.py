@@ -42,6 +42,7 @@ def default_workspace_root() -> Path:
 
 ProjectStatus = Literal["active", "paused", "done", "archived"]
 TaskStatus = Literal["planned", "in_progress", "blocked", "done", "failed"]
+TaskPriority = Literal["low", "normal", "high", "critical"]
 
 
 @dataclass
@@ -53,6 +54,7 @@ class Task:
     description: str = ""
     depends_on: list[str] = field(default_factory=list)
     artifacts: list[str] = field(default_factory=list)
+    priority: TaskPriority = "normal"
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     started_at: float | None = None
@@ -98,8 +100,14 @@ def _serialize(p: Project) -> dict:
 
 def _deserialize(d: dict) -> Project:
     raw_tasks = d.get("tasks") or []
-    tasks = [Task(**t) for t in raw_tasks if isinstance(t, dict)]
-    fields = {k: v for k, v in d.items() if k != "tasks"}
+    task_field_names = {f.name for f in __import__("dataclasses").fields(Task)}
+    tasks = [
+        Task(**{k: v for k, v in t.items() if k in task_field_names})
+        for t in raw_tasks
+        if isinstance(t, dict)
+    ]
+    proj_field_names = {f.name for f in __import__("dataclasses").fields(Project)}
+    fields = {k: v for k, v in d.items() if k in proj_field_names and k != "tasks"}
     fields["tasks"] = tasks
     return Project(**fields)
 
@@ -283,12 +291,18 @@ def parse_and_apply_task_tags(text: str, project_id: str) -> tuple[str, list[Tas
         if action == "create":
             depends = [d.strip() for d in (attrs.get("depends_on") or "").split(",") if d.strip()]
             assignee = (attrs.get("assignee") or "").lstrip("@").strip() or None
+            pri_raw = (attrs.get("priority") or "normal").lower()
+            pri = pri_raw if pri_raw in ("low", "normal", "high", "critical") else "normal"
             tid = attrs.get("id") or uuid.uuid4().hex[:10]
             existing = next((t for t in p.tasks if t.id == tid), None)
             if existing:
                 # idempotent: same id = update fields
                 store.update_task(
-                    project_id, tid, title=body[:200] or existing.title, assignee=assignee
+                    project_id,
+                    tid,
+                    title=body[:200] or existing.title,
+                    assignee=assignee,
+                    priority=pri,
                 )
             else:
                 t = Task(
@@ -297,6 +311,7 @@ def parse_and_apply_task_tags(text: str, project_id: str) -> tuple[str, list[Tas
                     description=body if len(body) > 200 else "",
                     assignee=assignee,
                     depends_on=depends,
+                    priority=pri,  # type: ignore[arg-type]
                 )
                 store.add_task(project_id, t)
                 touched.append(t)
@@ -309,6 +324,10 @@ def parse_and_apply_task_tags(text: str, project_id: str) -> tuple[str, list[Tas
                 if "assignee" in attrs:
                     a = attrs["assignee"].lstrip("@").strip()
                     changes["assignee"] = a or None
+                if "priority" in attrs:
+                    pr = attrs["priority"].lower()
+                    if pr in ("low", "normal", "high", "critical"):
+                        changes["priority"] = pr
                 if body:
                     changes["description"] = body
                 store.update_task(project_id, tid, **changes)

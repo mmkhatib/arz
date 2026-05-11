@@ -217,12 +217,17 @@ class ChannelRunner:
                             blockers = (
                                 f" (blocked by {','.join(t.depends_on)})" if t.depends_on else ""
                             )
-                            lines.append(f"- [{t.status}] {t.id}: {t.title}{assignee}{blockers}")
+                            pri = getattr(t, "priority", "normal")
+                            pri_tag = f" !{pri}" if pri != "normal" else ""
+                            lines.append(
+                                f"- [{t.status}{pri_tag}] {t.id}: {t.title}{assignee}{blockers}"
+                            )
                     lines.append("")
                     lines.append(
                         'Track work by emitting `<task action="create|update|done|delete" '
-                        'id="..." assignee="@agent">title</task>` tags in your reply. They '
-                        "are stripped before display and persisted to the project."
+                        'id="..." assignee="@agent" priority="low|normal|high|critical" '
+                        'depends_on="id1,id2">title</task>` tags in your reply. Tags are '
+                        "stripped before display and persisted to the project."
                     )
             except Exception:
                 log.exception("project context render failed")

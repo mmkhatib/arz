@@ -77,6 +77,7 @@ class TaskCreateBody(BaseModel):
     description: str = ""
     assignee: str | None = None
     depends_on: list[str] = []
+    priority: str | None = None  # low / normal / high / critical
 
 
 class TaskPatchBody(BaseModel):
@@ -86,6 +87,7 @@ class TaskPatchBody(BaseModel):
     status: TaskStatus | None = None
     depends_on: list[str] | None = None
     artifacts: list[str] | None = None
+    priority: str | None = None
 
 
 @router.get("/api/projects")
@@ -99,6 +101,81 @@ async def get_project(project_id: str) -> dict:
     if not p:
         raise HTTPException(status_code=404, detail="project not found")
     return _project_to_dict(p)
+
+
+@router.get("/api/projects/{project_id}/files")
+async def list_project_files(project_id: str) -> dict:
+    """Walk the project's repo_path and return files touched since the
+    project was created. Lets the Files tab show what the agents have
+    actually generated on disk, not just what they remembered to tag as
+    an artifact in their reply.
+    """
+    from pathlib import Path as _Path
+
+    p = get_project_store().get(project_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="project not found")
+    if not p.repo_path:
+        return {"files": []}
+    root = _Path(p.repo_path).expanduser()
+    if not root.exists() or not root.is_dir():
+        return {"files": []}
+
+    declared = {a for t in p.tasks for a in (t.artifacts or [])}
+
+    # Skip the usual noise: VCS, node_modules, virtualenvs, build dirs.
+    SKIP_DIRS = {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".next",
+        ".turbo",
+        ".cache",
+        "target",
+    }
+    SKIP_SUFFIX = (".pyc", ".pyo", ".lock", ".log")
+
+    files: list[dict] = []
+    cutoff = float(p.created_at or 0)
+    limit = 500  # cap to keep response small
+    for path in root.rglob("*"):
+        if len(files) >= limit:
+            break
+        try:
+            if any(part in SKIP_DIRS for part in path.parts):
+                continue
+            if path.is_dir() or path.is_symlink():
+                continue
+            if path.name.startswith("."):
+                continue
+            if path.suffix.lower() in SKIP_SUFFIX:
+                continue
+            st = path.stat()
+            if cutoff and st.st_mtime < cutoff - 1:
+                continue  # pre-existing file, untouched since project start
+            rel = str(path.relative_to(root))
+            files.append(
+                {
+                    "path": str(path),
+                    "rel_path": rel,
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                    "declared": str(path) in declared or rel in declared,
+                }
+            )
+        except OSError:
+            continue
+    files.sort(key=lambda f: f["mtime"], reverse=True)
+    return {"files": files, "truncated": len(files) >= limit}
 
 
 @router.post("/api/projects", status_code=201)
@@ -219,12 +296,16 @@ async def create_task(project_id: str, body: TaskCreateBody) -> dict:
     p = store.get(project_id)
     if not p:
         raise HTTPException(status_code=404, detail="project not found")
+    pri = (body.priority or "normal").lower()
+    if pri not in ("low", "normal", "high", "critical"):
+        pri = "normal"
     task = Task(
         id=uuid.uuid4().hex[:10],
         title=(body.title or "").strip()[:200] or "Untitled",
         description=body.description or "",
         assignee=body.assignee or None,
         depends_on=list(body.depends_on or []),
+        priority=pri,  # type: ignore[arg-type]
     )
     p2 = store.add_task(project_id, task)
     if not p2:
