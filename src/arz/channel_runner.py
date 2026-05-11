@@ -245,9 +245,37 @@ class ChannelRunner:
             lines.append(f"Topic: {ch.topic}")
         else:
             lines.append(f"# Channel: {ch.name}")
-        members = ", ".join(f"@{m.agent}" for m in ch.members if m.agent != agent)
-        if members:
-            lines.append(f"Specialists you can delegate to: {members}")
+        # Roster — grouped by base role (strip trailing -N suffix so
+        # multiples like @coder + @coder-2 surface as a "coder" pool),
+        # with the current concurrency cap and busy state so the
+        # orchestrator can fan out without overloading any one bucket.
+        import re as _re
+
+        roster_pool: dict[str, list[str]] = {}
+        for m in ch.members:
+            if m.agent == agent:
+                continue
+            base = _re.sub(r"-\d+$", "", m.agent) or m.agent
+            roster_pool.setdefault(base, []).append(m.agent)
+        if roster_pool:
+            busy = set(self._busy.get(ch.id, set()))
+            cap = 3
+            try:
+                if project_id:
+                    from arz.projects import get_project_store as _gps
+
+                    p = _gps().get(project_id)
+                    if p and getattr(p, "max_concurrent_subagents", None):
+                        cap = max(1, int(p.max_concurrent_subagents))
+            except Exception:
+                pass
+            lines.append(f"Specialists you can delegate to (max {cap} parallel):")
+            for base, names in sorted(roster_pool.items()):
+                idle = [n for n in names if n not in busy]
+                tagged = [f"@{n}{' (busy)' if n in busy else ''}" for n in sorted(names)]
+                lines.append(f"  {base} — {len(idle)}/{len(names)} idle: " + ", ".join(tagged))
+            if busy:
+                lines.append(f"Currently working: {', '.join('@' + b for b in sorted(busy))}")
 
         # Project state, if any.
         if project_id:
