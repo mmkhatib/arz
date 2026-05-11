@@ -29,14 +29,21 @@ def apply_log_level(level: str | None) -> None:
     a PATCH to settings actually quiets / un-quiets the terminal.
 
     Targets:
-      - root logger (catches anything left at the default handler)
-      - ``arz`` package logger
-      - ``uvicorn`` + ``uvicorn.error`` (server + access stays untouched)
-      - ``structlog`` stdlib bridge — Arz emits via structlog so unless we
-        bump its underlying stdlib logger, the INFO records still flow.
+      - root + ``arz`` + ``uvicorn`` family (incl. .access, .error, .asgi)
+      - structlog — Arz logs through structlog's default ConsoleRenderer
+        which bypasses the stdlib hierarchy entirely, so we also call
+        ``structlog.configure`` with a filtering bound logger.
     """
     lvl = _LOG_LEVEL_MAP.get((level or "INFO").upper(), logging.INFO)
-    targets = ["", "arz", "uvicorn", "uvicorn.error", "structlog"]
+    targets = [
+        "",
+        "arz",
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "uvicorn.asgi",
+        "fastapi",
+    ]
     for name in targets:
         lg = logging.getLogger(name)
         lg.setLevel(lvl)
@@ -45,6 +52,14 @@ def apply_log_level(level: str | None) -> None:
                 h.setLevel(lvl)
             except Exception:
                 pass
+    # structlog bypasses stdlib filtering by default. Wrap with a
+    # filtering bound logger so INFO/etc. respect the same threshold.
+    try:
+        import structlog
+
+        structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(lvl))
+    except Exception:
+        pass
 
 
 ProviderName = Literal["claude-code", "kiro-cli", "codex", "anthropic"]
