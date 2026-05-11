@@ -33,10 +33,12 @@ from arz.channels import (
 
 log = logging.getLogger(__name__)
 
-# Hard ceiling on rounds per user turn. One round = orchestrator reply +
-# any specialist replies it triggered. 3 rounds is plenty for "fan out,
-# integrate, summarise" without runaway costs.
-_MAX_ROUNDS = 3
+# Hard ceiling on orchestrator turns per user post. Previously this was
+# a count of barrier-style "rounds"; now the runner uses an as-completed
+# loop where the orchestrator can re-fire each time a specialist returns
+# so fast workers don't sit idle behind a slow one. 8 turns gives a long
+# fan-out + integrate session without runaway cost.
+_MAX_ORCH_TURNS = 8
 
 # Global ceiling on concurrent specialist runs across the whole runner.
 # Per-project caps (Project.max_concurrent_subagents) further restrict
@@ -79,7 +81,14 @@ class ChannelRunner:
                 self._busy.pop(slug, None)
 
     async def post_user(self, slug: str, text: str) -> Channel | None:
-        """Drive the channel after a human posts. Returns the updated channel."""
+        """Drive the channel after a human posts. Returns the updated channel.
+
+        Model: as-completed, not round-barrier. The orchestrator does an
+        initial turn, fans out specialists, then *each time any one
+        specialist completes* we run another orchestrator turn so it can
+        immediately dispatch more work to whoever's idle. Slow workers
+        no longer pin fast ones in the lobby.
+        """
         store = get_channel_store()
         ch = store.get(slug)
         if ch is None:
@@ -98,29 +107,29 @@ class ChannelRunner:
             log.warning("channel %s has no orchestrator", slug)
             return store.get(slug)
 
-        # If the channel is wired to a project, drive task-tag persistence
-        # and use the project's per-channel concurrency cap (clamped by
-        # the global semaphore).
         from arz.projects import get_project_store, parse_and_apply_task_tags
 
         project = get_project_store().get_by_channel(slug)
         per_channel_cap = project.max_concurrent_subagents if project else 3
         per_channel_sem = asyncio.Semaphore(max(1, per_channel_cap))
+        project_approval = "yolo" if project else None
+        project_workdir = project.repo_path if (project and project.repo_path) else None
 
-        # Per-pair counters reset each user turn.
         pair_counts: dict[tuple[str, str], int] = {}
+        inflight: set[asyncio.Task[None]] = set()
+        orch_turns = 0
 
-        for _round_idx in range(_MAX_ROUNDS):
-            ch = store.get(slug) or ch
+        async def run_orchestrator_once() -> list[str]:
+            """One orchestrator turn. Returns the list of *new* specialist
+            names it mentioned (after pair-cap filtering) so the caller
+            can spawn them. Side-effect: posts the orchestrator reply.
+            """
+            nonlocal orch_turns
+            current = store.get(slug) or ch
             ctx = self._build_context(
-                ch, orchestrator.agent, project_id=(project.id if project else None)
+                current, orchestrator.agent, project_id=(project.id if project else None)
             )
             self._mark_busy(slug, orchestrator.agent)
-            # Project-linked channels run agents in yolo so they can
-            # write into the project workspace without per-call user
-            # approval. Standalone channels keep the agent's own mode.
-            project_approval = "yolo" if project else None
-            project_workdir = project.repo_path if (project and project.repo_path) else None
             try:
                 reply = await self._runner(
                     orchestrator.agent,
@@ -130,52 +139,68 @@ class ChannelRunner:
                 )
             except Exception:
                 log.exception("orchestrator turn failed", extra={"channel": slug})
-                break
+                return []
             finally:
                 self._mark_idle(slug, orchestrator.agent)
+            orch_turns += 1
             reply = (reply or "").strip()
             if not reply:
-                break
-            # If linked to a project, strip + apply <task> tags before
-            # storing the visible reply.
+                return []
             if project:
                 try:
                     cleaned, _touched = parse_and_apply_task_tags(reply, project.id)
                     reply = cleaned or reply
                 except Exception:
                     log.exception("task-tag apply failed", extra={"channel": slug})
-
             store.post(slug, orchestrator.agent, reply, thread_id=None)
-            mentions = _extract_member_mentions(reply, ch)
-            if not mentions:
-                break
-
-            # Fan out to specialists in parallel. The orchestrator's reply
-            # acts as the thread anchor so specialist replies thread off it.
-            anchor = store.get(slug)
-            anchor_msg = anchor.messages[-1] if anchor and anchor.messages else None
-            tasks: list[asyncio.Task[None]] = []
+            mentions = _extract_member_mentions(reply, current)
+            picked: list[str] = []
             for spec in mentions:
                 pair = (orchestrator.agent, spec)
                 if pair_counts.get(pair, 0) >= _MAX_A2A_PAIR:
                     continue
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
-                tasks.append(
-                    asyncio.create_task(
-                        self._run_specialist(
-                            slug,
-                            spec,
-                            reply,
-                            anchor_msg,
-                            per_channel_sem,
-                            approval_mode=project_approval,
-                            work_dir=project_workdir,
-                        )
+                picked.append(spec)
+            return picked
+
+        def spawn(spec: str) -> None:
+            anchor = store.get(slug)
+            anchor_msg = anchor.messages[-1] if anchor and anchor.messages else None
+            inflight.add(
+                asyncio.create_task(
+                    self._run_specialist(
+                        slug,
+                        spec,
+                        anchor_msg.text if anchor_msg else "",
+                        anchor_msg,
+                        per_channel_sem,
+                        approval_mode=project_approval,
+                        work_dir=project_workdir,
                     )
                 )
-            if not tasks:
-                break
-            await asyncio.gather(*tasks, return_exceptions=True)
+            )
+
+        # Initial orchestrator turn + fan-out.
+        for spec in await run_orchestrator_once():
+            spawn(spec)
+
+        # As-completed loop: each time a specialist finishes, the
+        # orchestrator gets to react and dispatch more work to anyone
+        # currently idle. Bound by _MAX_ORCH_TURNS so cost stays sane.
+        while inflight and orch_turns < _MAX_ORCH_TURNS:
+            done, inflight = await asyncio.wait(inflight, return_when=asyncio.FIRST_COMPLETED)
+            for t in done:
+                # Exceptions are already logged inside _run_specialist.
+                if t.exception():
+                    pass
+            for spec in await run_orchestrator_once():
+                spawn(spec)
+
+        # Drain anything still running so we don't leak tasks if we hit
+        # the turn cap with work in flight. Their replies still land in
+        # the channel via _run_specialist's own post.
+        if inflight:
+            await asyncio.gather(*inflight, return_exceptions=True)
 
         return store.get(slug)
 
