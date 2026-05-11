@@ -484,6 +484,10 @@ export const api = {
     request<{ name: string; count: number }[]>("/analytics/tool-usage"),
   analyticsProviders: () =>
     request<{ provider: string; messages: number }[]>("/analytics/providers"),
+  analyticsByDayByProvider: (days = 84) =>
+    request<{ date: string; provider: string; messages: number; tokens: number }[]>(
+      `/analytics/by-day-by-provider?days=${days}`,
+    ),
   analyticsLatency: () =>
     request<{ provider: string; samples: number; p50_ms: number; p95_ms: number; avg_ms: number }[]>(
       "/analytics/latency",

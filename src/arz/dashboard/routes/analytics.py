@@ -96,6 +96,45 @@ async def provider_breakdown(request: Request) -> list[dict]:
     return [{"provider": p, "messages": c} for p, c in counts.most_common()]
 
 
+@router.get("/api/analytics/by-day-by-provider", response_model=list[dict])
+async def by_day_by_provider(
+    request: Request,
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+) -> list[dict]:
+    """Per-(date, provider) rollup of user messages + assistant tokens.
+
+    Powers the Analytics Breakdown view's per-LLM expansion. Returns
+    rows shaped {date, provider, messages, tokens} — frontend pivots
+    these into the day-level table.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    msgs: dict[tuple[str, str], int] = {}
+    toks: dict[tuple[str, str], int] = {}
+    for session in _all_sessions(request):
+        provider = session.provider or "(unset)"
+        for m in session.messages:
+            if m.created_at < cutoff:
+                continue
+            key = (m.created_at.date().isoformat(), provider)
+            if m.role == "user":
+                msgs[key] = msgs.get(key, 0) + 1
+            elif m.role == "assistant" and m.usage:
+                total = int(m.usage.get("input_tokens", 0) or 0) + int(
+                    m.usage.get("output_tokens", 0) or 0
+                )
+                toks[key] = toks.get(key, 0) + total
+    keys = set(msgs.keys()) | set(toks.keys())
+    return [
+        {
+            "date": date,
+            "provider": prov,
+            "messages": msgs.get((date, prov), 0),
+            "tokens": toks.get((date, prov), 0),
+        }
+        for date, prov in sorted(keys, key=lambda k: (k[0], k[1]))
+    ]
+
+
 @router.get("/api/analytics/latency", response_model=list[LatencyStats])
 async def latency(request: Request) -> list[LatencyStats]:
     """Per-provider elapsed_ms statistics for assistant turns."""
