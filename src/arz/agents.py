@@ -706,7 +706,31 @@ class AgentRegistry:
         self._dir = directory or (Path.home() / ".arz" / "agents")
         self._dir.mkdir(parents=True, exist_ok=True)
         self._seed_if_empty()
+        self._backfill_missing_seeds()
         self._upgrade_untouched_seeds()
+
+    def _tombstones(self) -> set[str]:
+        """Names of seed agents the user explicitly deleted. We honor
+        those across restarts so backfill doesn't keep resurrecting them.
+        """
+        tomb = self._dir / ".deleted-seeds"
+        if not tomb.exists():
+            return set()
+        return {
+            line.strip() for line in tomb.read_text(encoding="utf-8").splitlines() if line.strip()
+        }
+
+    def _mark_deleted(self, name: str) -> None:
+        # Only tombstone names that match a seed — user-authored agents
+        # don't need a sticky marker.
+        if not any(s.name == name for s in _SEED_AGENTS):
+            return
+        tomb = self._dir / ".deleted-seeds"
+        existing = self._tombstones()
+        if name in existing:
+            return
+        existing.add(name)
+        tomb.write_text("\n".join(sorted(existing)) + "\n", encoding="utf-8")
 
     def _seed_if_empty(self) -> None:
         marker = self._dir / ".seeded"
@@ -718,6 +742,20 @@ class AgentRegistry:
         for agent in _SEED_AGENTS:
             self._path(agent.name).write_text(agent.model_dump_json(indent=2), encoding="utf-8")
         marker.write_text(str(_SEED_REVISION), encoding="utf-8")
+
+    def _backfill_missing_seeds(self) -> None:
+        """Add any seed that doesn't have a .json on disk yet — without
+        clobbering user edits and without resurrecting agents the user
+        deleted (those are recorded in .deleted-seeds).
+        """
+        tomb = self._tombstones()
+        for agent in _SEED_AGENTS:
+            if agent.name in tomb:
+                continue
+            path = self._path(agent.name)
+            if path.exists():
+                continue
+            path.write_text(agent.model_dump_json(indent=2), encoding="utf-8")
 
     def _upgrade_untouched_seeds(self) -> None:
         """Replace stale seeded agents whose prompt still matches a previous
@@ -790,5 +828,8 @@ class AgentRegistry:
         p = self._path(name)
         if p.exists():
             p.unlink()
+            # If the user removed a seeded agent, remember that so the
+            # next backfill doesn't bring it back from the dead.
+            self._mark_deleted(name)
             return True
         return False
