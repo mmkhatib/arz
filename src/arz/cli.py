@@ -172,12 +172,19 @@ def gateway(
 
     logging.getLogger("uvicorn.access").addFilter(_QuietPolling())
 
+    # Honor cfg.log_level for the root logger + uvicorn + structlog stdlib
+    # bridge. WARNING / ERROR really do silence INFO chatter; default INFO
+    # keeps prior behavior. Settings PATCH also calls into this path live.
+    from arz.dashboard.routes.settings import apply_log_level as _apply_lvl
+
+    _apply_lvl(cfg.log_level)
+
     typer.echo(f"Arz gateway starting at http://{cfg.dashboard.host}:{cfg.dashboard.port}")
     uvicorn.run(
         web_app,
         host=cfg.dashboard.host,
         port=cfg.dashboard.port,
-        log_level="info",
+        log_level=(cfg.log_level or "info").lower(),
     )
 
 

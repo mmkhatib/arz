@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -11,6 +12,40 @@ from arz.config.loader import save_config
 from arz.dashboard.token_auth import require_token
 
 router = APIRouter(dependencies=[Depends(require_token)])
+
+
+_LOG_LEVEL_MAP = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "WARN": logging.WARNING,
+    "ERROR": logging.ERROR,
+    "CRITICAL": logging.CRITICAL,
+}
+
+
+def apply_log_level(level: str | None) -> None:
+    """Push the configured log level into every logger that matters so
+    a PATCH to settings actually quiets / un-quiets the terminal.
+
+    Targets:
+      - root logger (catches anything left at the default handler)
+      - ``arz`` package logger
+      - ``uvicorn`` + ``uvicorn.error`` (server + access stays untouched)
+      - ``structlog`` stdlib bridge — Arz emits via structlog so unless we
+        bump its underlying stdlib logger, the INFO records still flow.
+    """
+    lvl = _LOG_LEVEL_MAP.get((level or "INFO").upper(), logging.INFO)
+    targets = ["", "arz", "uvicorn", "uvicorn.error", "structlog"]
+    for name in targets:
+        lg = logging.getLogger(name)
+        lg.setLevel(lvl)
+        for h in lg.handlers:
+            try:
+                h.setLevel(lvl)
+            except Exception:
+                pass
+
 
 ProviderName = Literal["claude-code", "kiro-cli", "codex", "anthropic"]
 
@@ -81,6 +116,8 @@ async def patch_settings(body: SettingsPatch, request: Request) -> SettingsRespo
         cfg.dashboard.system_prompt = body.system_prompt
     if body.log_level is not None:
         cfg.log_level = body.log_level
+        # Live-apply so the user doesn't need to restart the gateway.
+        apply_log_level(body.log_level)
     if body.auto_recall is not None:
         cfg.dashboard.auto_recall = body.auto_recall
     if body.recall_k is not None:

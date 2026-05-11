@@ -304,7 +304,7 @@ function MemoryStatsRow({
       ) : (
         <span className="flex-1 text-[var(--muted)]/40">memory…</span>
       )}
-      <span className="text-[var(--muted)]/60 shrink-0">v0.7.30</span>
+      <span className="text-[var(--muted)]/60 shrink-0">v0.7.31</span>
     </div>
   );
 }
