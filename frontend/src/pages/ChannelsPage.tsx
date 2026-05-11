@@ -543,16 +543,15 @@ export default function ChannelsPage() {
                 </div>
               </div>
 
-              {/* Scrollable feed */}
+              {/* Scrollable feed — block layout so children take their
+                  natural height and the container scrolls instead of
+                  squishing rows. */}
               <div
                 ref={feedRef}
                 style={{
                   flex: 1,
                   overflowY: "auto",
                   padding: "16px 18px 12px",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 8,
                   minHeight: 0,
                 }}
               >
@@ -987,7 +986,7 @@ function ThinkingBubble({ agent }: { agent: string }) {
         alignItems: "center",
         gap: 10,
         padding: "8px 14px",
-        margin: "4px 0",
+        margin: "4px 0 8px",
         background: "var(--cedar-dim)",
         border: "1px solid var(--cedar-line)",
         borderRadius: 8,
@@ -1043,6 +1042,7 @@ function ChannelBubble({
     <div
       style={{
         marginLeft: isThreaded ? 18 : 0,
+        marginBottom: 8,
         background: isUser ? "var(--user-bg)" : "var(--surface)",
         border: `1px solid ${isUser ? "var(--user-bd)" : "var(--border)"}`,
         borderRadius: 10,
