@@ -59,11 +59,35 @@ function fmtCtx(n?: number): string {
   return String(n);
 }
 
+// Module-level cache + sessionStorage backup so revisits paint instantly
+// with the last-known status, then refresh in the background.
+type InstallerSnapshot = Awaited<ReturnType<typeof api.getInstallerStatus>>;
+let _cached: InstallerSnapshot | null = null;
+const _SS_KEY = "arz:installer-status-v1";
+function loadCache(): InstallerSnapshot | null {
+  if (_cached) return _cached;
+  try {
+    const raw = sessionStorage.getItem(_SS_KEY);
+    if (raw) {
+      _cached = JSON.parse(raw);
+      return _cached;
+    }
+  } catch {
+    // fall through
+  }
+  return null;
+}
+function saveCache(s: InstallerSnapshot): void {
+  _cached = s;
+  try { sessionStorage.setItem(_SS_KEY, JSON.stringify(s)); } catch { /* quota */ }
+}
+
 export default function LLMInstallerPage() {
-  const [clis, setClis] = useState<CliRow[]>([]);
-  const [catalog, setCatalog] = useState<ModelRow[]>([]);
-  const [installed, setInstalled] = useState<InstalledModel[]>([]);
-  const [loaded, setLoaded] = useState<LoadedModel[]>([]);
+  const initial = loadCache();
+  const [clis, setClis] = useState<CliRow[]>(initial?.clis ?? []);
+  const [catalog, setCatalog] = useState<ModelRow[]>(initial?.model_catalog ?? []);
+  const [installed, setInstalled] = useState<InstalledModel[]>(initial?.ollama_installed_models ?? []);
+  const [loaded, setLoaded] = useState<LoadedModel[]>(initial?.ollama_loaded_models ?? []);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState<string | null>(null);
   const [busyMemory, setBusyMemory] = useState<string | null>(null);
@@ -80,6 +104,7 @@ export default function LLMInstallerPage() {
       setOllamaInstalledModels(
         (s.ollama_installed_models || []).map((m) => ({ id: m.name, label: m.name })),
       );
+      saveCache(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

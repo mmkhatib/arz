@@ -231,15 +231,28 @@ async def install_mcp(request: Request) -> StreamingResponse:
 
     async def gen():
         async def run(argv: list[str], cwd: Path | None = None):
-            """Async generator yielding output lines from a subprocess."""
-            yield f"$ {' '.join(argv)}\n"
-            proc = await asyncio.create_subprocess_exec(
-                *argv,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                cwd=str(cwd) if cwd else None,
-                env={**os.environ},
-            )
+            """Async generator yielding output lines from a subprocess.
+
+            Resolves argv[0] via shutil.which so Windows .cmd / .bat
+            shims (npm.cmd, git.cmd, npx.cmd) are picked up — asyncio
+            create_subprocess_exec doesn't run PATHEXT lookup itself.
+            """
+            resolved = shutil.which(argv[0]) or argv[0]
+            display = " ".join(argv)
+            yield f"$ {display}\n"
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    resolved,
+                    *argv[1:],
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    cwd=str(cwd) if cwd else None,
+                    env={**os.environ},
+                )
+            except FileNotFoundError:
+                yield f"error: {argv[0]!r} not on PATH — install it and retry\n"
+                yield "[exit 127]\n"
+                return
             assert proc.stdout
             while True:
                 line = await proc.stdout.readline()
@@ -341,8 +354,14 @@ async def install_mcp(request: Request) -> StreamingResponse:
 
             if not cmd_default:
                 yield "warning: couldn't infer a launch command — set 'command' in the install request explicitly.\n"
+        except Exception as e:
+            yield f"error during install steps: {e}\n"
 
-            # Register
+        # Register no matter what — even if `npm install` failed, the
+        # clone is on disk and the user might want to fix deps manually
+        # rather than start over. Without this, the page never shows
+        # the server. Toggle off in /capabilities to disable.
+        try:
             reg = _load_registry()
             reg.setdefault("servers", {})
             reg["servers"][name] = {
@@ -357,9 +376,9 @@ async def install_mcp(request: Request) -> StreamingResponse:
             _save_registry(reg)
             yield f"\n✓ registered MCP server '{name}'\n"
             yield f"command: {cmd_default} {' '.join(args_default)}\n"
-            yield "Add it to ~/.claude.json mcpServers manually, or wire arz to inject these at session start.\n"
+            yield "Refresh /capabilities to see it. It'll show up under source: arz.\n"
         except Exception as e:
-            yield f"error: {e}\n"
+            yield f"error writing registry: {e}\n"
 
     return StreamingResponse(gen(), media_type="text/plain")
 
