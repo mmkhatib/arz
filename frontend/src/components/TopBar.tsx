@@ -10,6 +10,7 @@ import { Bell, Palette, Search, Check } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "@/api/client";
 import { useTheme } from "@/hooks/useTheme";
+import { describe as describeCron } from "@/components/ScheduleBuilder";
 
 const PAGE_LABEL: Record<string, string> = {
   "/":             "Chat",
@@ -464,7 +465,7 @@ function CommandPalette({
             kind: "cron" as const,
             id: String(c.id),
             label: c.name,
-            sub: `Schedule · ${c.schedule}`,
+            sub: `Schedule · ${describeCron(c.schedule)}`,
             path: "/schedule",
           })),
         ),

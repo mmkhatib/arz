@@ -15,6 +15,7 @@ import { Wand2, Plus, Trash2, Play, X, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import { CedarPage, CedarPageHeader, CedarCard, Tag, Toggle, TopoLines } from "@/components/CedarUI";
 import { type CronEntry } from "@/api/client";
+import { describe as describeCron } from "@/components/ScheduleBuilder";
 
 type TaskRecord = Awaited<ReturnType<typeof api.getTask>>;
 
@@ -184,7 +185,7 @@ export default function AutopilotPage() {
                     <div style={{ fontSize: 13.5, color: "var(--text)" }}>{r.name}</div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
                       <Tag color="muted">when</Tag>
-                      <code style={{ fontFamily: "var(--fm)", fontSize: 11, color: "var(--text2)" }}>{r.schedule}</code>
+                      <span style={{ fontSize: 11.5, color: "var(--text2)" }} title={r.schedule}>{describeCron(r.schedule)}</span>
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>

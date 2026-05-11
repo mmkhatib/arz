@@ -20,6 +20,7 @@ import {
 } from "@/components/CedarUI";
 import { api, type CronEntry } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
+import { ScheduleBuilder, describe as describeCron } from "@/components/ScheduleBuilder";
 
 type Variant = "sun" | "tape" | "list";
 
@@ -179,16 +180,8 @@ function JobModal({
           <CedarInput value={name} onChange={(e) => setName(e.target.value)} placeholder="Morning brief" autoFocus />
         </div>
         <div>
-          <CedarLabel>Schedule (cron expression)</CedarLabel>
-          <CedarInput
-            value={schedule}
-            onChange={(e) => setSchedule(e.target.value)}
-            placeholder="0 9 * * *"
-            style={{ fontFamily: "var(--fm)" }}
-          />
-          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
-            Examples: <code>0 9 * * *</code> daily 9am · <code>@hourly</code> · <code>*/15 * * * *</code> every 15 min
-          </div>
+          <CedarLabel>When should it fire?</CedarLabel>
+          <ScheduleBuilder value={schedule} onChange={setSchedule} />
         </div>
         <div>
           <CedarLabel>Prompt</CedarLabel>
@@ -394,11 +387,10 @@ function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry)
               style={{
                 fontSize: 11,
                 color: "var(--text3)",
-                fontFamily: "var(--fm)",
                 marginTop: 4,
               }}
             >
-              {j.schedule}
+              {describeCron(j.schedule)}
             </div>
             <div style={{ fontSize: 11, color: "var(--cedar-2)", fontFamily: "var(--fm)", marginTop: 2 }}>
               {j.last_run_at ? `last fired ${relTime(j.last_run_at)}` : "not yet fired"}
@@ -486,8 +478,8 @@ function TapeView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry
           >
             <div style={{ padding: "12px 14px" }}>
               <div style={{ fontSize: 12.5, color: "var(--text)" }}>{c.name}</div>
-              <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 2 }}>
-                {c.schedule}
+              <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 2 }}>
+                {describeCron(c.schedule)}
               </div>
             </div>
             <div style={{ position: "relative", height: 32, padding: "0 14px 0 0" }}>
@@ -600,21 +592,21 @@ function ListView({
               {c.persistent_session ? "persistent" : "fresh"}
             </Tag>
           </div>
-          <code
+          <div
             style={{
               display: "inline-block",
-              fontSize: 11,
-              fontFamily: "var(--fm)",
+              fontSize: 11.5,
               color: "var(--cedar-2)",
-              background: "var(--bg)",
-              padding: "3px 8px",
+              background: "var(--cedar-dim)",
+              padding: "4px 9px",
               borderRadius: 5,
-              border: "1px solid var(--border)",
+              border: "1px solid var(--cedar-line)",
               marginBottom: 10,
             }}
+            title={c.schedule}
           >
-            {c.schedule}
-          </code>
+            {describeCron(c.schedule)}
+          </div>
           <div
             style={{
               fontSize: 12.5,

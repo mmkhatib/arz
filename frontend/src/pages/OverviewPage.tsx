@@ -15,6 +15,7 @@ import {
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type OverviewResponse, type SessionSummary, type CronEntry } from "@/api/client";
+import { describe as describeCron } from "@/components/ScheduleBuilder";
 
 function relTime(iso: string): string {
   const d = new Date(iso).getTime();
@@ -307,11 +308,10 @@ export default function OverviewPage() {
                     style={{
                       fontSize: 10.5,
                       color: "var(--muted)",
-                      fontFamily: "var(--fm)",
                       marginTop: 2,
                     }}
                   >
-                    {c.schedule}
+                    {describeCron(c.schedule)}
                   </div>
                 </div>
                 <Tag color="dawn">cron</Tag>
