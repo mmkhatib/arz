@@ -20,18 +20,16 @@ If a design pattern conflicts with an existing convention in the codebase, prefe
 
 ## How to view the prototype
 
-Open `Arz Cedar Redesign.html` in a browser. The left sidebar navigates between every page. The bottom-right "Tweaks" toggle exposes runtime knobs (theme, density, memory layout variant, etc.). Hold ⌘K (or Ctrl+K) to open the search palette.
+Just **open `Arz Cedar Redesign.html` directly in a browser** — double-click it or drag it into a tab. It's a single self-contained file (all JSX inlined, only external dependency is React + Babel from CDN, so you need internet on first open).
+
+The left sidebar navigates between every page. The bottom-right "Tweaks" toggle exposes runtime knobs (theme, density, memory layout variant, etc.). Hold ⌘K (or Ctrl+K) to open the search palette.
 
 ## Files in this bundle
 
 | File | Role |
 |---|---|
-| `Arz Cedar Redesign.html` | Entry point — loads the JSX scripts via Babel standalone |
-| `redesign/tokens.css` | All design tokens (colors, type, spacing, motion). **Port these first.** |
-| `redesign/foundation.jsx` | Shared primitives: icon set (`IC`), `Btn`, `Card`, `Tag`, `SegSeg`, `CedarMark`, helpers (`relTime`, `ago`), and the `MOCK` data fixtures used to render every page |
-| `redesign/shell.jsx` | App shell: top header, sidebar nav, page router, theme/density wiring |
-| `redesign/pages.jsx` | Every page component (Overview, Chat, Memory, Schedule, Analytics, Capabilities, Channels, Agents, Models, Operations, Autopilot, Autonomy, Settings) |
-| `redesign/tweaks-panel.jsx` | Runtime tweaks panel scaffolding (not part of the production app) |
+| `Arz Cedar Redesign.html` | The whole prototype — open in a browser. All JSX is inlined; no build step. |
+| `redesign/tokens.css` | All design tokens (colors, type, spacing, motion). **Port these first.** Same tokens are embedded in the HTML, this is the standalone reference. |
 
 ---
 
