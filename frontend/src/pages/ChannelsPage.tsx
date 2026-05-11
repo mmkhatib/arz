@@ -69,7 +69,24 @@ function fmtAge(ts: number): string {
 }
 
 function summarizeText(s: string, max = 120): string {
-  // First non-empty line, plain text, truncated.
+  // Skip fenced code first.
+  const cleaned = s.replace(/```[\s\S]*?```/g, " [code] ");
+  // Walk lines, skip headings + horizontal rules + empty lines, find
+  // first real prose line. Strip inline markdown markers from the win.
+  for (const raw of cleaned.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^#{1,6}\s/.test(line) && line.split(/\s+/).length <= 6) continue;
+    if (/^[-=*_]{3,}$/.test(line)) continue;
+    const stripped = line
+      .replace(/^([#>*\-+]\s*|\d+\.\s*)+/, "")
+      .replace(/[`*_~]/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!stripped) continue;
+    return stripped.length > max ? stripped.slice(0, max - 1) + "…" : stripped;
+  }
+  // Fallback: old behavior.
   const stripped = s
     .replace(/```[\s\S]*?```/g, " [code] ")
     .replace(/[#*_`>]/g, "")
@@ -493,7 +510,9 @@ export default function ChannelsPage() {
                   )}
                 </div>
                 {active.topic && (
-                  <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>{active.topic}</div>
+                  <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
+                    {summarizeText(active.topic, 200)}
+                  </div>
                 )}
                 {/* Member chips */}
                 <div

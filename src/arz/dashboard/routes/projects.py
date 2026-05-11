@@ -26,6 +26,34 @@ from arz.projects import Project, Task, TaskStatus, get_project_store
 router = APIRouter(dependencies=[Depends(require_token)])
 
 
+def _brief_to_topic(brief: str | None, max_len: int = 200) -> str:
+    """Pull a clean one-line summary from a markdown brief for use as a
+    channel topic. Skips heading-only lines, strips inline markdown
+    markers, collapses whitespace, then truncates.
+    """
+    if not brief:
+        return ""
+    # Drop fenced code blocks first so we don't try to summarise code.
+    cleaned = _re.sub(r"```[\s\S]*?```", " ", brief)
+    for raw in cleaned.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        # Skip pure heading lines like "## Goal" or "---" / "===" rules.
+        if _re.fullmatch(r"#{1,6}\s*.{0,80}", line) and len(line.split()) <= 6:
+            continue
+        if _re.fullmatch(r"[-=*_]{3,}", line):
+            continue
+        # Strip leading bullets / heading markers, inline emphasis chars.
+        stripped = _re.sub(r"^([#>*\-+]\s*|\d+\.\s*)+", "", line)
+        stripped = _re.sub(r"[`*_~]", "", stripped)
+        stripped = _re.sub(r"\s+", " ", stripped).strip()
+        if not stripped:
+            continue
+        return stripped[:max_len].rstrip()
+    return ""
+
+
 def _project_to_dict(p: Project) -> dict:
     return {
         "id": p.id,
@@ -254,7 +282,7 @@ async def kickoff_project(project_id: str, body: KickoffBody) -> dict:
             channel = ch_store.create(
                 p.name,
                 members,
-                topic=(p.brief.split("\n")[0][:200] if p.brief else f"Kickoff for {p.name}"),
+                topic=_brief_to_topic(p.brief) or f"Kickoff for {p.name}",
                 preset="custom",
             )
         except ValueError as e:
