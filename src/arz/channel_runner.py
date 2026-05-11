@@ -47,7 +47,10 @@ _global_sem = asyncio.Semaphore(_GLOBAL_MAX_CONCURRENT)
 
 
 # Same ChatRunner shape used by AutoNudge / heartbeat / consolidator.
-ChatRunner = Callable[[str, str], Awaitable[str]]
+# Implementations accept (agent_name, prompt) plus optional kwargs like
+# ``approval_mode`` and ``work_dir`` so the channel runner can opt
+# project-linked channels into yolo mode + a custom workspace.
+ChatRunner = Callable[..., Awaitable[str]]
 
 
 class ChannelRunner:
@@ -113,8 +116,18 @@ class ChannelRunner:
                 ch, orchestrator.agent, project_id=(project.id if project else None)
             )
             self._mark_busy(slug, orchestrator.agent)
+            # Project-linked channels run agents in yolo so they can
+            # write into the project workspace without per-call user
+            # approval. Standalone channels keep the agent's own mode.
+            project_approval = "yolo" if project else None
+            project_workdir = project.repo_path if (project and project.repo_path) else None
             try:
-                reply = await self._runner(orchestrator.agent, ctx)
+                reply = await self._runner(
+                    orchestrator.agent,
+                    ctx,
+                    approval_mode=project_approval,
+                    work_dir=project_workdir,
+                )
             except Exception:
                 log.exception("orchestrator turn failed", extra={"channel": slug})
                 break
@@ -149,7 +162,15 @@ class ChannelRunner:
                 pair_counts[pair] = pair_counts.get(pair, 0) + 1
                 tasks.append(
                     asyncio.create_task(
-                        self._run_specialist(slug, spec, reply, anchor_msg, per_channel_sem)
+                        self._run_specialist(
+                            slug,
+                            spec,
+                            reply,
+                            anchor_msg,
+                            per_channel_sem,
+                            approval_mode=project_approval,
+                            work_dir=project_workdir,
+                        )
                     )
                 )
             if not tasks:
@@ -165,6 +186,8 @@ class ChannelRunner:
         prompt: str,
         anchor: ChannelMessage | None,
         per_channel_sem: asyncio.Semaphore,
+        approval_mode: str | None = None,
+        work_dir: str | None = None,
     ) -> None:
         if self._runner is None:
             return
@@ -173,7 +196,12 @@ class ChannelRunner:
         async with _global_sem, per_channel_sem:
             self._mark_busy(slug, agent)
             try:
-                reply = await self._runner(agent, prompt)
+                reply = await self._runner(
+                    agent,
+                    prompt,
+                    approval_mode=approval_mode,
+                    work_dir=work_dir,
+                )
             except Exception:
                 log.exception("specialist turn failed", extra={"channel": slug, "agent": agent})
                 return

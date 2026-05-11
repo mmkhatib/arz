@@ -280,7 +280,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.20", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.21", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -309,7 +309,12 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     agent_registry = AgentRegistry()
     app.state.agent_registry = agent_registry
 
-    async def _run_subagent(agent_name: str, prompt: str) -> str:
+    async def _run_subagent(
+        agent_name: str,
+        prompt: str,
+        approval_mode: str | None = None,
+        work_dir: str | None = None,
+    ) -> str:
         from arz.acp.types import EVENT_COMPLETE as _EC
         from arz.acp.types import EVENT_TEXT_CHUNK as _ETC
         from arz.prompts.loader import resolve_system_prompt
@@ -328,16 +333,35 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
         model = agent.model if (agent and agent.model) else ""
         sys_prompt = resolve_system_prompt(agent.system_prompt if agent else None)
 
+        # Caller override beats agent default. Project-linked channels
+        # pass approval_mode="yolo" so specialists can write into the
+        # project workspace without per-call permission prompts.
+        effective_approval = approval_mode or (agent.approval_mode if agent else None) or "normal"
+        from arz.dashboard.routes.chat import _APPROVAL_TO_CLAUDE as _CC_MAP
+
+        cc_permission = _CC_MAP.get(effective_approval)
+
         if provider_name == "claude-code":
-            provider = ClaudeCodeProvider(model=model, system_prompt=sys_prompt or None)
+            provider = ClaudeCodeProvider(
+                model=model,
+                system_prompt=sys_prompt or None,
+                work_dir=work_dir,
+                permission_mode=cc_permission,
+            )
         elif provider_name == "kiro-cli":
-            provider = KiroCliProvider(model=model)
+            provider = KiroCliProvider(model=model, work_dir=work_dir)
         elif provider_name == "codex":
-            provider = CodexProvider(model=model, system_prompt=sys_prompt or None)
+            provider = CodexProvider(
+                model=model, system_prompt=sys_prompt or None, work_dir=work_dir
+            )
         elif provider_name == "gemini":
             from arz.providers.gemini import GeminiProvider
 
-            provider = GeminiProvider(model=model or None)
+            provider = GeminiProvider(
+                model=model or None,
+                work_dir=work_dir,
+                approval_mode=effective_approval,
+            )
         elif provider_name == "ollama":
             from arz.providers.ollama import OllamaProvider
 
