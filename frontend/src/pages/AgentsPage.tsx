@@ -12,8 +12,10 @@ import {
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type AgentConfig } from "@/api/client";
+import { useDialog } from "@/components/Dialog";
 
 export default function AgentsPage() {
+  const dialog = useDialog();
   const [agents, setAgents] = useState<AgentConfig[]>([]);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [editing, setEditing] = useState<AgentConfig | null>(null);
@@ -43,12 +45,17 @@ export default function AgentsPage() {
       setEditing(null);
       setCreating(false);
     } catch (e) {
-      alert(`Failed: ${e}`);
+      await dialog.notify({ title: "Save failed", body: String(e), tone: "danger" });
     }
   };
 
   const remove = async (name: string) => {
-    if (!confirm(`Delete agent "${name}"?`)) return;
+    const ok = await dialog.confirm({
+      title: `Delete agent "${name}"?`,
+      body: "Removes its config file. Sessions referencing it will fall back to defaults.",
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.deleteAgent(name);
       await refresh();

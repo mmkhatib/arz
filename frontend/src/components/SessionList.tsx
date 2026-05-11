@@ -9,6 +9,7 @@ import {
 import * as LucideIcons from "lucide-react";
 import { api } from "@/api/client";
 import type { SearchHit, SessionSummary } from "@/api/client";
+import { useDialog } from "@/components/Dialog";
 
 export interface FolderItem {
   id: string;
@@ -111,6 +112,7 @@ export default function SessionList({
   const [results, setResults] = useState<SessionSummary[] | null>(null);
   const [searchHits, setSearchHits] = useState<SearchHit[] | null>(null);
   const [history, setHistory] = useState<SessionSummary[]>([]);
+  const dialog = useDialog();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyHoveredId, setHistoryHoveredId] = useState<string | null>(null);
   const [folders, setFolders] = useState<FolderItem[]>([]);
@@ -144,18 +146,29 @@ export default function SessionList({
   };
 
   const createFolder = async () => {
-    const name = window.prompt("Folder name (LLM picks the icon):");
+    const name = await dialog.prompt({
+      title: "New folder",
+      body: "Pick a name — the LLM auto-picks an icon to match.",
+      placeholder: "e.g. clients, research, sandbox",
+      okLabel: "Create",
+      eyebrow: "new folder",
+    });
     if (!name?.trim()) return;
     try {
       await api.createFolder(name.trim());
       await refreshFolders();
     } catch (e) {
-      alert(`Folder create failed: ${e}`);
+      await dialog.notify({ title: "Folder create failed", body: String(e), tone: "danger" });
     }
   };
 
   const deleteFolder = async (id: string) => {
-    if (!confirm("Delete this folder? Sessions inside it move back to the unfiled list.")) return;
+    const ok = await dialog.confirm({
+      title: "Delete this folder?",
+      body: "Sessions inside move back to the unfiled list.",
+      tone: "danger",
+    });
+    if (!ok) return;
     try { await api.deleteFolder(id); await refreshFolders(); } catch {}
   };
 
@@ -470,11 +483,18 @@ export default function SessionList({
                           Resume
                         </button>
                         <button
-                          onClick={() => {
-                            if (confirm(`Permanently delete "${s.title}"? This cannot be undone.`)) {
-                              api.permanentDeleteSession(s.id)
-                                .then(() => setHistory((prev) => prev.filter((h) => h.id !== s.id)))
-                                .catch((e) => alert(`Delete failed: ${e}`));
+                          onClick={async () => {
+                            const ok = await dialog.confirm({
+                              title: `Permanently delete "${s.title}"?`,
+                              body: "This cannot be undone.",
+                              tone: "danger",
+                            });
+                            if (!ok) return;
+                            try {
+                              await api.permanentDeleteSession(s.id);
+                              setHistory((prev) => prev.filter((h) => h.id !== s.id));
+                            } catch (e) {
+                              await dialog.notify({ title: "Delete failed", body: String(e), tone: "danger" });
                             }
                           }}
                           title="Permanently delete"

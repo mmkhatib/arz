@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Save, Plus, Trash2, RefreshCw } from "lucide-react";
 import { api, type AuditEntryPub } from "@/api/client";
 import { CedarPage, CedarPageHeader, CedarCard, Tag, SegSeg, TopoLines } from "@/components/CedarUI";
+import { useDialog } from "@/components/Dialog";
 
 type Tab = "decisions" | "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -225,6 +226,7 @@ function SubagentsTab() {
 // ── Channels ─────────────────────────────────────────────────────────────────
 
 function ChannelsTab() {
+  const dialog = useDialog();
   const [items, setItems] = useState<Awaited<ReturnType<typeof api.listChannels>>>([]);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -252,7 +254,12 @@ function ChannelsTab() {
   };
 
   const del = async (slug: string) => {
-    if (!confirm(`Delete channel ${slug}?`)) return;
+    const ok = await dialog.confirm({
+      title: `Delete channel "${slug}"?`,
+      body: "Removes it from the registry. Cannot be undone.",
+      tone: "danger",
+    });
+    if (!ok) return;
     try { await api.deleteChannel(slug); refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
   };

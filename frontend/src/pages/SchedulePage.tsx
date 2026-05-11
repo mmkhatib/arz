@@ -4,7 +4,7 @@
 //   * List           — card grid w/ cron expr + prompt + actions
 
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Pencil, Trash2, Play, Power } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
@@ -19,6 +19,7 @@ import {
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type CronEntry } from "@/api/client";
+import { useDialog } from "@/components/Dialog";
 
 type Variant = "sun" | "tape" | "list";
 
@@ -30,6 +31,7 @@ export default function SchedulePage() {
 
   const [crons, setCrons] = useState<CronEntry[]>([]);
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<CronEntry | null>(null);
   const refresh = () => api.listCrons().then(setCrons).catch(() => {});
   useEffect(() => { refresh(); }, []);
 
@@ -66,41 +68,60 @@ export default function SchedulePage() {
         />
       </div>
       <div style={{ padding: "24px 32px 32px" }}>
-        {variant === "sun" && <SunView crons={crons} />}
-        {variant === "tape" && <TapeView crons={crons} />}
-        {variant === "list" && <ListView crons={crons} />}
+        {variant === "sun" && <SunView crons={crons} onEdit={setEditing} />}
+        {variant === "tape" && <TapeView crons={crons} onEdit={setEditing} />}
+        {variant === "list" && <ListView crons={crons} onEdit={setEditing} refresh={refresh} />}
       </div>
-      <NewJobModal open={showAdd} onClose={() => setShowAdd(false)} onSaved={refresh} />
+      <JobModal
+        open={showAdd || editing !== null}
+        onClose={() => { setShowAdd(false); setEditing(null); }}
+        onSaved={() => { refresh(); setShowAdd(false); setEditing(null); }}
+        editing={editing}
+      />
     </CedarPage>
   );
 }
 
-function NewJobModal({
+function JobModal({
   open,
   onClose,
   onSaved,
+  editing,
 }: {
   open: boolean;
   onClose: () => void;
   onSaved: () => void;
+  editing?: CronEntry | null;
 }) {
+  const isEdit = !!editing;
   const [name, setName] = useState("");
   const [schedule, setSchedule] = useState("0 9 * * *");
   const [prompt, setPrompt] = useState("");
   const [persistent, setPersistent] = useState(false);
+  const [enabled, setEnabled] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) {
+      setError(null);
+      setSubmitting(false);
+      return;
+    }
+    if (editing) {
+      setName(editing.name);
+      setSchedule(editing.schedule);
+      setPrompt(editing.prompt);
+      setPersistent(!!editing.persistent_session);
+      setEnabled(!!editing.enabled);
+    } else {
       setName("");
       setSchedule("0 9 * * *");
       setPrompt("");
       setPersistent(false);
-      setError(null);
-      setSubmitting(false);
+      setEnabled(true);
     }
-  }, [open]);
+  }, [open, editing]);
 
   const submit = async () => {
     if (!name.trim() || !prompt.trim() || !schedule.trim()) {
@@ -110,7 +131,17 @@ function NewJobModal({
     setSubmitting(true);
     setError(null);
     try {
-      await api.createCron(name.trim(), prompt.trim(), schedule.trim(), true, persistent);
+      if (isEdit && editing) {
+        await api.updateCron(editing.id, {
+          name: name.trim(),
+          prompt: prompt.trim(),
+          schedule: schedule.trim(),
+          enabled,
+          persistent_session: persistent,
+        });
+      } else {
+        await api.createCron(name.trim(), prompt.trim(), schedule.trim(), enabled, persistent);
+      }
       onSaved();
       onClose();
     } catch (e) {
@@ -125,17 +156,19 @@ function NewJobModal({
       open={open}
       onClose={onClose}
       width={580}
-      eyebrow="new job"
+      eyebrow={isEdit ? "edit job" : "new job"}
       title={
-        <>
-          Schedule a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>recurring</em> task.
-        </>
+        isEdit ? (
+          <>Edit <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>{editing?.name}</em>.</>
+        ) : (
+          <>Schedule a <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>recurring</em> task.</>
+        )
       }
       footer={
         <>
           <Btn kind="ghost" onClick={onClose} disabled={submitting}>Cancel</Btn>
           <Btn kind="solid" onClick={submit} disabled={submitting}>
-            {submitting ? "Saving…" : "Schedule"}
+            {submitting ? "Saving…" : isEdit ? "Save changes" : "Schedule"}
           </Btn>
         </>
       }
@@ -169,6 +202,15 @@ function NewJobModal({
         <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" }}>
           <input
             type="checkbox"
+            checked={enabled}
+            onChange={(e) => setEnabled(e.target.checked)}
+            style={{ accentColor: "var(--cedar)" }}
+          />
+          Enabled (uncheck to pause without deleting)
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--text)" }}>
+          <input
+            type="checkbox"
             checked={persistent}
             onChange={(e) => setPersistent(e.target.checked)}
             style={{ accentColor: "var(--cedar)" }}
@@ -195,7 +237,7 @@ function NewJobModal({
 }
 
 // ── Sun — 24-hour clock dial ──────────────────────────────────
-function SunView({ crons }: { crons: CronEntry[] }) {
+function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry) => void }) {
   const now = new Date();
   const hr = now.getHours() + now.getMinutes() / 60;
   const angle = (h: number) => (h / 24) * Math.PI * 2 - Math.PI / 2;
@@ -331,7 +373,12 @@ function SunView({ crons }: { crons: CronEntry[] }) {
           </div>
         )}
         {jobs.slice(0, 5).map((j) => (
-          <div key={j.id} style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline)" }}>
+          <div
+            key={j.id}
+            onClick={() => onEdit(j)}
+            style={{ padding: "12px 16px", borderBottom: "1px solid var(--hairline)", cursor: "pointer" }}
+            title="Click to edit"
+          >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span
                 style={{
@@ -373,7 +420,7 @@ function relTime(epoch: number): string {
 }
 
 // ── Tape — horizontal hour strip ─────────────────────────────
-function TapeView({ crons }: { crons: CronEntry[] }) {
+function TapeView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry) => void }) {
   const HOURS = Array.from({ length: 24 }, (_, i) => i);
   const nowFrac = ((new Date().getHours() + new Date().getMinutes() / 60) / 24) * 100;
   return (
@@ -427,12 +474,15 @@ function TapeView({ crons }: { crons: CronEntry[] }) {
         return (
           <div
             key={c.id}
+            onClick={() => onEdit(c)}
             style={{
               display: "grid",
               gridTemplateColumns: "180px 1fr",
               alignItems: "center",
               borderBottom: "1px solid var(--hairline)",
+              cursor: "pointer",
             }}
+            title="Click to edit"
           >
             <div style={{ padding: "12px 14px" }}>
               <div style={{ fontSize: 12.5, color: "var(--text)" }}>{c.name}</div>
@@ -490,7 +540,16 @@ function TapeView({ crons }: { crons: CronEntry[] }) {
 }
 
 // ── List — card grid ────────────────────────────────────────
-function ListView({ crons }: { crons: CronEntry[] }) {
+function ListView({
+  crons,
+  onEdit,
+  refresh,
+}: {
+  crons: CronEntry[];
+  onEdit: (c: CronEntry) => void;
+  refresh: () => void;
+}) {
+  const dialog = useDialog();
   if (crons.length === 0) {
     return (
       <CedarCard padding={48}>
@@ -500,6 +559,28 @@ function ListView({ crons }: { crons: CronEntry[] }) {
       </CedarCard>
     );
   }
+
+  const toggle = async (c: CronEntry) => {
+    try { await api.updateCron(c.id, { enabled: !c.enabled }); refresh(); } catch {}
+  };
+  const runNow = async (c: CronEntry) => {
+    try {
+      await api.runCronNow(c.id);
+      await dialog.notify({ title: "Queued", body: `"${c.name}" will fire shortly.`, tone: "ok" });
+    } catch (e) {
+      await dialog.notify({ title: "Run failed", body: String(e), tone: "danger" });
+    }
+  };
+  const del = async (c: CronEntry) => {
+    const ok = await dialog.confirm({
+      title: `Delete "${c.name}"?`,
+      body: "Removes the schedule. Past runs stay in history.",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try { await api.deleteCron(c.id); refresh(); } catch {}
+  };
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
       {crons.map((c) => (
@@ -555,10 +636,23 @@ function ListView({ crons }: { crons: CronEntry[] }) {
               color: "var(--muted)",
               borderTop: "1px solid var(--hairline)",
               paddingTop: 10,
+              marginBottom: 10,
             }}
           >
             <span>last {c.last_run_at ? relTime(c.last_run_at) : "—"}</span>
             <span>{c.last_status ?? "—"}</span>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <Btn size="sm" kind="solid" icon={<Pencil size={11} />} onClick={() => onEdit(c)}>
+              Edit
+            </Btn>
+            <Btn size="sm" kind="soft" icon={<Power size={11} />} onClick={() => toggle(c)}>
+              {c.enabled ? "Pause" : "Enable"}
+            </Btn>
+            <Btn size="sm" kind="ghost" icon={<Play size={11} />} onClick={() => runNow(c)}>
+              Run now
+            </Btn>
+            <Btn size="sm" kind="danger" icon={<Trash2 size={11} />} onClick={() => del(c)} title="Delete" />
           </div>
         </CedarCard>
       ))}

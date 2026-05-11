@@ -9,6 +9,7 @@ import CompareModal from "./CompareModal";
 import ThemeDropdown from "./ThemeDropdown";
 import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
+import { useDialog } from "@/components/Dialog";
 
 function ThinkingDots() {
   return (
@@ -237,6 +238,7 @@ function MoreMenu({
   onForked: (id: string) => void;
   onAutonudgeChange: (goal: string | null, idle_s: number) => void;
 }) {
+  const dialog = useDialog();
   const [open, setOpen] = useState(false);
   const isAutoOn = !!(autonudgeGoal && autonudgeIdleS > 0);
 
@@ -267,15 +269,24 @@ function MoreMenu({
       onAutonudgeChange(null, 0);
       return;
     }
-    const goal = window.prompt(
-      "AutoNudge goal — what should this session keep working on?",
-      autonudgeGoal ?? "",
-    );
+    const goal = await dialog.prompt({
+      title: "AutoNudge goal",
+      body: "What should this session keep working on while idle?",
+      defaultValue: autonudgeGoal ?? "",
+      placeholder: "Refactor the auth layer, ship docs, etc.",
+      okLabel: "Next",
+      eyebrow: "autonudge — step 1",
+    });
     if (!goal) return;
-    const idleStr = window.prompt(
-      "Nudge after how many seconds of idle?",
-      String(autonudgeIdleS || 120),
-    );
+    const idleStr = await dialog.prompt({
+      title: "Idle threshold (seconds)",
+      body: "Nudge fires after this many seconds without activity. Minimum 30s.",
+      defaultValue: String(autonudgeIdleS || 120),
+      placeholder: "120",
+      okLabel: "Enable",
+      eyebrow: "autonudge — step 2",
+    });
+    if (idleStr === null) return;
     const idle_s = Math.max(30, parseInt(idleStr || "120", 10) || 120);
     await api.setAutoNudge(sessionId, { goal, idle_s, reset_iterations: true });
     onAutonudgeChange(goal, idle_s);

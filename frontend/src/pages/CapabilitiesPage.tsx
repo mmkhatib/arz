@@ -18,6 +18,7 @@ import {
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type McpServer, type PromptTemplate, type ToolView } from "@/api/client";
+import { useDialog } from "@/components/Dialog";
 
 type Tab = "mcp" | "prompts" | "tools";
 
@@ -269,6 +270,7 @@ function PromptsView({
   showNew: boolean;
   closeNew: () => void;
 }) {
+  const dialog = useDialog();
   const [draft, setDraft] = useState({ title: "", body: "" });
   useEffect(() => { if (!showNew) setDraft({ title: "", body: "" }); }, [showNew]);
   const submit = async () => {
@@ -316,7 +318,11 @@ function PromptsView({
                   icon={<Trash2 size={11} />}
                   title="Delete prompt"
                   onClick={async () => {
-                    if (!confirm(`Delete prompt "${p.title}"?`)) return;
+                    const ok = await dialog.confirm({
+                      title: `Delete prompt "${p.title}"?`,
+                      tone: "danger",
+                    });
+                    if (!ok) return;
                     try {
                       await api.deletePrompt(p.slug);
                       setPrompts(prompts.filter((x) => x.slug !== p.slug));
@@ -429,6 +435,7 @@ function ToolEditorModal({
   onSaved: () => void;
   onDeleted: () => void;
 }) {
+  const dialog = useDialog();
   const [name, setName] = useState(initialName);
   const [source, setSource] = useState("");
   const [busy, setBusy] = useState(false);
@@ -481,7 +488,12 @@ function ToolEditorModal({
   };
 
   const del = async () => {
-    if (!confirm(`Delete tool "${name}"? File will be removed from ~/.arz/tools/.`)) return;
+    const ok = await dialog.confirm({
+      title: `Delete tool "${name}"?`,
+      body: "File will be removed from ~/.arz/tools/.",
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.deleteTool(name);
       onDeleted();

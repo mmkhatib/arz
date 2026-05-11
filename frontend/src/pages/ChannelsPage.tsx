@@ -34,6 +34,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { api, type ProjectSummary, type ProjectTask } from "@/api/client";
+import { useDialog } from "@/components/Dialog";
 import {
   CedarPage,
   CedarPageHeader,
@@ -77,6 +78,7 @@ function summarizeText(s: string, max = 120): string {
 
 export default function ChannelsPage() {
   const navigate = useNavigate();
+  const dialog = useDialog();
   const [searchParams, setSearchParams] = useSearchParams();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -180,7 +182,14 @@ export default function ChannelsPage() {
 
   const close = async () => {
     if (!activeId) return;
-    if (!confirm("Close this channel? It moves to History; reposting reactivates it.")) return;
+    const ok = await dialog.confirm({
+      title: "Close this channel?",
+      body: "It moves to History. Re-posting reactivates it.",
+      okLabel: "Close channel",
+      tone: "warn",
+      eyebrow: "close channel",
+    });
+    if (!ok) return;
     await api.dismissChannelApp(activeId).catch(() => {});
     await refreshList();
   };

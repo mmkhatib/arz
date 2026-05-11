@@ -38,6 +38,7 @@ import {
   type ProjectTask,
   type ProjectTaskStatus,
 } from "@/api/client";
+import { useDialog } from "@/components/Dialog";
 
 type Tab = "brief" | "tasks" | "files" | "subagents" | "log";
 
@@ -60,6 +61,7 @@ const STATUS_ORDER: ProjectTaskStatus[] = [
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const dialog = useDialog();
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [tab, setTab] = useState<Tab>("brief");
   const [showAddTask, setShowAddTask] = useState(false);
@@ -75,7 +77,7 @@ export default function ProjectDetailPage() {
       const p = await api.getProject(id);
       setProject(p);
     } catch (e) {
-      alert(`Project load failed: ${e}`);
+      await dialog.notify({ title: "Project load failed", body: String(e), tone: "danger" });
     }
   };
 
@@ -115,7 +117,11 @@ export default function ProjectDetailPage() {
   };
 
   const removeTask = async (task: ProjectTask) => {
-    if (!confirm(`Delete task "${task.title}"?`)) return;
+    const ok = await dialog.confirm({
+      title: `Delete task "${task.title}"?`,
+      tone: "danger",
+    });
+    if (!ok) return;
     try {
       await api.deleteProjectTask(project.id, task.id);
       await refresh();
@@ -131,7 +137,7 @@ export default function ProjectDetailPage() {
       // the channel feed.
       navigate(`/channels?ch=${encodeURIComponent(r.channel_id)}`);
     } catch (e) {
-      alert(`Kickoff failed: ${e}`);
+      await dialog.notify({ title: "Kickoff failed", body: String(e), tone: "danger" });
     } finally {
       setKickoffBusy(false);
     }
@@ -329,7 +335,7 @@ export default function ProjectDetailPage() {
             await api.createProjectTask(project.id, body);
             await refresh();
           } catch (e) {
-            alert(`Add task failed: ${e}`);
+            await dialog.notify({ title: "Add task failed", body: String(e), tone: "danger" });
           }
         }}
       />
