@@ -298,7 +298,7 @@ function MountainView({
   );
 }
 
-// ── Grid — 12wk × 7d heatmap + tool/provider mix ────────────
+// ── Grid — heatmap (weeks or days) + tool/provider mix ──────
 function GridView({
   msgs,
   tools,
@@ -308,121 +308,43 @@ function GridView({
   tools: { name: string; count: number }[];
   provs: { provider: string; messages: number }[];
 }) {
-  // Build 84 days, grouped by week-column. Track week starts for the
-  // month labels at the bottom.
-  const { weeks, monthLabels } = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const d of msgs) map.set(d.date, d.count);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    // Snap to the start of this week (Sun). Then go back 12 weeks for
-    // a clean rectangular grid.
-    const startOfThisWeek = new Date(today);
-    startOfThisWeek.setDate(today.getDate() - today.getDay());
-    const start = new Date(startOfThisWeek);
-    start.setDate(startOfThisWeek.getDate() - 11 * 7);
-    const ws: { date: string; count: number }[][] = [];
-    const ml: { week: number; label: string }[] = [];
-    let lastMonth = -1;
-    for (let w = 0; w < 12; w++) {
-      const col: { date: string; count: number }[] = [];
-      for (let d = 0; d < 7; d++) {
-        const dt = new Date(start.getTime() + (w * 7 + d) * 86_400_000);
-        const key = dt.toISOString().slice(0, 10);
-        col.push({ date: key, count: map.get(key) ?? 0 });
-        if (d === 0) {
-          const m = dt.getMonth();
-          if (m !== lastMonth) {
-            lastMonth = m;
-            ml.push({
-              week: w,
-              label: dt.toLocaleString(undefined, { month: "short" }),
-            });
-          }
-        }
-      }
-      ws.push(col);
-    }
-    return { weeks: ws, monthLabels: ml };
-  }, [msgs]);
-  const max = Math.max(1, ...weeks.flat().map((c) => c.count));
+  const [mode, setMode] = useState<"weeks" | "days">(
+    () => (localStorage.getItem("arz:heatmap-mode") as "weeks" | "days") || "weeks",
+  );
+  useEffect(() => { localStorage.setItem("arz:heatmap-mode", mode); }, [mode]);
 
   const provTotal = provs.reduce((s, p) => s + p.messages, 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <CedarCard padding={20}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 14, marginBottom: 18 }}>
-          <span style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>Activity heatmap</span>
-          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>last 12 weeks · darker = more messages</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8 }}>
-          {/* Y axis — every weekday */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateRows: "repeat(7, 16px)",
-              gap: 3,
-              fontSize: 9.5,
-              color: "var(--muted)",
-              fontFamily: "var(--fm)",
-              alignItems: "center",
-            }}
-          >
-            {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
-              <div key={d} style={{ lineHeight: "16px" }}>{d}</div>
-            ))}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 14,
+            marginBottom: 18,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14 }}>
+            <span style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
+              Activity heatmap
+            </span>
+            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+              {mode === "weeks" ? "last 12 weeks" : "last 14 days"} · darker = more messages
+            </span>
           </div>
-          {/* Cells + month axis */}
-          <div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(12, 1fr)",
-                gap: 3,
-              }}
-            >
-              {weeks.map((col, wi) => (
-                <div key={wi} style={{ display: "grid", gridTemplateRows: "repeat(7, 16px)", gap: 3 }}>
-                  {col.map((c) => {
-                    const v = c.count / max;
-                    const bg = c.count === 0
-                      ? "var(--s2)"
-                      : v < 0.25
-                      ? "rgba(118, 200, 156, .25)"
-                      : v < 0.6
-                      ? "rgba(118, 200, 156, .55)"
-                      : "var(--cedar-glow)";
-                    return (
-                      <div
-                        key={c.date}
-                        title={`${c.date} · ${c.count} msgs`}
-                        style={{ background: bg, borderRadius: 2 }}
-                      />
-                    );
-                  })}
-                </div>
-              ))}
-            </div>
-            {/* Month axis */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(12, 1fr)",
-                gap: 3,
-                marginTop: 6,
-                fontSize: 9.5,
-                color: "var(--muted)",
-                fontFamily: "var(--fm)",
-              }}
-            >
-              {Array.from({ length: 12 }).map((_, wi) => {
-                const ml = monthLabels.find((m) => m.week === wi);
-                return <div key={wi}>{ml?.label ?? ""}</div>;
-              })}
-            </div>
-          </div>
+          <SegSeg<"weeks" | "days">
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: "weeks", label: "Weeks" },
+              { value: "days", label: "Days" },
+            ]}
+          />
         </div>
+        {mode === "weeks" ? <WeeksHeatmap msgs={msgs} /> : <DaysHeatmap msgs={msgs} />}
       </CedarCard>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
         <CedarCard padding={20}>
@@ -483,6 +405,207 @@ function GridView({
           )}
         </CedarCard>
       </div>
+    </div>
+  );
+}
+
+// ISO 8601 week number. Thursday-anchored — matches `date.isocalendar`
+// on the backend so week labels here line up with anything cronner /
+// scheduler reports.
+function isoWeek(d: Date): number {
+  const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNr = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - dayNr + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const diff = (target.getTime() - firstThursday.getTime()) / 86400000;
+  return 1 + Math.round((diff - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+}
+
+function WeeksHeatmap({ msgs }: { msgs: DayPoint[] }) {
+  const { weeks, monthLabels, weekNumbers } = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of msgs) map.set(d.date, d.count);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const startOfThisWeek = new Date(today);
+    startOfThisWeek.setDate(today.getDate() - today.getDay());
+    const start = new Date(startOfThisWeek);
+    start.setDate(startOfThisWeek.getDate() - 11 * 7);
+    const ws: { date: string; count: number }[][] = [];
+    const ml: { week: number; label: string }[] = [];
+    const wn: number[] = [];
+    let lastMonth = -1;
+    for (let w = 0; w < 12; w++) {
+      const col: { date: string; count: number }[] = [];
+      for (let d = 0; d < 7; d++) {
+        const dt = new Date(start.getTime() + (w * 7 + d) * 86_400_000);
+        const key = dt.toISOString().slice(0, 10);
+        col.push({ date: key, count: map.get(key) ?? 0 });
+        if (d === 0) {
+          wn.push(isoWeek(dt));
+          const m = dt.getMonth();
+          if (m !== lastMonth) {
+            lastMonth = m;
+            ml.push({ week: w, label: dt.toLocaleString(undefined, { month: "short" }) });
+          }
+        }
+      }
+      ws.push(col);
+    }
+    return { weeks: ws, monthLabels: ml, weekNumbers: wn };
+  }, [msgs]);
+  const max = Math.max(1, ...weeks.flat().map((c) => c.count));
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: 8 }}>
+      {/* Y axis — every weekday */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateRows: "repeat(7, 16px)",
+          gap: 3,
+          fontSize: 9.5,
+          color: "var(--muted)",
+          fontFamily: "var(--fm)",
+          alignItems: "center",
+        }}
+      >
+        {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d) => (
+          <div key={d} style={{ lineHeight: "16px" }}>{d}</div>
+        ))}
+      </div>
+      <div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(12, 1fr)", gap: 3 }}>
+          {weeks.map((col, wi) => (
+            <div key={wi} style={{ display: "grid", gridTemplateRows: "repeat(7, 16px)", gap: 3 }}>
+              {col.map((c) => {
+                const v = c.count / max;
+                const bg = c.count === 0
+                  ? "var(--s2)"
+                  : v < 0.25
+                  ? "rgba(118, 200, 156, .25)"
+                  : v < 0.6
+                  ? "rgba(118, 200, 156, .55)"
+                  : "var(--cedar-glow)";
+                return (
+                  <div
+                    key={c.date}
+                    title={`${c.date} · ${c.count} msgs`}
+                    style={{ background: bg, borderRadius: 2 }}
+                  />
+                );
+              })}
+            </div>
+          ))}
+        </div>
+        {/* Week numbers row */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(12, 1fr)",
+            gap: 3,
+            marginTop: 6,
+            fontSize: 9.5,
+            color: "var(--cedar-2)",
+            fontFamily: "var(--fm)",
+            textAlign: "center",
+          }}
+        >
+          {weekNumbers.map((wn, i) => (
+            <div key={i} title={`ISO week ${wn}`}>W{wn}</div>
+          ))}
+        </div>
+        {/* Month axis */}
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(12, 1fr)",
+            gap: 3,
+            marginTop: 2,
+            fontSize: 9.5,
+            color: "var(--muted)",
+            fontFamily: "var(--fm)",
+          }}
+        >
+          {Array.from({ length: 12 }).map((_, wi) => {
+            const ml = monthLabels.find((m) => m.week === wi);
+            return <div key={wi}>{ml?.label ?? ""}</div>;
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DaysHeatmap({ msgs }: { msgs: DayPoint[] }) {
+  const days = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const d of msgs) map.set(d.date, d.count);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const out: { date: string; count: number; dow: string; dom: number; week: number }[] = [];
+    for (let i = 13; i >= 0; i--) {
+      const dt = new Date(today.getTime() - i * 86_400_000);
+      const key = dt.toISOString().slice(0, 10);
+      out.push({
+        date: key,
+        count: map.get(key) ?? 0,
+        dow: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dt.getDay()],
+        dom: dt.getDate(),
+        week: isoWeek(dt),
+      });
+    }
+    return out;
+  }, [msgs]);
+  const max = Math.max(1, ...days.map((d) => d.count));
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(14, 1fr)", gap: 6 }}>
+      {days.map((d) => {
+        const v = d.count / max;
+        const bg = d.count === 0
+          ? "var(--s2)"
+          : v < 0.25
+          ? "rgba(118, 200, 156, .25)"
+          : v < 0.6
+          ? "rgba(118, 200, 156, .55)"
+          : "var(--cedar-glow)";
+        return (
+          <div
+            key={d.date}
+            title={`${d.date} · W${d.week} · ${d.count} msgs`}
+            style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "center" }}
+          >
+            <div
+              style={{
+                width: "100%",
+                aspectRatio: "1",
+                background: bg,
+                borderRadius: 4,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontFamily: "var(--fm)",
+                fontSize: 11,
+                color: d.count === 0 ? "var(--muted)" : "var(--text)",
+              }}
+            >
+              {d.count > 0 ? d.count : ""}
+            </div>
+            <div
+              style={{
+                fontSize: 10,
+                color: "var(--muted)",
+                fontFamily: "var(--fm)",
+                lineHeight: 1.2,
+                textAlign: "center",
+              }}
+            >
+              <div style={{ color: "var(--text2)" }}>{d.dom}</div>
+              <div>{d.dow}</div>
+              <div style={{ color: "var(--cedar-2)", fontSize: 9 }}>W{d.week}</div>
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
