@@ -130,8 +130,8 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
     >
       {/* Brand + collapse toggle */}
       <div
-        className="flex items-center justify-between px-3 border-b border-[var(--border)]"
-        style={{ minHeight: "var(--shell-row-h)" }}
+        className="flex items-center justify-between px-3 border-b border-[var(--border)] overflow-hidden"
+        style={{ height: "var(--shell-row-h)" }}
       >
         {!collapsed && (
           <div className="flex items-center gap-2">
@@ -266,8 +266,8 @@ function MemoryStatsRow({
   if (collapsed) {
     return (
       <div
-        className="px-2 border-t border-[var(--border)] flex items-center justify-between gap-1"
-        style={{ minHeight: "var(--shell-row-h)" }}
+        className="px-2 border-t border-[var(--border)] flex items-center justify-between gap-1 overflow-hidden"
+        style={{ height: "var(--shell-row-h)" }}
         title={tip}
       >
         <button
@@ -283,8 +283,8 @@ function MemoryStatsRow({
   }
   return (
     <div
-      className="px-2.5 border-t border-[var(--border)] text-[10px] font-mono text-[var(--muted)] flex items-center justify-between gap-2"
-      style={{ minHeight: "var(--shell-row-h)" }}
+      className="px-2 border-t border-[var(--border)] text-[10px] font-mono text-[var(--muted)] flex items-center gap-2 overflow-hidden whitespace-nowrap"
+      style={{ height: "var(--shell-row-h)" }}
       title={tip}
     >
       <button
@@ -294,17 +294,10 @@ function MemoryStatsRow({
       >
         <Keyboard size={12} />
       </button>
-      {stats ? (
-        <div className="flex-1 min-w-0 leading-tight">
-          <div className="flex items-center justify-between">
-            <span className="uppercase tracking-wider">Memory</span>
-            <span>{total} · md {stats.markdown}/le {stats.lessons}/v {stats.vectors}</span>
-          </div>
-        </div>
-      ) : (
-        <span className="flex-1 text-[var(--muted)]/40">memory…</span>
-      )}
-      <span className="text-[var(--muted)]/60 shrink-0">v0.7.31</span>
+      <span className="flex-1 min-w-0 truncate">
+        {stats ? `${total} mem` : "mem…"}
+      </span>
+      <span className="text-[var(--muted)]/60 shrink-0">v0.7.32</span>
     </div>
   );
 }

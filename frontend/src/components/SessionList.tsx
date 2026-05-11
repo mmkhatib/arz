@@ -504,7 +504,7 @@ export default function SessionList({
           <button
             onClick={() => setHistoryOpen((v) => !v)}
             className="w-full flex items-center justify-between px-4 text-[11px] text-[var(--muted)] hover:text-[var(--text)] transition-colors shrink-0"
-            style={{ minHeight: "var(--shell-row-h)" }}
+            style={{ height: "var(--shell-row-h)" }}
           >
             <span className="uppercase tracking-wider flex items-center gap-1.5">
               {historyOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
