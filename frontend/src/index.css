@@ -36,7 +36,7 @@
   /* Shell row heights — used to align the bottom strips of every
      side-by-side column (NavBar footer, SessionList history toggle,
      chat composer) so their hairlines land on the same y-coordinate. */
-  --shell-row-h: 40px;
+  --shell-row-h: 48px;
 
   /* Cedar greens (signature) */
   --cedar:      #4a8a6a;
