@@ -41,6 +41,7 @@ import {
   type ProjectTaskPriority,
 } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
+import { TaskDetailModal } from "@/components/TaskDetailModal";
 
 type Tab = "brief" | "tasks" | "files" | "subagents" | "log";
 
@@ -700,115 +701,6 @@ function CedarSelect({
   );
 }
 
-function TaskDetailModal({
-  task,
-  onClose,
-  onOpenFile,
-}: {
-  task: ProjectTask;
-  onClose: () => void;
-  onOpenFile: (path: string) => void;
-}) {
-  return (
-    <CedarModal
-      open
-      onClose={onClose}
-      eyebrow={`task · ${task.status.replace("_", " ")}`}
-      title={task.title}
-      footer={
-        <Btn kind="ghost" onClick={onClose}>
-          Close
-        </Btn>
-      }
-    >
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        {task.assignee && (
-          <div style={{ fontSize: 12, fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>
-            assigned to @{task.assignee}
-          </div>
-        )}
-        {task.description && (
-          <div>
-            <CedarLabel>Description</CedarLabel>
-            <div
-              style={{
-                fontSize: 13,
-                color: "var(--text2)",
-                lineHeight: 1.55,
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {task.description}
-            </div>
-          </div>
-        )}
-        {task.depends_on.length > 0 && (
-          <div>
-            <CedarLabel>Depends on</CedarLabel>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-              {task.depends_on.map((d) => (
-                <Tag key={d} color="muted">
-                  {d}
-                </Tag>
-              ))}
-            </div>
-          </div>
-        )}
-        <div>
-          <CedarLabel>Artifacts</CedarLabel>
-          {task.artifacts.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              No files produced yet.
-            </div>
-          ) : (
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-              {task.artifacts.map((a) => (
-                <button
-                  key={a}
-                  onClick={() => onOpenFile(a)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "6px 10px",
-                    border: "1px solid var(--border)",
-                    background: "var(--bg)",
-                    borderRadius: 6,
-                    color: "var(--text)",
-                    fontSize: 12,
-                    fontFamily: "var(--fm)",
-                    cursor: "pointer",
-                    textAlign: "left",
-                  }}
-                >
-                  <FileText size={11} className="text-[var(--cedar-glow)]" />
-                  <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {a}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-        <div
-          style={{
-            display: "flex",
-            gap: 14,
-            fontSize: 10.5,
-            fontFamily: "var(--fm)",
-            color: "var(--muted)",
-            paddingTop: 10,
-            borderTop: "1px solid var(--hairline)",
-          }}
-        >
-          <span>id: {task.id}</span>
-          <span>created: {new Date(task.created_at * 1000).toLocaleString()}</span>
-          {task.finished_at && <span>finished: {new Date(task.finished_at * 1000).toLocaleString()}</span>}
-        </div>
-      </div>
-    </CedarModal>
-  );
-}
 
 // ── Files tab ──────────────────────────────────────────────
 function FilesTab({

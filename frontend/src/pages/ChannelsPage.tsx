@@ -32,9 +32,11 @@ import {
   Layers,
   UserPlus,
   FolderOpen,
+  Pencil,
 } from "lucide-react";
 import { api, type ProjectSummary, type ProjectTask } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
+import { TaskDetailModal } from "@/components/TaskDetailModal";
 import {
   CedarPage,
   CedarPageHeader,
@@ -88,6 +90,8 @@ export default function ChannelsPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  const [showFolderEdit, setShowFolderEdit] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const prevArchivedCount = useRef(0);
@@ -276,6 +280,42 @@ export default function ChannelsPage() {
           }}
         />
       )}
+      {selectedTask && linkedProject && (
+        <TaskDetailModal
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+          onOpenFile={async (p) => {
+            // Try to reveal the file in the OS; fall back to clipboard.
+            try {
+              await api.revealPath(p);
+            } catch {
+              navigator.clipboard?.writeText(p).catch(() => {});
+              await dialog.notify({
+                title: "Path copied",
+                body: `Couldn't reveal — path is on your clipboard:\n${p}`,
+                tone: "warn",
+              });
+            }
+          }}
+          onGotoProject={() => {
+            setSelectedTask(null);
+            navigate(`/projects/${encodeURIComponent(linkedProject.id)}`);
+          }}
+        />
+      )}
+      {showFolderEdit && linkedProject && (
+        <ChangeFolderModal
+          project={linkedProject}
+          onClose={() => setShowFolderEdit(false)}
+          onSaved={async () => {
+            setShowFolderEdit(false);
+            try {
+              const updated = await api.listProjects();
+              setProjects(updated);
+            } catch {}
+          }}
+        />
+      )}
 
       {/* 3-column layout — fills the rest of the viewport, doesn't scroll
           the page itself. Each column is its own scroll container. */}
@@ -353,28 +393,45 @@ export default function ChannelsPage() {
                   >
                     {expandAll ? "Collapse all" : "Expand all"}
                   </Btn>
-                  {linkedProject?.repo_path && (
-                    <Btn
-                      size="sm"
-                      kind="outline"
-                      icon={<FolderOpen size={11} />}
-                      onClick={async () => {
-                        const path = linkedProject.repo_path;
-                        navigator.clipboard?.writeText(path).catch(() => {});
-                        try {
-                          await api.revealPath(path);
-                        } catch (e) {
-                          await dialog.notify({
-                            title: "Couldn't open folder",
-                            body: `${e}\n\nPath copied to clipboard: ${path}`,
-                            tone: "warn",
-                          });
+                  {linkedProject && (
+                    <>
+                      {linkedProject.repo_path && (
+                        <Btn
+                          size="sm"
+                          kind="outline"
+                          icon={<FolderOpen size={11} />}
+                          onClick={async () => {
+                            const path = linkedProject.repo_path;
+                            navigator.clipboard?.writeText(path).catch(() => {});
+                            try {
+                              await api.revealPath(path);
+                            } catch (e) {
+                              await dialog.notify({
+                                title: "Couldn't open folder",
+                                body: `${e}\n\nPath copied to clipboard: ${path}`,
+                                tone: "warn",
+                              });
+                            }
+                          }}
+                          title={`Open ${linkedProject.repo_path} in OS file manager (also copied to clipboard)`}
+                        >
+                          Folder
+                        </Btn>
+                      )}
+                      <Btn
+                        size="sm"
+                        kind="ghost"
+                        icon={<Pencil size={11} />}
+                        onClick={() => setShowFolderEdit(true)}
+                        title={
+                          linkedProject.repo_path
+                            ? `Change work folder (current: ${linkedProject.repo_path})`
+                            : "Set work folder for this project"
                         }
-                      }}
-                      title={`Open ${linkedProject.repo_path} in OS file manager (also copied to clipboard)`}
-                    >
-                      Folder
-                    </Btn>
+                      >
+                        {linkedProject.repo_path ? "Change folder" : "Set folder"}
+                      </Btn>
+                    </>
                   )}
                   <Btn
                     size="sm"
@@ -549,6 +606,7 @@ export default function ChannelsPage() {
         {linkedProject && (
           <ProjectRail
             project={linkedProject}
+            onSelectTask={setSelectedTask}
             onOpenProject={() => navigate(`/projects/${encodeURIComponent(linkedProject.id)}`)}
           />
         )}
@@ -906,11 +964,12 @@ function ChannelBubble({
 function ProjectRail({
   project,
   onOpenProject,
+  onSelectTask,
 }: {
   project: ProjectSummary;
   onOpenProject: () => void;
+  onSelectTask: (t: ProjectTask) => void;
 }) {
-  const navigate = useNavigate();
   const grouped: Record<string, ProjectTask[]> = {
     in_progress: [],
     blocked: [],
@@ -1018,7 +1077,7 @@ function ProjectRail({
               {items.map((t) => (
                 <button
                   key={t.id}
-                  onClick={() => navigate(`/projects/${encodeURIComponent(project.id)}`)}
+                  onClick={() => onSelectTask(t)}
                   style={{
                     width: "100%",
                     textAlign: "left",
@@ -1367,3 +1426,91 @@ function CreateChannelDialog({
 // `Users` import retained — it's referenced by future invite-multiple flows.
 const _UsersIcon = Users;
 void _UsersIcon;
+
+// ── Change folder modal ──────────────────────────────────────
+function ChangeFolderModal({
+  project,
+  onClose,
+  onSaved,
+}: {
+  project: ProjectSummary;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [path, setPath] = useState(project.repo_path || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    const v = path.trim();
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.patchProject(project.id, { repo_path: v });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open
+      onClose={onClose}
+      width={560}
+      eyebrow="work folder"
+      title={
+        <>
+          Where should <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>{project.name}</em> work?
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={busy}>
+            {busy ? "Saving…" : "Save folder"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div>
+          <CedarLabel>Absolute path</CedarLabel>
+          <CedarInput
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            placeholder="/Users/you/code/my-project"
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && !busy) submit(); }}
+            style={{ fontFamily: "var(--fm)" }}
+          />
+          <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
+            Agents run with this as their working directory. Path is saved as-is — no validation.
+            Leave blank to clear.
+          </div>
+        </div>
+        {project.repo_path && project.repo_path !== path.trim() && (
+          <div style={{ fontSize: 11.5, color: "var(--text3)", fontFamily: "var(--fm)" }}>
+            current: <code>{project.repo_path}</code>
+          </div>
+        )}
+        {err && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {err}
+          </div>
+        )}
+      </div>
+    </CedarModal>
+  );
+}
