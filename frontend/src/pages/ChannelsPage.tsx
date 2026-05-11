@@ -1283,6 +1283,7 @@ function InviteMemberDialog({
   onClose: () => void;
   onInvited: () => void;
 }) {
+  const navigate = useNavigate();
   const [agent, setAgent] = useState("");
   const [role, setRole] = useState<"orchestrator" | "specialist">("specialist");
   const [available, setAvailable] = useState<{ name: string; description: string }[]>([]);
@@ -1367,9 +1368,42 @@ function InviteMemberDialog({
             ))}
           </div>
         </div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+          }}
+        >
+          <CedarLabel>
+            {filtered.length > 0
+              ? `Pick from your agents (${filtered.length})`
+              : "No saved agents yet"}
+          </CedarLabel>
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              navigate("/agents");
+            }}
+            style={{
+              fontSize: 11,
+              color: "var(--cedar-glow)",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--fn)",
+              padding: 0,
+            }}
+            title="Open /agents to create or edit specialists"
+          >
+            Manage / create agents →
+          </button>
+        </div>
         {filtered.length > 0 && (
           <div>
-            <CedarLabel>Pick from your agents ({filtered.length})</CedarLabel>
+            {/* label rendered above to share a row with the manage link */}
             <div
               style={{
                 display: "flex",
@@ -1410,6 +1444,22 @@ function InviteMemberDialog({
                 </button>
               ))}
             </div>
+          </div>
+        )}
+        {filtered.length === 0 && (
+          <div
+            style={{
+              fontSize: 11.5,
+              color: "var(--muted)",
+              border: "1px dashed var(--border)",
+              borderRadius: 7,
+              padding: "10px 12px",
+              fontFamily: "var(--fn)",
+            }}
+          >
+            You can also type any name above and we'll invite a generic agent.
+            For richer personas (system prompt, model, allowed tools), create
+            them on the Agents page and they'll show up here next time.
           </div>
         )}
         {error && (
