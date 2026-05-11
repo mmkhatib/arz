@@ -238,7 +238,7 @@ export default function ChannelsPage() {
   };
 
   return (
-    <CedarPage>
+    <CedarPage scroll={false}>
       <div style={{ position: "relative", overflow: "hidden", flexShrink: 0 }}>
         <TopoLines height={120} opacity={0.5} />
         <CedarPageHeader

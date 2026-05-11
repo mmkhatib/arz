@@ -642,16 +642,33 @@ export function Eyebrow({ children }: { children: ReactNode }) {
 }
 
 // ── CedarPage wrapper — full-page scrollable area ────────────
-export function CedarPage({ children, topo = false }: { children: ReactNode; topo?: boolean }) {
+export function CedarPage({
+  children,
+  topo = false,
+  scroll = true,
+}: {
+  children: ReactNode;
+  topo?: boolean;
+  /**
+   * When false, the page becomes a flex column that fills its
+   * available height without scrolling itself. Children opt into
+   * their own scroll containers — used by chat/channels/board layouts
+   * that pin a header + composer and only scroll the middle pane.
+   */
+  scroll?: boolean;
+}) {
   return (
     <div
       className={topo ? "topo-bg" : ""}
       style={{
         flex: 1,
-        overflowY: "auto",
+        overflowY: scroll ? "auto" : "hidden",
+        display: scroll ? undefined : "flex",
+        flexDirection: scroll ? undefined : "column",
         position: "relative",
         background: "var(--bg)",
         minWidth: 0,
+        minHeight: 0,
       }}
     >
       {children}
