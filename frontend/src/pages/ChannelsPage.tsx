@@ -92,6 +92,7 @@ export default function ChannelsPage() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   const [showFolderEdit, setShowFolderEdit] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const prevArchivedCount = useRef(0);
@@ -303,6 +304,19 @@ export default function ChannelsPage() {
           }}
         />
       )}
+      {showMembers && active && (
+        <MembersModal
+          channelId={active.id}
+          members={active.members}
+          onClose={() => setShowMembers(false)}
+          onChanged={async () => {
+            try {
+              const ch = await api.getChannelApp(active.id);
+              setActive(ch);
+            } catch {}
+          }}
+        />
+      )}
       {showFolderEdit && linkedProject && (
         <ChangeFolderModal
           project={linkedProject}
@@ -441,6 +455,33 @@ export default function ChannelsPage() {
                   >
                     Invite
                   </Btn>
+                  <Btn
+                    size="sm"
+                    kind="ghost"
+                    icon={<Users size={11} />}
+                    onClick={() => setShowMembers(true)}
+                    title="Manage members — rename, see roles"
+                  >
+                    Members ({active.members.length})
+                  </Btn>
+                  <a
+                    href={api.exportChannelUrl(active.id, "md")}
+                    title="Download channel as Markdown"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 4,
+                      fontSize: 11.5,
+                      padding: "4px 8px",
+                      borderRadius: 6,
+                      border: "1px solid var(--border)",
+                      color: "var(--muted)",
+                      textDecoration: "none",
+                      fontFamily: "var(--fn)",
+                    }}
+                  >
+                    ⤓ Export
+                  </a>
                   {active.status === "dismissed" ? (
                     <Btn size="sm" kind="soft" icon={<Power size={11} />} onClick={wake}>
                       Reactivate
@@ -550,6 +591,7 @@ export default function ChannelsPage() {
                     msg={m}
                     expanded={expandedIds.has(m.id) || expandAll}
                     onToggle={() => toggleExpand(m.id)}
+                    memberNames={active.members.map((mb) => mb.agent)}
                   />
                 ))}
                 {(active.busy_agents ?? []).map((a) => (
@@ -923,10 +965,12 @@ function ChannelBubble({
   msg,
   expanded,
   onToggle,
+  memberNames,
 }: {
   msg: Channel["messages"][number];
   expanded: boolean;
   onToggle: () => void;
+  memberNames: string[];
 }) {
   const isUser = msg.from === "user";
   const isThreaded = !!msg.thread_id;
@@ -1000,7 +1044,7 @@ function ChannelBubble({
       </button>
       {(expanded || !looksMultiline) && (
         <div style={{ padding: "0 14px 12px" }}>
-          <CedarMarkdown text={msg.text} />
+          <CedarMarkdown text={msg.text} mentions={memberNames} />
         </div>
       )}
     </div>
@@ -1475,6 +1519,102 @@ const _UsersIcon = Users;
 void _UsersIcon;
 
 // ── Change folder modal ──────────────────────────────────────
+// ── Members modal — rename / view roles ─────────────────────
+function MembersModal({
+  channelId,
+  members,
+  onClose,
+  onChanged,
+}: {
+  channelId: string;
+  members: { agent: string; role: string }[];
+  onClose: () => void;
+  onChanged: () => void;
+}) {
+  const dialog = useDialog();
+  const [edits, setEdits] = useState<Record<string, string>>(() =>
+    Object.fromEntries(members.map((m) => [m.agent, m.agent])),
+  );
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const save = async (oldAgent: string) => {
+    const next = (edits[oldAgent] || "").trim();
+    if (!next || next === oldAgent) return;
+    setBusy(oldAgent);
+    try {
+      await api.renameChannelMember(channelId, oldAgent, next);
+      onChanged();
+    } catch (e) {
+      await dialog.notify({
+        title: "Rename failed",
+        body: String(e),
+        tone: "danger",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <CedarModal
+      open
+      onClose={onClose}
+      width={520}
+      eyebrow="channel members"
+      title="Manage roster."
+      footer={
+        <Btn kind="ghost" onClick={onClose}>
+          Done
+        </Btn>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 4 }}>
+          Rename a specialist to keep mentions unambiguous when you have multiples.
+          Past messages get rewritten so the feed stays consistent.
+        </div>
+        {members.map((m) => (
+          <div
+            key={m.agent}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "8px 10px",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              background: "var(--bg)",
+            }}
+          >
+            <Tag color={m.role === "orchestrator" ? "cedar" : "muted"}>{m.role}</Tag>
+            <CedarInput
+              value={edits[m.agent] ?? m.agent}
+              onChange={(e) =>
+                setEdits((cur) => ({ ...cur, [m.agent]: e.target.value }))
+              }
+              disabled={busy === m.agent || m.role === "orchestrator"}
+              style={{ flex: 1, fontFamily: "var(--fm)" }}
+            />
+            <Btn
+              size="sm"
+              kind="solid"
+              onClick={() => save(m.agent)}
+              disabled={
+                busy === m.agent ||
+                m.role === "orchestrator" ||
+                !edits[m.agent] ||
+                edits[m.agent].trim() === m.agent
+              }
+            >
+              {busy === m.agent ? "…" : "Rename"}
+            </Btn>
+          </div>
+        ))}
+      </div>
+    </CedarModal>
+  );
+}
+
 function ChangeFolderModal({
   project,
   onClose,

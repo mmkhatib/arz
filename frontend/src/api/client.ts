@@ -710,6 +710,16 @@ export const api = {
               messages: { id: number; from: string; text: string; ts: number;
                           mentions: string[]; in_reply_to: number | null;
                           thread_id: number | null }[] }>(`/channels/${slug}`),
+  renameChannelMember: (slug: string, oldAgent: string, newAgent: string) =>
+    request<unknown>(
+      `/channels/${encodeURIComponent(slug)}/members/${encodeURIComponent(oldAgent)}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ agent: newAgent }),
+      },
+    ),
+  exportChannelUrl: (slug: string, format: "md" | "json") =>
+    `${BASE}/channels/${encodeURIComponent(slug)}/export?format=${format}`,
   createChannelApp: (body: {
     name?: string;
     topic?: string;

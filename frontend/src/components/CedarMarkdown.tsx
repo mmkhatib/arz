@@ -13,12 +13,72 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 
+// remark plugin: split text nodes on @mentions of known names and
+// replace each match with a synthetic `link` node carrying an
+// `#arz-mention:<name>` href. The `a` component override below
+// recognizes that scheme and renders a cedar-glow pill.
+function remarkMentions(mentions: string[]) {
+  // Build the regex once. Longest first so "coder-2" wins over "coder".
+  const ordered = [...new Set(mentions)].filter(Boolean).sort((a, b) => b.length - a.length);
+  if (ordered.length === 0) return () => {};
+  const pattern = new RegExp(
+    `(?<![\\w-])@(${ordered.map((m) => m.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\$&")).join("|")})(?![\\w-])`,
+    "g",
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return () => (tree: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const visit = (node: any) => {
+      if (!node || !node.children) return;
+      const out: unknown[] = [];
+      for (const child of node.children) {
+        if (child.type !== "text" || typeof child.value !== "string") {
+          visit(child);
+          out.push(child);
+          continue;
+        }
+        const v: string = child.value;
+        let lastIdx = 0;
+        let match: RegExpExecArray | null;
+        pattern.lastIndex = 0;
+        let pushed = false;
+        while ((match = pattern.exec(v)) !== null) {
+          pushed = true;
+          if (match.index > lastIdx) {
+            out.push({ type: "text", value: v.slice(lastIdx, match.index) });
+          }
+          const name = match[1];
+          out.push({
+            type: "link",
+            url: `#arz-mention:${name}`,
+            children: [{ type: "text", value: `@${name}` }],
+          });
+          lastIdx = match.index + match[0].length;
+        }
+        if (!pushed) {
+          out.push(child);
+        } else if (lastIdx < v.length) {
+          out.push({ type: "text", value: v.slice(lastIdx) });
+        }
+      }
+      node.children = out;
+      for (const c of out as { type: string; children?: unknown }[]) {
+        if (c.children) visit(c);
+      }
+    };
+    visit(tree);
+  };
+}
+
 export function CedarMarkdown({
   text,
   onTaskToggle,
+  mentions,
 }: {
   text: string;
   onTaskToggle?: (lineIdx: number, checked: boolean) => void;
+  /** Member agent names whose @mentions should be highlighted inline. */
+  mentions?: string[];
 }) {
   const components = useMemo(
     () => ({
@@ -68,6 +128,26 @@ export function CedarMarkdown({
         );
       },
       a({ href, children }: { href?: string; children?: React.ReactNode }) {
+        if (href && href.startsWith("#arz-mention:")) {
+          return (
+            <span
+              style={{
+                display: "inline-block",
+                padding: "0 6px",
+                borderRadius: 6,
+                background: "var(--cedar-dim)",
+                border: "1px solid var(--cedar-line)",
+                color: "var(--cedar-glow)",
+                fontWeight: 500,
+                fontFamily: "var(--fm)",
+                fontSize: "0.95em",
+              }}
+              title={href.slice("#arz-mention:".length)}
+            >
+              {children}
+            </span>
+          );
+        }
         return (
           <a
             href={href}
@@ -194,7 +274,11 @@ export function CedarMarkdown({
       }}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={
+          mentions && mentions.length > 0
+            ? [remarkGfm, remarkMentions(mentions)]
+            : [remarkGfm]
+        }
         rehypePlugins={[rehypeHighlight]}
         components={components as never}
       >

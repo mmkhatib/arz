@@ -199,9 +199,51 @@ class ChannelStore:
             raise KeyError(slug)
         if len(ch.members) >= _MAX_MEMBERS:
             raise ValueError(f"channel already has {_MAX_MEMBERS} members")
-        if any(m.agent == member.agent for m in ch.members):
-            raise ValueError(f"agent '{member.agent}' already in channel")
+        # Auto-uniquify: if "coder" is already a member, the next invite
+        # becomes "coder-2", then "coder-3", etc. Lets a channel host
+        # two reviewers (or two coders) without ambiguous @mentions.
+        existing = {m.agent for m in ch.members}
+        if member.agent in existing:
+            base = member.agent
+            n = 2
+            while f"{base}-{n}" in existing:
+                n += 1
+            member = member.model_copy(update={"agent": f"{base}-{n}"})
         ch.members.append(member)
+        return self.save(ch)
+
+    def rename_member(self, slug: str, old_agent: str, new_agent: str) -> Channel:
+        """Rename a member. Rewrites historical from_ values and naive
+        @mention tokens in past message text so the channel reads
+        consistently after the rename. New name must not already be in
+        use; orchestrator role is preserved.
+        """
+        ch = self.get(slug)
+        if ch is None:
+            raise KeyError(slug)
+        new_agent = new_agent.strip().lstrip("@")
+        if not new_agent:
+            raise ValueError("new agent name required")
+        if new_agent == old_agent:
+            return ch
+        if any(m.agent == new_agent for m in ch.members):
+            raise ValueError(f"agent '{new_agent}' already in channel")
+        target = next((m for m in ch.members if m.agent == old_agent), None)
+        if target is None:
+            raise KeyError(old_agent)
+        target.agent = new_agent
+        # Rewrite from_ for past messages so the feed renders consistently.
+        for m in ch.messages:
+            if m.from_ == old_agent:
+                m.from_ = new_agent
+            if old_agent in (m.mentions or []):
+                m.mentions = [new_agent if x == old_agent else x for x in m.mentions]
+            if m.text:
+                m.text = re.sub(
+                    rf"(?<![\w-])@{re.escape(old_agent)}(?![\w-])",
+                    f"@{new_agent}",
+                    m.text,
+                )
         return self.save(ch)
 
     def post(

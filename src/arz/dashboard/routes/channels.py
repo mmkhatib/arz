@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from arz.channels import ChannelMember, get_channel_store
 from arz.dashboard.token_auth import require_token
@@ -109,6 +111,77 @@ async def add_member(slug: str, request: Request) -> dict:
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return _channel_to_dict(ch)
+
+
+@router.patch("/api/channels/{slug}/members/{agent}")
+async def rename_member(slug: str, agent: str, request: Request) -> dict:
+    body = await request.json()
+    new_agent = (body.get("agent") or "").strip()
+    if not new_agent:
+        raise HTTPException(status_code=422, detail="agent required")
+    try:
+        ch = get_channel_store().rename_member(slug, agent, new_agent)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    return _channel_to_dict(ch)
+
+
+@router.get("/api/channels/{slug}/export")
+async def export_channel(slug: str, format: str = "md") -> Response:
+    """Bundle the channel as Markdown or JSON for download.
+
+    Headers + Disposition match the chat export endpoint so the
+    existing ExportMenu UX works unchanged.
+    """
+    import json as _json
+    from datetime import datetime as _dt
+
+    from fastapi import Response as _Response
+
+    ch = get_channel_store().get(slug)
+    if ch is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+
+    fmt = (format or "md").lower()
+    safe_slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", slug).strip("-") or "channel"
+    when = _dt.now().strftime("%Y%m%d-%H%M%S")
+
+    if fmt == "json":
+        body = _channel_to_dict(ch)
+        return _Response(
+            content=_json.dumps(body, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{safe_slug}-{when}.json"'},
+        )
+
+    # Markdown
+    lines: list[str] = []
+    lines.append(f"# {ch.name}")
+    if ch.topic:
+        lines.append("")
+        lines.append(f"_{ch.topic}_")
+    lines.append("")
+    lines.append("## Members")
+    for m in ch.members:
+        lines.append(f"- **@{m.agent}** — {m.role}")
+    lines.append("")
+    lines.append("## Conversation")
+    for m in ch.messages:
+        ts = _dt.fromtimestamp(m.ts).strftime("%Y-%m-%d %H:%M:%S")
+        lines.append("")
+        lines.append(f"### @{m.from_}  · {ts}")
+        if m.thread_id is not None:
+            lines.append(f"*(threaded under #{m.thread_id})*")
+        lines.append("")
+        lines.append(m.text)
+    md = "\n".join(lines) + "\n"
+    return _Response(
+        content=md,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{safe_slug}-{when}.md"'},
+    )
 
 
 @router.post("/api/channels/{slug}/post", status_code=status.HTTP_201_CREATED)
