@@ -349,6 +349,19 @@ class ChannelRunner:
             "tiers from <capabilities>: cheap/local for trivial work, "
             "frontier only for hard reasoning. Keep replies short."
         )
+        # Milestone-driven docs reminder when a doc-keeper is on the roster.
+        has_doc_keeper = any(
+            m.role != "orchestrator" and m.agent.split("-")[0] == "doc" and "keeper" in m.agent
+            for m in ch.members
+        ) or any(m.agent == "doc-keeper" for m in ch.members)
+        if has_doc_keeper:
+            lines.append(
+                "When a meaningful milestone lands — feature done, design "
+                "decided, release cut, public API changed — @-mention "
+                "doc-keeper with a one-line summary of what shipped so "
+                "READMEs / CHANGELOG / tech docs stay in sync. Skip "
+                "doc-keeper for trivial in-progress steps."
+            )
         return "\n".join(lines)
 
 
