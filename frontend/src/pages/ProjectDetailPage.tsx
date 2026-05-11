@@ -71,6 +71,7 @@ export default function ProjectDetailPage() {
   const [showEdit, setShowEdit] = useState(false);
   const [kickoffBusy, setKickoffBusy] = useState(false);
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
+  const [editingTask, setEditingTask] = useState<ProjectTask | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const lastTickRef = useRef<number>(Date.now());
 
@@ -126,6 +127,13 @@ export default function ProjectDetailPage() {
     } catch {}
   };
 
+  const setTaskAssignee = async (task: ProjectTask, assignee: string | null) => {
+    try {
+      await api.patchProjectTask(project.id, task.id, { assignee });
+      await refresh();
+    } catch {}
+  };
+
   const removeTask = async (task: ProjectTask) => {
     const ok = await dialog.confirm({
       title: `Delete task "${task.title}"?`,
@@ -172,6 +180,19 @@ export default function ProjectDetailPage() {
       return (a.started_at ? 0 : 1) - (b.started_at ? 0 : 1);
     });
   }
+
+  // Roster of agent names to offer in the row's assignee picker. We
+  // can't easily fetch the channel from here without prop drilling;
+  // every task assignee that's ever appeared is the union we pick from.
+  // (The drag-and-drop board in the Subagents tab pulls richer data
+  // from the channel members directly.)
+  const assigneeOptions = Array.from(
+    new Set(
+      project.tasks
+        .map((t) => t.assignee)
+        .filter((a): a is string => !!a),
+    ),
+  ).sort();
 
   // Aggregate artifact paths across all tasks for the Files tab.
   const allArtifacts: { path: string; task?: ProjectTask }[] = [];
@@ -310,9 +331,12 @@ export default function ProjectDetailPage() {
                         key={t.id}
                         t={t}
                         allTasks={project.tasks}
+                        assigneeOptions={assigneeOptions}
                         onSelect={() => setSelectedTask(t)}
                         onStatus={(s) => setTaskStatus(t, s)}
                         onPriority={(p) => setTaskPriority(t, p)}
+                        onAssignee={(a) => setTaskAssignee(t, a)}
+                        onEdit={() => setEditingTask(t)}
                         onRemove={() => removeTask(t)}
                         onOpenFile={(p) => {
                           setSelectedFile(p);
@@ -347,7 +371,13 @@ export default function ProjectDetailPage() {
           />
         )}
 
-        {tab === "subagents" && <SubagentsTab project={project} navigate={navigate} />}
+        {tab === "subagents" && (
+          <SubagentsTab
+            project={project}
+            navigate={navigate}
+            onReassign={(t, a) => setTaskAssignee(t, a)}
+          />
+        )}
         {tab === "log" && <LogTab project={project} />}
       </div>
 
@@ -370,6 +400,23 @@ export default function ProjectDetailPage() {
         project={project}
         onSaved={refresh}
       />
+
+      {editingTask && (
+        <EditTaskModal
+          task={editingTask}
+          assigneeOptions={assigneeOptions}
+          onClose={() => setEditingTask(null)}
+          onSubmit={async (body) => {
+            try {
+              await api.patchProjectTask(project.id, editingTask.id, body);
+              await refresh();
+              setEditingTask(null);
+            } catch (e) {
+              await dialog.notify({ title: "Save failed", body: String(e), tone: "danger" });
+            }
+          }}
+        />
+      )}
     </CedarPage>
   );
 }
@@ -479,17 +526,23 @@ function TaskRow({
   onSelect,
   onStatus,
   onPriority,
+  onAssignee,
+  onEdit,
   onRemove,
   onOpenFile,
   allTasks,
+  assigneeOptions,
 }: {
   t: ProjectTask;
   onSelect: () => void;
   onStatus: (s: ProjectTaskStatus) => void;
   onPriority: (p: ProjectTaskPriority) => void;
+  onAssignee: (a: string | null) => void;
+  onEdit: () => void;
   onRemove: () => void;
   onOpenFile: (path: string) => void;
   allTasks: ProjectTask[];
+  assigneeOptions: string[];
 }) {
   const blockers = t.depends_on
     .map((id) => allTasks.find((x) => x.id === id))
@@ -595,6 +648,16 @@ function TaskRow({
         )}
       </button>
       <CedarSelect
+        value={t.assignee ?? ""}
+        options={[
+          { value: "", label: "unassigned" },
+          ...assigneeOptions.map((a) => ({ value: a, label: `@${a}` })),
+        ]}
+        onChange={(v) => onAssignee(v || null)}
+        accent="muted"
+        title="Assignee"
+      />
+      <CedarSelect
         value={priority}
         options={PRIORITY_ORDER.map((p) => ({ value: p, label: p }))}
         onChange={(v) => onPriority(v as ProjectTaskPriority)}
@@ -611,6 +674,19 @@ function TaskRow({
         accent={STATUS_TAG[t.status]}
         title="Status"
       />
+      <button
+        onClick={onEdit}
+        title="Edit task"
+        style={{
+          background: "transparent",
+          border: "none",
+          color: "var(--muted)",
+          cursor: "pointer",
+          padding: 4,
+        }}
+      >
+        <Pencil size={11} />
+      </button>
       <button
         onClick={onRemove}
         title="Delete task"
@@ -1044,6 +1120,180 @@ function NewTaskModal({
   );
 }
 
+// ── Edit task modal — patch existing task fields ─────────────
+function EditTaskModal({
+  task,
+  assigneeOptions,
+  onClose,
+  onSubmit,
+}: {
+  task: ProjectTask;
+  assigneeOptions: string[];
+  onClose: () => void;
+  onSubmit: (body: {
+    title?: string;
+    description?: string;
+    assignee?: string | null;
+    priority?: ProjectTaskPriority;
+    status?: ProjectTaskStatus;
+  }) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(task.title);
+  const [description, setDescription] = useState(task.description);
+  const [assignee, setAssignee] = useState(task.assignee ?? "");
+  const [priority, setPriority] = useState<ProjectTaskPriority>(task.priority ?? "normal");
+  const [status, setStatus] = useState<ProjectTaskStatus>(task.status);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const t = title.trim();
+    if (!t) {
+      setError("Title required.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit({
+        title: t,
+        description: description.trim(),
+        assignee: assignee.trim().replace(/^@/, "") || null,
+        priority,
+        status,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <CedarModal
+      open
+      onClose={onClose}
+      eyebrow="edit task"
+      title={
+        <>
+          Edit <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>{task.title.slice(0, 60)}</em>.
+        </>
+      }
+      footer={
+        <>
+          <Btn kind="ghost" onClick={onClose} disabled={submitting}>Cancel</Btn>
+          <Btn kind="solid" onClick={submit} disabled={submitting}>
+            {submitting ? "Saving…" : "Save changes"}
+          </Btn>
+        </>
+      }
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <CedarLabel>Title</CedarLabel>
+          <CedarInput
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit(); }}
+          />
+        </div>
+        <div>
+          <CedarLabel>Description</CedarLabel>
+          <CedarTextArea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={5}
+          />
+        </div>
+        <div>
+          <CedarLabel>Assignee</CedarLabel>
+          <CedarInput
+            value={assignee}
+            onChange={(e) => setAssignee(e.target.value)}
+            placeholder="agent name (leave blank to unassign)"
+            list={`assignee-options-${task.id}`}
+          />
+          <datalist id={`assignee-options-${task.id}`}>
+            {assigneeOptions.map((a) => <option key={a} value={a} />)}
+          </datalist>
+        </div>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <div>
+            <CedarLabel>Priority</CedarLabel>
+            <div style={{ display: "flex", gap: 6 }}>
+              {PRIORITY_ORDER.map((p) => {
+                const on = priority === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPriority(p)}
+                    style={{
+                      padding: "5px 10px",
+                      fontSize: 11.5,
+                      borderRadius: 6,
+                      border: `1px solid ${on ? "var(--cedar-glow)" : "var(--border)"}`,
+                      background: on ? "var(--cedar-dim)" : "var(--bg)",
+                      color: on ? "var(--cedar-glow)" : "var(--text2)",
+                      cursor: "pointer",
+                      fontFamily: "var(--fn)",
+                      textTransform: "capitalize",
+                    }}
+                  >
+                    {p}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <CedarLabel>Status</CedarLabel>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {(["planned", "in_progress", "blocked", "done", "failed"] as ProjectTaskStatus[]).map((s) => {
+                const on = status === s;
+                return (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setStatus(s)}
+                    style={{
+                      padding: "5px 10px",
+                      fontSize: 11.5,
+                      borderRadius: 6,
+                      border: `1px solid ${on ? "var(--cedar-glow)" : "var(--border)"}`,
+                      background: on ? "var(--cedar-dim)" : "var(--bg)",
+                      color: on ? "var(--cedar-glow)" : "var(--text2)",
+                      cursor: "pointer",
+                      fontFamily: "var(--fn)",
+                    }}
+                  >
+                    {STATUS_LABEL[s]}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        {error && (
+          <div
+            style={{
+              fontSize: 12,
+              color: "var(--ember)",
+              background: "var(--ember-dim)",
+              border: "1px solid var(--ember)",
+              borderRadius: 6,
+              padding: "8px 10px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+      </div>
+    </CedarModal>
+  );
+}
+
 // ── Edit project modal — single-pane, wizard-friendly ──────
 function EditProjectModal({
   open,
@@ -1237,11 +1487,14 @@ interface ChannelInfo {
 function SubagentsTab({
   project,
   navigate,
+  onReassign,
 }: {
   project: ProjectSummary;
   navigate: NavigateFunction;
+  onReassign: (task: ProjectTask, newAgent: string) => void | Promise<void>;
 }) {
   const [channel, setChannel] = useState<ChannelInfo | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   useEffect(() => {
     if (!project.channel_id) return;
     api.getChannelApp(project.channel_id).then(setChannel).catch(() => {});
@@ -1333,8 +1586,27 @@ function SubagentsTab({
         const open = a.tasks.filter((t) => !["done", "failed"].includes(t.status));
         const inFlight = a.tasks.find((t) => t.status === "in_progress");
         const done = a.tasks.filter((t) => t.status === "done").length;
+        const isDropTarget = dropTarget === a.name;
         return (
-          <CedarCard key={a.name} padding={16}>
+          <div
+            key={a.name}
+            onDragOver={(e) => { e.preventDefault(); setDropTarget(a.name); }}
+            onDragLeave={() => setDropTarget((cur) => (cur === a.name ? null : cur))}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDropTarget(null);
+              const taskId = e.dataTransfer.getData("text/arz-task");
+              if (!taskId) return;
+              const task = project.tasks.find((t) => t.id === taskId);
+              if (task && task.assignee !== a.name) void onReassign(task, a.name);
+            }}
+            style={{
+              outline: isDropTarget ? "2px solid var(--cedar-glow)" : "none",
+              borderRadius: 10,
+              transition: "outline-color 120ms",
+            }}
+          >
+          <CedarCard padding={16}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
               <div
                 style={{
@@ -1396,7 +1668,21 @@ function SubagentsTab({
                 {a.tasks.slice(0, 6).map((t) => (
                   <div
                     key={t.id}
-                    style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12 }}
+                    draggable
+                    onDragStart={(e) => {
+                      e.dataTransfer.setData("text/arz-task", t.id);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    title="Drag onto another agent to reassign"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: 12,
+                      padding: "3px 4px",
+                      borderRadius: 4,
+                      cursor: "grab",
+                    }}
                   >
                     <Tag color={statusTagColor(t.status)}>{t.status.replace("_", " ")}</Tag>
                     <span
@@ -1424,6 +1710,7 @@ function SubagentsTab({
               </div>
             )}
           </CedarCard>
+          </div>
         );
       })}
     </div>
