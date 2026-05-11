@@ -129,7 +129,10 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
       ].join(" ")}
     >
       {/* Brand + collapse toggle */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-[var(--border)]">
+      <div
+        className="flex items-center justify-between px-3 border-b border-[var(--border)]"
+        style={{ minHeight: "var(--shell-row-h)" }}
+      >
         {!collapsed && (
           <div className="flex items-center gap-2">
             <CedarMark size={22} />
@@ -178,18 +181,10 @@ export default function NavBar({ active, cronBadge, onSelect }: Props) {
         ))}
       </div>
 
-      <MemoryStatsRow collapsed={collapsed} />
-
-      <div className="px-2 py-2 border-t border-[var(--border)] flex items-center justify-between gap-2">
-        <button
-          onClick={() => setShortcutsOpen(true)}
-          title="Keyboard shortcuts (?)"
-          className="w-7 h-7 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
-        >
-          <Keyboard size={14} />
-        </button>
-        {!collapsed && <span className="text-[10px] text-[var(--muted)]/60 ml-auto">arz v0.7.29</span>}
-      </div>
+      <MemoryStatsRow
+        collapsed={collapsed}
+        onShortcuts={() => setShortcutsOpen(true)}
+      />
       {shortcutsOpen && <ShortcutsOverlay onClose={() => setShortcutsOpen(false)} />}
     </nav>
   );
@@ -242,7 +237,13 @@ function NavItem({
   );
 }
 
-function MemoryStatsRow({ collapsed }: { collapsed: boolean }) {
+function MemoryStatsRow({
+  collapsed,
+  onShortcuts,
+}: {
+  collapsed: boolean;
+  onShortcuts: () => void;
+}) {
   const [stats, setStats] = useState<{ markdown: number; lessons: number; vectors: number } | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -258,29 +259,52 @@ function MemoryStatsRow({ collapsed }: { collapsed: boolean }) {
     const id = window.setInterval(() => { if (!document.hidden) tick(); }, 300_000);
     return () => { cancelled = true; window.clearInterval(id); };
   }, []);
-  if (!stats) return null;
-  const total = stats.markdown + stats.lessons + stats.vectors;
-  const tip = `Memory · ${stats.markdown} markdown · ${stats.lessons} lessons · ${stats.vectors} vectors`;
+  const total = stats ? stats.markdown + stats.lessons + stats.vectors : 0;
+  const tip = stats
+    ? `Memory · ${stats.markdown} markdown · ${stats.lessons} lessons · ${stats.vectors} vectors`
+    : "";
   if (collapsed) {
     return (
-      <div className="px-2 py-1 border-t border-[var(--border)]/50 flex justify-center" title={tip}>
-        <span className="text-[10px] font-mono text-[var(--muted)]">{total}</span>
+      <div
+        className="px-2 border-t border-[var(--border)] flex items-center justify-between gap-1"
+        style={{ minHeight: "var(--shell-row-h)" }}
+        title={tip}
+      >
+        <button
+          onClick={onShortcuts}
+          title="Keyboard shortcuts (?)"
+          className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors"
+        >
+          <Keyboard size={12} />
+        </button>
+        {stats && <span className="text-[10px] font-mono text-[var(--muted)]">{total}</span>}
       </div>
     );
   }
   return (
-    <div className="px-2.5 py-1.5 border-t border-[var(--border)]/50 text-[10px] font-mono text-[var(--muted)]" title={tip}>
-      <div className="flex items-center justify-between">
-        <span className="uppercase tracking-wider">Memory</span>
-        <span>{total} items</span>
-      </div>
-      <div className="flex items-center gap-1.5 mt-0.5 text-[var(--muted)]/70">
-        <span>md {stats.markdown}</span>
-        <span>·</span>
-        <span>lessons {stats.lessons}</span>
-        <span>·</span>
-        <span>vec {stats.vectors}</span>
-      </div>
+    <div
+      className="px-2.5 border-t border-[var(--border)] text-[10px] font-mono text-[var(--muted)] flex items-center justify-between gap-2"
+      style={{ minHeight: "var(--shell-row-h)" }}
+      title={tip}
+    >
+      <button
+        onClick={onShortcuts}
+        title="Keyboard shortcuts (?)"
+        className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)] transition-colors shrink-0"
+      >
+        <Keyboard size={12} />
+      </button>
+      {stats ? (
+        <div className="flex-1 min-w-0 leading-tight">
+          <div className="flex items-center justify-between">
+            <span className="uppercase tracking-wider">Memory</span>
+            <span>{total} · md {stats.markdown}/le {stats.lessons}/v {stats.vectors}</span>
+          </div>
+        </div>
+      ) : (
+        <span className="flex-1 text-[var(--muted)]/40">memory…</span>
+      )}
+      <span className="text-[var(--muted)]/60 shrink-0">v0.7.30</span>
     </div>
   );
 }
