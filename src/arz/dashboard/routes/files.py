@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel
 
 from arz.dashboard.token_auth import require_token
 
@@ -253,3 +257,39 @@ async def upload_files(
             }
         )
     return saved
+
+
+class RevealBody(BaseModel):
+    path: str
+
+
+@router.post("/api/files/reveal")
+async def reveal_path(body: RevealBody) -> dict:
+    """Open *path* in the OS file manager. Browsers refuse to follow
+    ``file://`` links for security, so the dashboard hits this endpoint
+    instead and the gateway shells out to the platform's reveal tool.
+    """
+    raw = (body.path or "").strip()
+    if not raw:
+        raise HTTPException(status_code=422, detail="path required")
+    p = Path(raw).expanduser()
+    if not p.exists():
+        raise HTTPException(status_code=404, detail=f"path not found: {p}")
+    target = str(p)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", target])
+        elif sys.platform == "win32":
+            # explorer wants backslashes and returns 1 on success — that
+            # 1 is fine, we just need the process spawned.
+            subprocess.Popen(["explorer", target.replace("/", "\\")])
+        else:
+            opener = shutil.which("xdg-open") or shutil.which("gio")
+            if not opener:
+                raise HTTPException(status_code=501, detail="no xdg-open / gio installed")
+            subprocess.Popen([opener, target])
+    except HTTPException:
+        raise
+    except OSError as e:
+        raise HTTPException(status_code=500, detail=f"reveal failed: {e}")
+    return {"opened": target}

@@ -958,6 +958,12 @@ export const api = {
     );
   },
 
+  revealPath: (path: string) =>
+    request<{ opened: string }>("/files/reveal", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+
   fetchSessionFiles: (id: string) =>
     request<{ path: string; rel_path: string; name: string; ext: string; size: number }[]>(
       `/sessions/${id}/files`

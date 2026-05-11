@@ -358,19 +358,20 @@ export default function ChannelsPage() {
                       size="sm"
                       kind="outline"
                       icon={<FolderOpen size={11} />}
-                      onClick={() => {
-                        // Open the folder via file:// — works on most desktops.
-                        // Fall back to copying the path so the user always has
-                        // a way to reach it.
+                      onClick={async () => {
                         const path = linkedProject.repo_path;
-                        try {
-                          window.open(`file://${path}`, "_blank");
-                        } catch {
-                          /* ignore */
-                        }
                         navigator.clipboard?.writeText(path).catch(() => {});
+                        try {
+                          await api.revealPath(path);
+                        } catch (e) {
+                          await dialog.notify({
+                            title: "Couldn't open folder",
+                            body: `${e}\n\nPath copied to clipboard: ${path}`,
+                            tone: "warn",
+                          });
+                        }
                       }}
-                      title={`Project folder: ${linkedProject.repo_path} — opens in OS, also copied to clipboard`}
+                      title={`Open ${linkedProject.repo_path} in OS file manager (also copied to clipboard)`}
                     >
                       Folder
                     </Btn>
