@@ -107,60 +107,12 @@ export default function AgentsPage() {
           gap: 18,
         }}
       >
-        {/* Left rail */}
-        <CedarCard padding={0}>
-          <div
-            style={{
-              padding: "12px 14px",
-              borderBottom: "1px solid var(--border)",
-              fontFamily: "var(--fm)",
-              fontSize: 10.5,
-              color: "var(--muted)",
-              textTransform: "uppercase",
-              letterSpacing: ".12em",
-            }}
-          >
-            All agents · {agents.length}
-          </div>
-          {agents.length === 0 && (
-            <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--muted)" }}>
-              No agents yet.
-            </div>
-          )}
-          {agents.map((a) => (
-            <div
-              key={a.name}
-              onClick={() => { setActiveName(a.name); setEditing(null); }}
-              style={{
-                padding: "10px 14px",
-                borderBottom: "1px solid var(--hairline)",
-                cursor: "pointer",
-                background: activeName === a.name ? "var(--cedar-dim)" : "transparent",
-                borderLeft: `2px solid ${activeName === a.name ? "var(--cedar-glow)" : "transparent"}`,
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Bot size={13} style={{ color: "var(--cedar-2)", flexShrink: 0 }} />
-                <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {a.name}
-                </span>
-                {a.is_default && <Star size={11} style={{ color: "var(--dawn)", fill: "var(--dawn)" }} />}
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--text3)",
-                  marginTop: 3,
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {a.description || a.provider}
-              </div>
-            </div>
-          ))}
-        </CedarCard>
+        {/* Left rail — search + Popular / All sections */}
+        <AgentRail
+          agents={agents}
+          activeName={activeName}
+          onPick={(name) => { setActiveName(name); setEditing(null); }}
+        />
 
         {/* Inspector */}
         {editing ? (
@@ -409,6 +361,142 @@ function Wrap({ label, children }: { label: string; children: React.ReactNode })
         {label}
       </div>
       {children}
+    </div>
+  );
+}
+
+// ── Left rail — search + Popular / All sections ──────────────
+function AgentRail({
+  agents,
+  activeName,
+  onPick,
+}: {
+  agents: AgentConfig[];
+  activeName: string | null;
+  onPick: (name: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+
+  const matches = (a: AgentConfig) =>
+    !q ||
+    a.name.toLowerCase().includes(q) ||
+    a.description.toLowerCase().includes(q) ||
+    a.provider.toLowerCase().includes(q);
+
+  const popular = agents.filter((a) => a.popular && matches(a));
+  const rest = agents.filter((a) => !a.popular && matches(a));
+  const showPopularSection = popular.length > 0 && (!q || popular.length > 0);
+
+  return (
+    <CedarCard padding={0} style={{ display: "flex", flexDirection: "column", maxHeight: "70vh" }}>
+      <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search agents…"
+          style={{
+            width: "100%",
+            padding: "6px 10px",
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            borderRadius: 6,
+            color: "var(--text)",
+            fontSize: 12.5,
+            fontFamily: "var(--fn)",
+          }}
+        />
+      </div>
+      <div style={{ overflowY: "auto", flex: 1 }}>
+        {showPopularSection && (
+          <SectionHeader label={`Popular · ${popular.length}`} />
+        )}
+        {showPopularSection &&
+          popular.map((a) => (
+            <AgentRow key={a.name} a={a} active={activeName === a.name} onPick={() => onPick(a.name)} />
+          ))}
+        {(rest.length > 0 || !showPopularSection) && (
+          <SectionHeader label={`${q ? "Results" : "All agents"} · ${rest.length + (showPopularSection ? 0 : popular.length)}`} />
+        )}
+        {!showPopularSection &&
+          popular.map((a) => (
+            <AgentRow key={a.name} a={a} active={activeName === a.name} onPick={() => onPick(a.name)} />
+          ))}
+        {rest.map((a) => (
+          <AgentRow key={a.name} a={a} active={activeName === a.name} onPick={() => onPick(a.name)} />
+        ))}
+        {popular.length === 0 && rest.length === 0 && (
+          <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--muted)" }}>
+            {q ? `No agents match "${query}".` : "No agents yet."}
+          </div>
+        )}
+      </div>
+    </CedarCard>
+  );
+}
+
+function SectionHeader({ label }: { label: string }) {
+  return (
+    <div
+      style={{
+        padding: "10px 14px 6px",
+        fontFamily: "var(--fm)",
+        fontSize: 10,
+        color: "var(--muted)",
+        textTransform: "uppercase",
+        letterSpacing: ".14em",
+        background: "var(--s2)",
+        borderBottom: "1px solid var(--hairline)",
+        position: "sticky",
+        top: 0,
+        zIndex: 1,
+      }}
+    >
+      {label}
+    </div>
+  );
+}
+
+function AgentRow({
+  a,
+  active,
+  onPick,
+}: {
+  a: AgentConfig;
+  active: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <div
+      onClick={onPick}
+      style={{
+        padding: "10px 14px",
+        borderBottom: "1px solid var(--hairline)",
+        cursor: "pointer",
+        background: active ? "var(--cedar-dim)" : "transparent",
+        borderLeft: `2px solid ${active ? "var(--cedar-glow)" : "transparent"}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Bot size={13} style={{ color: "var(--cedar-2)", flexShrink: 0 }} />
+        <span style={{ fontSize: 13, fontWeight: 500, color: "var(--text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {a.name}
+        </span>
+        {a.is_default && <Star size={11} style={{ color: "var(--dawn)", fill: "var(--dawn)" }} />}
+      </div>
+      <div
+        style={{
+          fontSize: 11,
+          color: "var(--text3)",
+          marginTop: 3,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {a.description || a.provider}
+      </div>
     </div>
   );
 }

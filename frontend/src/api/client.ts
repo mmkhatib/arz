@@ -169,6 +169,7 @@ export interface AgentConfig {
   tool_allowlist: string[];
   description: string;
   is_default: boolean;
+  popular?: boolean;
 }
 
 export interface McpServer {

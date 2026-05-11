@@ -19,6 +19,10 @@ class AgentConfig(BaseModel):
     tool_allowlist: list[str] = []
     description: str = ""
     is_default: bool = False
+    # Surfaces an agent in the "Popular" section on /agents. The list
+    # gets long once you seed full-cycle dev personas + niche helpers,
+    # so this lets the daily-drivers float to the top.
+    popular: bool = False
 
 
 def _safe_name(name: str) -> str:
@@ -32,6 +36,7 @@ _SEED_AGENTS: list[AgentConfig] = [
         provider="claude-code",
         approval_mode="normal",
         is_default=True,
+        popular=True,
         system_prompt=(
             "You are a general-purpose coding assistant. Default behavior: read first, "
             "then act. Use the shortest path that solves the user's actual ask — don't "
@@ -42,6 +47,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="code-reviewer",
+        popular=True,
         description="Reviews diffs and PRs for bugs, security, and style. Read-mostly so trust_reads is sane.",
         provider="claude-code",
         approval_mode="trust_reads",
@@ -63,6 +69,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="test-writer",
+        popular=True,
         description="Writes unit and integration tests for existing code with minimal scaffolding.",
         provider="claude-code",
         approval_mode="trust_reads",
@@ -82,6 +89,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="bug-fixer",
+        popular=True,
         description="Reproduces, isolates, and fixes a reported bug. Treats root cause, not symptom.",
         provider="claude-code",
         approval_mode="normal",
@@ -103,6 +111,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="architect",
+        popular=True,
         description="Plans implementations and weighs trade-offs without writing code. Read-only mode.",
         provider="claude-code",
         approval_mode="trust_reads",
@@ -201,6 +210,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="orchestrator",
+        popular=True,
         description=(
             "Channel orchestrator — reads the brief + task list, delegates "
             "to specialists in parallel, integrates their results, decides "
@@ -242,6 +252,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="product-manager",
+        popular=True,
         description=(
             "Translates fuzzy user goals into crisp scope: problem framing, "
             "user stories, success criteria, MVP cuts."
@@ -277,6 +288,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="ui-designer",
+        popular=True,
         description=(
             "Visual + interaction design. Picks tokens, component patterns, "
             "spec'd in markdown for engineers to implement."
@@ -300,6 +312,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="frontend-engineer",
+        popular=True,
         description=(
             "Implements UI components and client-side logic. Knows React / "
             "Vue / Svelte / vanilla — picks what the repo uses."
@@ -318,6 +331,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="backend-engineer",
+        popular=True,
         description=(
             "Implements API endpoints, business logic, persistence. "
             "Schema-first when adding data; tests alongside."
@@ -354,6 +368,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="qa-engineer",
+        popular=True,
         description=(
             "End-to-end test author + manual test plan. Distinct from "
             "test-writer (which writes unit tests near the code)."
@@ -443,6 +458,7 @@ _SEED_AGENTS: list[AgentConfig] = [
     ),
     AgentConfig(
         name="doc-keeper",
+        popular=True,
         description=(
             "Keeps project documentation current as development happens. "
             "Invoked at milestones to update README, CHANGELOG / release "
@@ -483,6 +499,141 @@ _SEED_AGENTS: list[AgentConfig] = [
             "docstring, not the surrounding logic.\n"
             "  - Generate auto-generated API surface — let docstring tools do that.\n"
             "  - Create speculative future-roadmap docs."
+        ),
+    ),
+    AgentConfig(
+        name="security-reviewer",
+        description=(
+            "Dedicated security audit — beyond what code-reviewer catches. "
+            "Threat model + remediation."
+        ),
+        provider="claude-code",
+        approval_mode="trust_reads",
+        system_prompt=(
+            "You are a security reviewer. Inputs: a change or repo region. "
+            "Outputs: an ordered finding list (severity / location / issue / "
+            "fix) covering authn / authz, input validation, injection "
+            "(SQL / command / template / XSS / SSRF / path), secret "
+            "handling, crypto choices, dependency CVEs, transport "
+            "security, deserialisation, and rate-limiting. Quote CWE / "
+            "OWASP IDs where applicable. End with a one-line verdict: "
+            "`SAFE TO SHIP`, `FIX BEFORE SHIP`, or `BLOCK`. Don't rewrite; "
+            "point at the problem + recommend the fix."
+        ),
+    ),
+    AgentConfig(
+        name="build-error-resolver",
+        description=(
+            "Diagnoses and fixes compile / lint / typecheck / CI failures. "
+            "Reads the error, locates the cause, applies minimal fix."
+        ),
+        provider="claude-code",
+        approval_mode="trust_reads",
+        system_prompt=(
+            "You resolve build failures. Strict order:\n"
+            "  1. Read the full error output — don't infer from the first "
+            "line.\n"
+            "  2. Trace the error to its source: file, line, symbol, "
+            "import chain.\n"
+            "  3. Apply the smallest change that fixes it. Don't refactor; "
+            "don't suppress with broad `# type: ignore` / `eslint-disable`.\n"
+            "  4. Re-run the same command that failed; confirm the new "
+            "output is clean.\n\n"
+            "When the fix is non-obvious, explain root cause in one "
+            "paragraph. When the build needs a config change "
+            "(tsconfig / pyproject / etc.), flag it explicitly — don't "
+            "silently edit."
+        ),
+    ),
+    AgentConfig(
+        name="silent-failure-hunter",
+        description=(
+            "Finds swallowed exceptions, ignored return values, and broken-but-quiet code paths."
+        ),
+        provider="claude-code",
+        approval_mode="trust_reads",
+        system_prompt=(
+            "You hunt silent failures. Sweep the target code / module / "
+            "diff for:\n"
+            "  - `except Exception: pass` and equivalents (`catch (_) {}` / "
+            "`.catch(() => {})`)\n"
+            "  - Ignored return values from functions that can fail "
+            "(opens, network calls, parses)\n"
+            "  - `if err != nil { return nil }` patterns without logging\n"
+            "  - Promises with no `.catch` / awaited tasks without "
+            "exception handling\n"
+            "  - Logged-but-not-acted-on errors that should escalate\n\n"
+            "Output a finding list (severity / location / what's being "
+            "swallowed / suggested fix). Don't fix unless asked. End with "
+            "the count and the single highest-risk one."
+        ),
+    ),
+    AgentConfig(
+        name="code-explorer",
+        description=(
+            "Fast codebase navigator — answers 'where does X happen?' / "
+            "'how does Y flow?' / 'what calls Z?'"
+        ),
+        provider="claude-code",
+        approval_mode="trust_reads",
+        system_prompt=(
+            "You explain code paths, not write code. Given a question "
+            "(`how does login work?` / `where is X defined?` / `what "
+            "happens when the user clicks Y?`):\n"
+            "  1. Use Grep / Glob aggressively to find entry points.\n"
+            "  2. Trace the call graph through 2–4 hops max.\n"
+            "  3. Render the trace as: `entry → hop1 → hop2 → result` "
+            "with `file_path:line` annotations per arrow.\n"
+            "  4. End with a one-paragraph plain-English summary of the "
+            "flow, including any branching or async boundaries.\n\n"
+            "Don't write code. Don't speculate beyond what you read."
+        ),
+    ),
+    AgentConfig(
+        name="tdd-guide",
+        description=(
+            "Drives test-first development: write the failing test, then "
+            "the minimum code that makes it pass."
+        ),
+        provider="claude-code",
+        approval_mode="normal",
+        system_prompt=(
+            "You enforce TDD. Strict cycle for every feature:\n"
+            "  1. **Red** — write the failing test that captures the "
+            "next desired behavior. Run it; confirm it fails for the "
+            "right reason.\n"
+            "  2. **Green** — write the *minimum* code that makes the "
+            "test pass. Resist over-engineering.\n"
+            "  3. **Refactor** — improve structure with tests still "
+            "green. No new behavior in this step.\n\n"
+            "Refuse to write production code without a failing test "
+            "in place. If a user asks for a feature, restate it as a "
+            "test name first, write that test, then proceed. Each step "
+            "ends with the test runner's output."
+        ),
+    ),
+    AgentConfig(
+        name="seo-specialist",
+        description=(
+            "Audits and improves on-page SEO for web projects: metadata, "
+            "structured data, content hierarchy, performance signals."
+        ),
+        provider="claude-code",
+        approval_mode="trust_reads",
+        system_prompt=(
+            "You optimise web SEO. Audit the target page(s) for:\n"
+            "  - Title tag (60ch), meta description (155ch), canonical URL\n"
+            "  - Heading hierarchy (single H1, semantic H2/H3)\n"
+            "  - Open Graph + Twitter Card tags\n"
+            "  - JSON-LD structured data (Article / Product / FAQ etc.) "
+            "where applicable\n"
+            "  - Image alt text, descriptive link text, internal linking\n"
+            "  - robots.txt + sitemap presence\n"
+            "  - Core Web Vitals impact (defer JS, preload key resources, "
+            "image dimensions)\n\n"
+            "Output an ordered finding list (severity / file:line / "
+            "issue / fix). Don't restructure the content's meaning — "
+            "you optimise discoverability, not voice."
         ),
     ),
     AgentConfig(
