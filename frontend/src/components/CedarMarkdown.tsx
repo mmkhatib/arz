@@ -30,10 +30,23 @@ function remarkMentions(mentions: string[]) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const visit = (node: any) => {
       if (!node || !node.children) return;
+      // Skip our own synthetic mention links — otherwise we'd match
+      // their inner "@name" text again and recurse forever.
+      if (
+        node.type === "link" &&
+        typeof node.url === "string" &&
+        node.url.startsWith("#arz-mention:")
+      ) {
+        return;
+      }
+      // Don't dive into code blocks / inline code — @mentions inside
+      // code spans should stay literal.
+      if (node.type === "code" || node.type === "inlineCode") {
+        return;
+      }
       const out: unknown[] = [];
       for (const child of node.children) {
         if (child.type !== "text" || typeof child.value !== "string") {
-          visit(child);
           out.push(child);
           continue;
         }
@@ -62,6 +75,9 @@ function remarkMentions(mentions: string[]) {
         }
       }
       node.children = out;
+      // Recurse only into non-mention children that actually have
+      // their own children — text nodes terminate; our synthetic
+      // mention links are skipped at the top of visit().
       for (const c of out as { type: string; children?: unknown }[]) {
         if (c.children) visit(c);
       }
