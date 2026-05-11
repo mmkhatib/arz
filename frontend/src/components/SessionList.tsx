@@ -5,6 +5,7 @@ import {
   Trash2,
   Folder as FolderIcon,
   FolderPlus,
+  Plus,
 } from "lucide-react";
 import * as LucideIcons from "lucide-react";
 import { api } from "@/api/client";
@@ -102,7 +103,6 @@ export default function SessionList({
   onCreate,
   onDelete,
   onTogglePin,
-  onArchive,
   mobileOpen = false,
   onMobileClose,
   onResume,
@@ -122,8 +122,31 @@ export default function SessionList({
       return raw ? new Set<string>(JSON.parse(raw)) : new Set<string>();
     } catch { return new Set<string>(); }
   });
-  const [movingSession, setMovingSession] = useState<string | null>(null);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | "unfiled" | null>(null);
+  const pendingFolderRef = useRef<string | null>(null);
+  const prevSessionIdsRef = useRef<Set<string>>(new Set());
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // When the user clicks "+" with a folder selected, pendingFolderRef
+  // holds that folder. The next time a brand-new session shows up in
+  // the sessions feed, drop it into the folder.
+  useEffect(() => {
+    if (!pendingFolderRef.current) return;
+    const seen = prevSessionIdsRef.current;
+    const fresh = sessions.find((s) => !seen.has(s.id));
+    if (fresh) {
+      const target = pendingFolderRef.current;
+      pendingFolderRef.current = null;
+      void api
+        .moveSessionToFolder(fresh.id, target)
+        .then(() => refreshFolders())
+        .catch(() => {});
+    }
+    // Always refresh the snapshot so we don't repeatedly fire on
+    // unrelated updates.
+    prevSessionIdsRef.current = new Set(sessions.map((s) => s.id));
+  }, [sessions]);
 
   const activeSessionCount = sessions.length;
   useEffect(() => {
@@ -177,7 +200,6 @@ export default function SessionList({
       await api.moveSessionToFolder(sessionId, folderId);
       await refreshFolders();
     } catch {}
-    setMovingSession(null);
   };
 
   // Fast lookup of which folder a session belongs to.
@@ -309,13 +331,28 @@ export default function SessionList({
         <span className="text-[var(--accent)] font-semibold tracking-wide text-[13px]">
           🌲 Arzeh
         </span>
-        <button
-          onClick={onCreate}
-          title="New session"
-          className="text-[var(--muted)] hover:text-[var(--text)] text-lg leading-none"
-        >
-          +
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={createFolder}
+            title="New folder"
+            className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--cedar-glow)] hover:bg-[var(--s2)]"
+          >
+            <FolderPlus size={13} />
+          </button>
+          <button
+            onClick={() => {
+              // Remember the destination folder so the new session lands there
+              // once it appears in the sessions feed (see useEffect below).
+              pendingFolderRef.current = selectedFolderId;
+              prevSessionIdsRef.current = new Set(sessions.map((s) => s.id));
+              onCreate();
+            }}
+            title={selectedFolderId ? "New session in selected folder" : "New session"}
+            className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--cedar-glow)] hover:bg-[var(--s2)]"
+          >
+            <Plus size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Search */}
@@ -338,17 +375,55 @@ export default function SessionList({
             {query ? "No results." : "No sessions yet."}
           </p>
         )}
-        {/* Folders — render first (open ones expand to show their sessions) */}
+        {/* Folders — click selects; chevron toggles open. Drop target. */}
         {!query && folders.map((f) => {
           const isOpen = openFolders.has(f.id);
+          const isSelected = selectedFolderId === f.id;
+          const isDropTarget = dropTargetFolderId === f.id;
           const folderSessions = displayed.filter((s) => sessionFolderMap[s.id] === f.id);
           return (
-            <div key={f.id} className="border-b border-[var(--hairline)]">
+            <div
+              key={f.id}
+              className={[
+                "border-b border-[var(--hairline)]",
+                isDropTarget ? "bg-[var(--cedar-dim)]" : "",
+              ].join(" ")}
+              onDragOver={(e) => { e.preventDefault(); setDropTargetFolderId(f.id); }}
+              onDragLeave={() => setDropTargetFolderId((cur) => (cur === f.id ? null : cur))}
+              onDrop={(e) => {
+                e.preventDefault();
+                const sid = e.dataTransfer.getData("text/arz-session");
+                setDropTargetFolderId(null);
+                if (sid) void moveToFolder(sid, f.id);
+              }}
+            >
               <div
-                className="group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-[var(--s2)]"
-                onClick={() => toggleFolderOpen(f.id)}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setSelectedFolderId((cur) => (cur === f.id ? null : f.id));
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedFolderId((cur) => (cur === f.id ? null : f.id));
+                  }
+                }}
+                className={[
+                  "group flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors",
+                  isSelected
+                    ? "bg-[var(--cedar-dim)] border-l-2 border-[var(--cedar-glow)]"
+                    : "hover:bg-[var(--s2)] border-l-2 border-transparent",
+                  "focus:outline-none focus-visible:bg-[var(--s2)]",
+                ].join(" ")}
               >
-                {isOpen ? <ChevronDown size={11} className="text-[var(--muted)]" /> : <ChevronRight size={11} className="text-[var(--muted)]" />}
+                <button
+                  onClick={(e) => { e.stopPropagation(); toggleFolderOpen(f.id); }}
+                  className="w-4 h-4 flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)]"
+                  title={isOpen ? "Collapse" : "Expand"}
+                >
+                  {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                </button>
                 <span className="text-[var(--cedar-glow)]">{renderFolderIcon(f.icon)}</span>
                 <span className="text-[12.5px] text-[var(--text)] truncate flex-1">{f.name}</span>
                 <span className="text-[10px] font-mono text-[var(--muted)]">{folderSessions.length}</span>
@@ -371,23 +446,28 @@ export default function SessionList({
                   hits={hitsBySession?.[s.id]}
                   onSelect={() => onSelect(s.id)}
                   onTogglePin={() => onTogglePin(s.id)}
-                  onArchive={onArchive ? () => onArchive(s.id, true) : undefined}
                   onDelete={() => onDelete(s.id)}
-                  onMoveToFolder={() => setMovingSession(movingSession === s.id ? null : s.id)}
                   onMouseEnter={() => setHoveredId(s.id)}
                   onMouseLeave={() => setHoveredId(null)}
                   indent
-                  movingTarget={movingSession === s.id}
-                  folders={folders}
-                  currentFolderId={f.id}
-                  pickFolder={(fid) => moveToFolder(s.id, fid)}
                 />
               ))}
             </div>
           );
         })}
 
-        {/* Sessions not in any folder */}
+        {/* Sessions not in any folder — also a drop target */}
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDropTargetFolderId("unfiled"); }}
+          onDragLeave={() => setDropTargetFolderId((cur) => (cur === "unfiled" ? null : cur))}
+          onDrop={(e) => {
+            e.preventDefault();
+            const sid = e.dataTransfer.getData("text/arz-session");
+            setDropTargetFolderId(null);
+            if (sid) void moveToFolder(sid, null);
+          }}
+          className={dropTargetFolderId === "unfiled" ? "bg-[var(--cedar-dim)]/40" : ""}
+        >
         {displayed.filter((s) => !sessionFolderMap[s.id]).map((s) => {
           const isActive = s.id === activeId;
           const isPinned = pinnedIds.has(s.id);
@@ -405,29 +485,13 @@ export default function SessionList({
               hits={hits}
               onSelect={() => onSelect(s.id)}
               onTogglePin={() => onTogglePin(s.id)}
-              onArchive={onArchive ? () => onArchive(s.id, true) : undefined}
               onDelete={() => onDelete(s.id)}
-              onMoveToFolder={() => setMovingSession(movingSession === s.id ? null : s.id)}
               onMouseEnter={() => setHoveredId(s.id)}
               onMouseLeave={() => setHoveredId(null)}
-              movingTarget={movingSession === s.id}
-              folders={folders}
-              currentFolderId={null}
-              pickFolder={(fid) => moveToFolder(s.id, fid)}
             />
           );
         })}
-
-        {/* New folder button */}
-        {!query && (
-          <button
-            onClick={createFolder}
-            className="mt-2 mx-3 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] border border-dashed border-[var(--border)]"
-          >
-            <FolderPlus size={11} />
-            New folder
-          </button>
-        )}
+        </div>
 
       </div>
 
@@ -536,15 +600,9 @@ function SessionRow({
   badge,
   hits,
   indent,
-  movingTarget,
-  folders,
-  currentFolderId,
-  pickFolder,
   onSelect,
   onTogglePin,
-  onArchive,
   onDelete,
-  onMoveToFolder,
   onMouseEnter,
   onMouseLeave,
 }: {
@@ -555,24 +613,24 @@ function SessionRow({
   badge: ProviderBadge;
   hits?: SearchHit[];
   indent?: boolean;
-  movingTarget: boolean;
-  folders: FolderItem[];
-  currentFolderId: string | null;
-  pickFolder: (folderId: string | null) => void;
   onSelect: () => void;
   onTogglePin: () => void;
-  onArchive?: () => void;
   onDelete: () => void;
-  onMoveToFolder: () => void;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
 }) {
   return (
     <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/arz-session", s.id);
+        e.dataTransfer.effectAllowed = "move";
+      }}
       className={[
         "group relative flex flex-col pr-1 transition-colors",
         isActive ? "bg-[var(--user-bg)]" : "hover:bg-[var(--s2)]",
         indent ? "pl-3" : "",
+        "cursor-grab active:cursor-grabbing",
       ].join(" ")}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
@@ -616,22 +674,6 @@ function SessionRow({
               {isPinned ? "★" : "☆"}
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); onMoveToFolder(); }}
-              title="Move to folder"
-              className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] transition-colors"
-            >
-              <FolderIcon size={11} />
-            </button>
-            {onArchive && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onArchive(); }}
-                title="Archive"
-                className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] transition-colors"
-              >
-                ⌄
-              </button>
-            )}
-            <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               title="Close session"
               className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-red-400 hover:bg-[var(--s2)] transition-colors"
@@ -649,30 +691,6 @@ function SessionRow({
           title={`${hits[0].role}: ${hits[0].snippet.replace(/<\/?mark>/g, "")}`}
         >
           {renderSnippet(hits[0].snippet)}
-        </div>
-      )}
-
-      {movingTarget && (
-        <div className="px-4 pb-2 flex flex-wrap gap-1 items-center text-[10px] text-[var(--muted)]">
-          <span className="font-mono">move to:</span>
-          {currentFolderId !== null && (
-            <button
-              onClick={(e) => { e.stopPropagation(); pickFolder(null); }}
-              className="px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] hover:border-[var(--cedar-line)] text-[var(--text)]"
-            >
-              unfiled
-            </button>
-          )}
-          {folders.filter((f) => f.id !== currentFolderId).map((f) => (
-            <button
-              key={f.id}
-              onClick={(e) => { e.stopPropagation(); pickFolder(f.id); }}
-              className="px-1.5 py-0.5 rounded bg-[var(--bg)] border border-[var(--border)] hover:border-[var(--cedar-line)] text-[var(--text)] flex items-center gap-1"
-            >
-              <span className="text-[var(--cedar-glow)]">{renderFolderIcon(f.icon, 10)}</span>
-              {f.name}
-            </button>
-          ))}
         </div>
       )}
     </div>

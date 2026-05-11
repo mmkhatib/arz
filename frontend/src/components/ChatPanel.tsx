@@ -25,16 +25,50 @@ function ThinkingDots() {
   );
 }
 
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <span className="w-[80px] shrink-0 text-[var(--muted)] uppercase tracking-wider text-[9.5px]">
+        {label}
+      </span>
+      <span className="text-[var(--text)] truncate" title={value}>{value}</span>
+    </div>
+  );
+}
+
+const SESSION_COLORS: { value: number | null; label: string; css: string }[] = [
+  { value: null, label: "Default", css: "transparent" },
+  { value: 1, label: "Cedar", css: "var(--cedar-glow)" },
+  { value: 2, label: "Dawn", css: "var(--dawn)" },
+  { value: 3, label: "Ember", css: "var(--ember)" },
+  { value: 4, label: "Stone", css: "var(--stone)" },
+  { value: 5, label: "Pine", css: "var(--pine)" },
+  { value: 6, label: "Sky", css: "#7aa7d6" },
+  { value: 7, label: "Plum", css: "#a47ad6" },
+];
+
 function SessionTitle({
   title,
   messageCount,
+  sessionId,
+  provider,
+  model,
+  agent,
+  color,
   onRename,
   onRegenerate,
+  onColorChange,
 }: {
   title: string;
   messageCount: number;
+  sessionId: string;
+  provider?: string | null;
+  model?: string | null;
+  agent?: string | null;
+  color?: number | null;
   onRename: (next: string) => void | Promise<void>;
   onRegenerate: () => void | Promise<void>;
+  onColorChange?: (color: number | null) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -61,6 +95,7 @@ function SessionTitle({
   };
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mcps, setMcps] = useState<{ name: string; enabled: boolean; source: string }[] | null>(null);
   useEffect(() => {
     if (!menuOpen) return;
     const close = (e: MouseEvent) => {
@@ -70,6 +105,18 @@ function SessionTitle({
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [menuOpen]);
+
+  // Lazy-load MCPs the first time the menu opens — keeps the
+  // common case (menu never opened) cheap.
+  useEffect(() => {
+    if (!menuOpen || mcps !== null) return;
+    api.listMcpServers().then(setMcps).catch(() => setMcps([]));
+  }, [menuOpen, mcps]);
+
+  void sessionId; // currently informational; reserved for deep links
+  const colorCss =
+    SESSION_COLORS.find((c) => c.value === (color ?? null))?.css ?? "transparent";
+  const enabledMcps = (mcps ?? []).filter((m) => m.enabled);
 
   if (editing) {
     return (
@@ -104,6 +151,13 @@ function SessionTitle({
             : "border-[var(--border)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
         ].join(" ")}
       >
+        {colorCss !== "transparent" && (
+          <span
+            className="shrink-0 w-2 h-2 rounded-full"
+            style={{ background: colorCss }}
+            aria-hidden
+          />
+        )}
         <h2 className="text-[13px] font-medium text-[var(--text)] truncate max-w-[420px]">
           {title}
         </h2>
@@ -130,7 +184,47 @@ function SessionTitle({
       </div>
 
       {menuOpen && (
-        <div className="absolute left-0 top-full mt-1 z-40 min-w-[200px] rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl py-1">
+        <div className="absolute left-0 top-full mt-1 z-40 w-[300px] rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl py-1.5">
+          {/* Loaded context summary */}
+          <div className="px-3 py-2 border-b border-[var(--hairline)] text-[11px] flex flex-col gap-1 font-mono">
+            <Row label="Provider" value={provider || "—"} />
+            <Row label="Model" value={model || "—"} />
+            <Row label="Agent" value={agent ? `@${agent}` : "none"} />
+            <Row label="MCP servers" value={`${enabledMcps.length} loaded`} />
+          </div>
+
+          {/* Color picker */}
+          {onColorChange && (
+            <div className="px-3 py-2 border-b border-[var(--hairline)]">
+              <div className="text-[10px] uppercase tracking-wider text-[var(--muted)] mb-1.5 font-mono">
+                Color label
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {SESSION_COLORS.map((c) => {
+                  const active = (color ?? null) === c.value;
+                  return (
+                    <button
+                      key={String(c.value)}
+                      onClick={() => onColorChange(c.value)}
+                      title={c.label}
+                      className={[
+                        "w-5 h-5 rounded-full border transition-transform",
+                        active
+                          ? "border-[var(--cedar-glow)] scale-110"
+                          : "border-[var(--border)] hover:border-[var(--cedar-line)]",
+                      ].join(" ")}
+                      style={{
+                        background: c.css,
+                        boxShadow: c.value === null ? "inset 0 0 0 1px var(--border)" : undefined,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Actions */}
           <button
             onClick={() => { setEditing(true); setMenuOpen(false); }}
             className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)]"
@@ -146,6 +240,14 @@ function SessionTitle({
             <Sparkles size={12} className="text-[var(--cedar-glow)]" />
             Rename with AI
           </button>
+          <a
+            href="/capabilities"
+            onClick={() => setMenuOpen(false)}
+            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--muted)] hover:bg-[var(--s2)] hover:text-[var(--text)]"
+          >
+            <ActivityIcon size={12} />
+            Manage MCPs & tools →
+          </a>
         </div>
       )}
     </div>
@@ -395,6 +497,12 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
   const [streaming, setStreaming] = useState(false);
+  // Single-slot send queue. While a turn is in flight, one more user
+  // message can sit here; it fires automatically when the turn ends.
+  const [queuedMessage, setQueuedMessage] = useState<{
+    text: string;
+    files?: import("@/api/client").UploadedFile[];
+  } | null>(null);
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
@@ -406,6 +514,7 @@ export default function ChatPanel({
   const [sessionProvider, setSessionProvider] = useState<string | null>(null);
   const [sessionModel, setSessionModel] = useState<string | null>(null);
   const [sessionAgent, setSessionAgent] = useState<string | null>(null);
+  const [sessionColor, setSessionColor] = useState<number | null>(null);
   const [agents, setAgents] = useState<{ name: string; description?: string; provider?: string }[]>([]);
   const [workDir, setWorkDir] = useState("");
   const [compareTarget, setCompareTarget] = useState<{ prompt: string; baseline: string; baselineModel: string | null } | null>(null);
@@ -429,6 +538,7 @@ export default function ChatPanel({
         setSessionProvider(s.provider ?? null);
         setSessionModel(s.model ?? null);
         setSessionAgent(s.agent ?? null);
+        setSessionColor(s.color ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
         setAutonudgeGoal(s.autonudge_goal ?? null);
         setAutonudgeIdleS(s.autonudge_idle_s ?? 0);
@@ -583,6 +693,14 @@ export default function ChatPanel({
   };
 
   const handleSend = async (message: string, files?: import("@/api/client").UploadedFile[]) => {
+    // While a turn is streaming, hold the user's next message in a
+    // single-slot queue rather than firing it and getting a 409 from
+    // the gateway. Drop earlier queued messages — the most recent
+    // intent wins.
+    if (streaming) {
+      setQueuedMessage({ text: message, files });
+      return;
+    }
     if (files && files.length > 0) {
       const refs = files
         .map((f) => {
@@ -595,6 +713,19 @@ export default function ChatPanel({
     }
     return doSend(message);
   };
+
+  // Drain the queue once the in-flight turn finishes. Tiny delay lets
+  // the streaming bubble unmount cleanly before the next turn replaces it.
+  useEffect(() => {
+    if (streaming || !queuedMessage) return;
+    const q = queuedMessage;
+    setQueuedMessage(null);
+    const t = setTimeout(() => {
+      void handleSend(q.text, q.files);
+    }, 50);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming, queuedMessage]);
 
   // Drain an SSE Response, updating UI state as events arrive. Used for
   // both fresh sends (POST /api/chat) and re-attaches (GET /api/chat/{id}/stream).
@@ -771,6 +902,15 @@ export default function ChatPanel({
         <SessionTitle
           title={title}
           messageCount={messages.length}
+          sessionId={sessionId}
+          provider={sessionProvider}
+          model={sessionModel}
+          agent={sessionAgent}
+          color={sessionColor}
+          onColorChange={async (c) => {
+            setSessionColor(c);
+            try { await api.setSessionColor(sessionId, c); } catch {}
+          }}
           onRename={async (next) => {
             try {
               await api.renameSession(sessionId, next);
@@ -935,6 +1075,8 @@ export default function ChatPanel({
         onAgentChange={handleAgentChange}
         focusSignal={focusSignal}
         draftKey={sessionId}
+        queuedPreview={queuedMessage?.text ?? null}
+        onCancelQueued={() => setQueuedMessage(null)}
       />
     </div>
   );

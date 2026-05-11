@@ -41,6 +41,9 @@ interface Props {
   focusSignal?: number;
   /** When set, the unsent draft is persisted to localStorage keyed by this id. */
   draftKey?: string;
+  /** Preview of the next message that will fire once the current turn ends. */
+  queuedPreview?: string | null;
+  onCancelQueued?: () => void;
 }
 
 export default function InputBar({
@@ -61,6 +64,8 @@ export default function InputBar({
   onAgentChange,
   focusSignal,
   draftKey,
+  queuedPreview = null,
+  onCancelQueued,
 }: Props) {
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -295,6 +300,25 @@ export default function InputBar({
           manualHeight !== null ? "flex flex-col min-h-0" : "",
         ].join(" ")}
       >
+        {queuedPreview && (
+          <div className="px-3 pt-2.5 flex items-start gap-2">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-[var(--cedar-glow)] mt-0.5 shrink-0">
+              Queued ↩
+            </span>
+            <span className="flex-1 text-[11.5px] text-[var(--text2)] line-clamp-2 break-words">
+              {queuedPreview}
+            </span>
+            {onCancelQueued && (
+              <button
+                onClick={onCancelQueued}
+                title="Drop queued message"
+                className="text-[var(--muted)] hover:text-red-400 text-[11px] shrink-0"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           autoFocus
@@ -302,8 +326,14 @@ export default function InputBar({
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={handleKeyDown}
           onInput={applyHeight}
-          disabled={disabled && !isRunning}
-          placeholder={isRunning ? "Arzeh is thinking…" : "Message Arzeh…"}
+          disabled={(disabled && !isRunning) || !!queuedPreview}
+          placeholder={
+            queuedPreview
+              ? "One queued — waiting for the current reply…"
+              : isRunning
+              ? "Arzeh is thinking… (you can queue one)"
+              : "Message Arzeh…"
+          }
           rows={1}
           aria-label="Message input"
           className={[
