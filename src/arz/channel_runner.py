@@ -53,9 +53,27 @@ ChatRunner = Callable[[str, str], Awaitable[str]]
 class ChannelRunner:
     def __init__(self, runner: ChatRunner | None = None) -> None:
         self._runner = runner
+        # Live in-flight tracking. ``_busy[slug]`` is the set of agent
+        # names whose turn is currently being awaited. The channels API
+        # surfaces this so the UI can show a thinking indicator per
+        # agent — same affordance as the chat panel's streaming bubble.
+        self._busy: dict[str, set[str]] = {}
 
     def set_runner(self, runner: ChatRunner) -> None:
         self._runner = runner
+
+    def busy_agents(self, slug: str) -> list[str]:
+        return sorted(self._busy.get(slug, set()))
+
+    def _mark_busy(self, slug: str, agent: str) -> None:
+        self._busy.setdefault(slug, set()).add(agent)
+
+    def _mark_idle(self, slug: str, agent: str) -> None:
+        s = self._busy.get(slug)
+        if s is not None:
+            s.discard(agent)
+            if not s:
+                self._busy.pop(slug, None)
 
     async def post_user(self, slug: str, text: str) -> Channel | None:
         """Drive the channel after a human posts. Returns the updated channel."""
@@ -94,11 +112,14 @@ class ChannelRunner:
             ctx = self._build_context(
                 ch, orchestrator.agent, project_id=(project.id if project else None)
             )
+            self._mark_busy(slug, orchestrator.agent)
             try:
                 reply = await self._runner(orchestrator.agent, ctx)
             except Exception:
                 log.exception("orchestrator turn failed", extra={"channel": slug})
                 break
+            finally:
+                self._mark_idle(slug, orchestrator.agent)
             reply = (reply or "").strip()
             if not reply:
                 break
@@ -150,11 +171,14 @@ class ChannelRunner:
         # Bound concurrency: per-channel cap nested inside the global cap
         # so one busy channel can't starve the rest of the gateway.
         async with _global_sem, per_channel_sem:
+            self._mark_busy(slug, agent)
             try:
                 reply = await self._runner(agent, prompt)
             except Exception:
                 log.exception("specialist turn failed", extra={"channel": slug, "agent": agent})
                 return
+            finally:
+                self._mark_idle(slug, agent)
         reply = (reply or "").strip()
         if not reply:
             return

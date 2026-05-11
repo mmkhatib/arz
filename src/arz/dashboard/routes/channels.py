@@ -15,6 +15,13 @@ def _channel_to_dict(ch) -> dict:
     for m in data.get("messages", []):
         if "from_" in m:
             m["from"] = m.pop("from_")
+    try:
+        from arz.channel_runner import get_channel_runner
+
+        cr = get_channel_runner()
+        data["busy_agents"] = cr.busy_agents(ch.id) if cr else []
+    except Exception:
+        data["busy_agents"] = []
     return data
 
 

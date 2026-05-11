@@ -697,6 +697,7 @@ export const api = {
   listChannelsApp: () =>
     request<{ id: string; name: string; topic: string; preset: string;
               status: string; idle_timeout_s: number; last_activity_ts: number;
+              busy_agents?: string[];
               members: { agent: string; role: string }[];
               messages: { id: number; from: string; text: string; ts: number;
                           mentions: string[]; in_reply_to: number | null;
@@ -704,6 +705,7 @@ export const api = {
   getChannelApp: (slug: string) =>
     request<{ id: string; name: string; topic: string; preset: string;
               status: string; idle_timeout_s: number; last_activity_ts: number;
+              busy_agents?: string[];
               members: { agent: string; role: string }[];
               messages: { id: number; from: string; text: string; ts: number;
                           mentions: string[]; in_reply_to: number | null;

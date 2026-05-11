@@ -552,6 +552,9 @@ export default function ChannelsPage() {
                     onToggle={() => toggleExpand(m.id)}
                   />
                 ))}
+                {(active.busy_agents ?? []).map((a) => (
+                  <ThinkingBubble key={`busy-${a}`} agent={a} />
+                ))}
               </div>
 
               {/* Composer */}
@@ -872,6 +875,50 @@ function ChannelRow({
 }
 
 // ── Channel bubble (collapsible) ──────────────────────────────
+function ThinkingBubble({ agent }: { agent: string }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        padding: "8px 14px",
+        margin: "4px 0",
+        background: "var(--cedar-dim)",
+        border: "1px solid var(--cedar-line)",
+        borderRadius: 8,
+        fontSize: 12,
+        color: "var(--cedar-glow)",
+      }}
+    >
+      <span style={{ display: "flex", gap: 3 }}>
+        <Dot delay={0} />
+        <Dot delay={150} />
+        <Dot delay={300} />
+      </span>
+      <span style={{ fontFamily: "var(--fm)" }}>
+        <span style={{ color: "var(--cedar-2)" }}>@{agent}</span> is thinking…
+      </span>
+    </div>
+  );
+}
+
+function Dot({ delay }: { delay: number }) {
+  return (
+    <span
+      style={{
+        width: 6,
+        height: 6,
+        borderRadius: "50%",
+        background: "var(--cedar-glow)",
+        animation: "arz-pulse 1.1s ease-in-out infinite",
+        animationDelay: `${delay}ms`,
+        display: "inline-block",
+      }}
+    />
+  );
+}
+
 function ChannelBubble({
   msg,
   expanded,
