@@ -4,9 +4,9 @@
  */
 import { memo, useState, useEffect, useRef, useMemo } from 'react'
 import { X, Copy, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
 import { api } from '@/api/client'
 import { highlight, langForPath } from '@/utils/hljs'
+import { CedarMarkdown } from './CedarMarkdown'
 
 /* ── File type detection ── */
 type FileType = 'image' | 'csv' | 'json' | 'html' | 'markdown' | 'code' | 'binary'
@@ -28,11 +28,24 @@ function detectType(path: string): FileType {
 }
 
 /* ── Syntax-highlighted code view ── */
-function CodeView({ content, lang }: { content: string; lang: string }) {
+function CodeView({
+  content,
+  lang,
+  path,
+  sessionId,
+  onSent,
+}: {
+  content: string
+  lang: string
+  path?: string
+  sessionId?: string | null
+  onSent?: () => void
+}) {
   const html = useMemo(() => highlight(content, lang), [content, lang])
   const lines = content.split('\n')
   const scrollRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
+  const surfaceRef = useRef<HTMLDivElement>(null)
 
   const syncScroll = () => {
     if (scrollRef.current && gutterRef.current) {
@@ -40,22 +53,253 @@ function CodeView({ content, lang }: { content: string; lang: string }) {
     }
   }
 
+  const commentable = !!(sessionId && path)
+
   return (
-    <div className="relative flex h-full font-mono text-[12px] leading-[1.6] bg-[var(--bg)] overflow-hidden">
-      {/* Line numbers */}
+    <CommentableSurface
+      surfaceRef={surfaceRef}
+      path={path || ''}
+      sessionId={sessionId ?? null}
+      onSent={onSent}
+      enabled={commentable}
+    >
       <div
-        ref={gutterRef}
-        className="shrink-0 w-[3em] bg-[var(--surface)] border-r border-[var(--border)] text-right pr-2 pt-3 text-[11px] text-[var(--muted)]/40 select-none overflow-hidden"
+        ref={surfaceRef}
+        className="relative flex h-full font-mono text-[12px] leading-[1.6] bg-[var(--bg)] overflow-hidden"
       >
-        {lines.map((_, i) => <div key={i}>{i + 1}</div>)}
+        {/* Line numbers */}
+        <div
+          ref={gutterRef}
+          className="shrink-0 w-[3em] bg-[var(--surface)] border-r border-[var(--border)] text-right pr-2 pt-3 text-[11px] text-[var(--muted)]/40 select-none overflow-hidden"
+        >
+          {lines.map((_, i) => <div key={i}>{i + 1}</div>)}
+        </div>
+        {/* Highlighted code */}
+        <pre
+          ref={scrollRef}
+          className="flex-1 p-3 overflow-auto whitespace-pre hljs"
+          onScroll={syncScroll}
+          dangerouslySetInnerHTML={{ __html: html + '\n' }}
+        />
       </div>
-      {/* Highlighted code */}
-      <pre
-        ref={scrollRef}
-        className="flex-1 p-3 overflow-auto whitespace-pre hljs"
-        onScroll={syncScroll}
-        dangerouslySetInnerHTML={{ __html: html + '\n' }}
-      />
+    </CommentableSurface>
+  )
+}
+
+/* ── CommentableSurface — drag-to-select + comment rail + send ── */
+interface PendingComment {
+  id: number
+  selection: string
+  comment: string
+}
+
+function CommentableSurface({
+  children,
+  surfaceRef,
+  path,
+  sessionId,
+  onSent,
+  enabled,
+}: {
+  children: React.ReactNode
+  surfaceRef: React.RefObject<HTMLElement | null>
+  path: string
+  sessionId: string | null
+  onSent?: () => void
+  enabled: boolean
+}) {
+  const [draftSelection, setDraftSelection] = useState<string>('')
+  const [draftText, setDraftText] = useState<string>('')
+  const [comments, setComments] = useState<PendingComment[]>([])
+  const [sending, setSending] = useState(false)
+  const [sendErr, setSendErr] = useState<string | null>(null)
+  const nextId = useRef(1)
+
+  const handleSelection = () => {
+    if (!enabled) return
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !surfaceRef.current) return
+    const text = sel.toString().trim()
+    if (!text) return
+    const node = sel.anchorNode
+    if (!node || !surfaceRef.current.contains(node)) return
+    setDraftSelection(text)
+    setDraftText('')
+  }
+
+  const cancelDraft = () => {
+    setDraftSelection('')
+    setDraftText('')
+  }
+  const addComment = () => {
+    const t = draftText.trim()
+    if (!t) return
+    setComments((prev) => [
+      ...prev,
+      { id: nextId.current++, selection: draftSelection, comment: t },
+    ])
+    cancelDraft()
+  }
+  const removeComment = (id: number) => {
+    setComments((prev) => prev.filter((c) => c.id !== id))
+  }
+
+  const sendAll = async () => {
+    if (!sessionId || comments.length === 0) return
+    setSending(true)
+    setSendErr(null)
+    try {
+      const blocks = comments.map((c, i) => {
+        if (c.selection) {
+          return `### Comment ${i + 1}\nOn this text:\n\`\`\`\n${c.selection}\n\`\`\`\nFeedback: ${c.comment}`
+        }
+        return `### Comment ${i + 1}\nGeneral feedback: ${c.comment}`
+      })
+      const prompt =
+        `Please edit \`${path}\` in place per the inline comments below.\n` +
+        `Make the smallest set of changes needed; preserve unrelated sections.\n` +
+        `After editing, briefly summarise what you changed.\n\n` +
+        blocks.join('\n\n')
+      const res = await api.sendMessage(sessionId, prompt)
+      if (!res.ok) {
+        const txt = await res.text().catch(() => '')
+        throw new Error(`HTTP ${res.status} ${txt}`)
+      }
+      res.body?.cancel().catch(() => {})
+      setComments([])
+      onSent?.()
+    } catch (e) {
+      setSendErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const railOpen = comments.length > 0 || !!draftSelection
+
+  return (
+    <div className="flex h-full">
+      <div
+        className="flex-1 min-w-0 flex flex-col"
+        onMouseUp={enabled ? handleSelection : undefined}
+      >
+        {children}
+      </div>
+      {enabled && railOpen && (
+        <CommentRail
+          comments={comments}
+          draftSelection={draftSelection}
+          draftText={draftText}
+          setDraftText={setDraftText}
+          addComment={addComment}
+          cancelDraft={cancelDraft}
+          removeComment={removeComment}
+          sendAll={sendAll}
+          sending={sending}
+          sendErr={sendErr}
+        />
+      )}
+    </div>
+  )
+}
+
+function CommentRail({
+  comments,
+  draftSelection,
+  draftText,
+  setDraftText,
+  addComment,
+  cancelDraft,
+  removeComment,
+  sendAll,
+  sending,
+  sendErr,
+}: {
+  comments: PendingComment[]
+  draftSelection: string
+  draftText: string
+  setDraftText: (s: string) => void
+  addComment: () => void
+  cancelDraft: () => void
+  removeComment: (id: number) => void
+  sendAll: () => void
+  sending: boolean
+  sendErr: string | null
+}) {
+  return (
+    <div className="w-72 shrink-0 flex flex-col border-l border-[var(--border)] bg-[var(--surface)]">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border)]">
+        <span className="text-[11px] font-semibold text-[var(--text)]">Comments</span>
+        <span className="text-[10px] text-[var(--muted)] font-mono">{comments.length}</span>
+      </div>
+      {draftSelection && (
+        <div className="border-b border-[var(--border)] p-3 flex flex-col gap-2 bg-[var(--bg)]">
+          <div className="text-[10px] uppercase tracking-wider text-[var(--muted)]">On selection</div>
+          <pre className="text-[11px] font-mono text-[var(--muted)] bg-[var(--surface)] rounded p-2 whitespace-pre-wrap max-h-[80px] overflow-y-auto border border-[var(--border)]">
+            {draftSelection.length > 200 ? draftSelection.slice(0, 200) + '…' : draftSelection}
+          </pre>
+          <textarea
+            autoFocus
+            value={draftText}
+            onChange={(e) => setDraftText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) addComment()
+              else if (e.key === 'Escape') cancelDraft()
+            }}
+            rows={3}
+            placeholder="What should arz do here? (Cmd+Enter to add)"
+            className="bg-[var(--surface)] border border-[var(--border)] rounded p-2 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+          />
+          <div className="flex justify-end gap-2 text-[11px]">
+            <button onClick={cancelDraft} className="text-[var(--muted)] hover:text-[var(--text)] px-2 py-0.5">
+              Cancel
+            </button>
+            <button
+              onClick={addComment}
+              disabled={!draftText.trim()}
+              className="px-2 py-0.5 rounded bg-[var(--cedar)] text-white disabled:opacity-40"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
+        {comments.length === 0 && !draftSelection && (
+          <div className="text-[11px] text-[var(--muted)]/60 italic text-center py-8">
+            Highlight text in the file to leave a comment.
+          </div>
+        )}
+        {comments.map((c) => (
+          <div key={c.id} className="border border-[var(--border)] rounded p-2 bg-[var(--bg)]">
+            <div className="flex items-start justify-between gap-2 mb-1">
+              <pre className="flex-1 text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap max-h-[60px] overflow-hidden break-words">
+                {c.selection.length > 80 ? c.selection.slice(0, 80) + '…' : c.selection}
+              </pre>
+              <button
+                onClick={() => removeComment(c.id)}
+                className="text-[var(--muted)] hover:text-red-400 shrink-0"
+              >
+                <X size={11} />
+              </button>
+            </div>
+            <div className="text-[12px] text-[var(--text)]">{c.comment}</div>
+          </div>
+        ))}
+      </div>
+      <div className="border-t border-[var(--border)] p-2 flex flex-col gap-1.5">
+        {sendErr && <div className="text-[10px] text-red-400 bg-red-900/20 rounded px-2 py-1">{sendErr}</div>}
+        <button
+          onClick={sendAll}
+          disabled={comments.length === 0 || sending}
+          className="px-3 py-1.5 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)] flex items-center justify-center gap-1"
+        >
+          {sending ? 'Sending…' : `Send to chat (${comments.length})`}
+        </button>
+        <span className="text-[10px] text-[var(--muted)]/60 text-center">
+          Comments post into your active session as a prompt. Watch the reply land in chat.
+        </span>
+      </div>
     </div>
   )
 }
@@ -176,12 +420,6 @@ function HtmlView({ content }: { content: string }) {
 // in place. The viewer auto-refreshes every 3s while open so you can
 // watch the file change live.
 
-interface PendingComment {
-  id: number
-  selection: string
-  comment: string
-}
-
 function MarkdownView({
   content,
   path,
@@ -194,205 +432,61 @@ function MarkdownView({
   onSent?: () => void
 }) {
   const [mode, setMode] = useState<'rendered' | 'raw'>('rendered')
-  const [draftSelection, setDraftSelection] = useState<string>('')
-  const [draftText, setDraftText] = useState<string>('')
-  const [comments, setComments] = useState<PendingComment[]>([])
-  const [sending, setSending] = useState(false)
-  const [sendErr, setSendErr] = useState<string | null>(null)
-  const nextId = useRef(1)
-  const renderedRef = useRef<HTMLDivElement>(null)
-
-  // Capture mouseup over the rendered area; if there's a non-empty
-  // selection inside it, open the comment composer.
-  const handleSelection = () => {
-    const sel = window.getSelection()
-    if (!sel || sel.isCollapsed || !renderedRef.current) return
-    const text = sel.toString().trim()
-    if (!text) return
-    // Make sure the selection is INSIDE the rendered area, not in the
-    // comment rail or anywhere else.
-    const node = sel.anchorNode
-    if (!node || !renderedRef.current.contains(node)) return
-    setDraftSelection(text)
-    setDraftText('')
-  }
-
-  const cancelDraft = () => {
-    setDraftSelection('')
-    setDraftText('')
-  }
-
-  const addComment = () => {
-    const t = draftText.trim()
-    if (!t) return
-    setComments((prev) => [
-      ...prev,
-      { id: nextId.current++, selection: draftSelection, comment: t },
-    ])
-    cancelDraft()
-  }
-
-  const removeComment = (id: number) => {
-    setComments((prev) => prev.filter((c) => c.id !== id))
-  }
-
-  const sendAll = async () => {
-    if (!sessionId || comments.length === 0) return
-    setSending(true)
-    setSendErr(null)
-    try {
-      await api.editFileWithComments({
-        path,
-        comments: comments.map((c) => ({ selection: c.selection, comment: c.comment })),
-        session_id: sessionId,
-      })
-      setComments([])
-      onSent?.()
-    } catch (e) {
-      setSendErr(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const railOpen = comments.length > 0 || !!draftSelection
+  const surfaceRef = useRef<HTMLDivElement>(null)
+  const enabled = !!sessionId && mode === 'rendered'
 
   return (
-    <div className="flex h-full">
-      <div className="flex-1 min-w-0 flex flex-col">
-        {/* Mode toggle */}
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-[var(--border)] bg-[var(--surface)]/60">
-          <div className="flex items-center gap-1 text-[10px] font-mono">
-            <button
-              onClick={() => setMode('rendered')}
-              className={[
-                'px-2 py-0.5 rounded',
-                mode === 'rendered'
-                  ? 'bg-[var(--cedar)]/15 text-[var(--text)]'
-                  : 'text-[var(--muted)] hover:text-[var(--text)]',
-              ].join(' ')}
-            >
-              Rendered
-            </button>
-            <button
-              onClick={() => setMode('raw')}
-              className={[
-                'px-2 py-0.5 rounded',
-                mode === 'raw'
-                  ? 'bg-[var(--cedar)]/15 text-[var(--text)]'
-                  : 'text-[var(--muted)] hover:text-[var(--text)]',
-              ].join(' ')}
-            >
-              Raw
-            </button>
-          </div>
-          {sessionId && mode === 'rendered' && (
-            <span className="text-[10px] text-[var(--muted)]/60">
-              Highlight any text to leave a comment
-            </span>
-          )}
+    <CommentableSurface
+      surfaceRef={surfaceRef}
+      path={path}
+      sessionId={sessionId ?? null}
+      onSent={onSent}
+      enabled={enabled}
+    >
+      {/* Mode toggle */}
+      <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-[var(--border)] bg-[var(--surface)]/60">
+        <div className="flex items-center gap-1 text-[10px] font-mono">
+          <button
+            onClick={() => setMode('rendered')}
+            className={[
+              'px-2 py-0.5 rounded',
+              mode === 'rendered'
+                ? 'bg-[var(--cedar)]/15 text-[var(--text)]'
+                : 'text-[var(--muted)] hover:text-[var(--text)]',
+            ].join(' ')}
+          >
+            Rendered
+          </button>
+          <button
+            onClick={() => setMode('raw')}
+            className={[
+              'px-2 py-0.5 rounded',
+              mode === 'raw'
+                ? 'bg-[var(--cedar)]/15 text-[var(--text)]'
+                : 'text-[var(--muted)] hover:text-[var(--text)]',
+            ].join(' ')}
+          >
+            Raw
+          </button>
         </div>
-
-        <div className="flex-1 overflow-auto" onMouseUp={mode === 'rendered' ? handleSelection : undefined}>
-          {mode === 'rendered' ? (
-            <div
-              ref={renderedRef}
-              className="p-4 prose prose-sm prose-invert max-w-none text-[var(--text)] text-[13px] leading-relaxed"
-            >
-              <ReactMarkdown>{content}</ReactMarkdown>
-            </div>
-          ) : (
-            <pre className="p-4 text-[12px] font-mono text-[var(--text)] whitespace-pre-wrap break-words">
-              {content}
-            </pre>
-          )}
-        </div>
+        {enabled && (
+          <span className="text-[10px] text-[var(--muted)]/60">
+            Highlight any text to leave a comment
+          </span>
+        )}
       </div>
-
-      {/* Comment rail */}
-      {sessionId && railOpen && (
-        <div className="w-72 shrink-0 flex flex-col border-l border-[var(--border)] bg-[var(--surface)]">
-          <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-[var(--border)]">
-            <span className="text-[11px] font-semibold text-[var(--text)]">Comments</span>
-            <span className="text-[10px] text-[var(--muted)] font-mono">{comments.length}</span>
+      <div className="flex-1 overflow-auto">
+        {mode === 'rendered' ? (
+          <div ref={surfaceRef} className="p-4">
+            <CedarMarkdown text={content} />
           </div>
-
-          {/* Draft composer */}
-          {draftSelection && (
-            <div className="border-b border-[var(--border)] p-3 flex flex-col gap-2 bg-[var(--bg)]">
-              <div className="text-[10px] uppercase tracking-wider text-[var(--muted)]">On selection</div>
-              <pre className="text-[11px] font-mono text-[var(--muted)] bg-[var(--surface)] rounded p-2 whitespace-pre-wrap max-h-[80px] overflow-y-auto border border-[var(--border)]">
-                {draftSelection.length > 200 ? draftSelection.slice(0, 200) + '…' : draftSelection}
-              </pre>
-              <textarea
-                autoFocus
-                value={draftText}
-                onChange={(e) => setDraftText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) addComment()
-                  else if (e.key === 'Escape') cancelDraft()
-                }}
-                rows={3}
-                placeholder="What should arz do here? (Cmd+Enter to add)"
-                className="bg-[var(--surface)] border border-[var(--border)] rounded p-2 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
-              />
-              <div className="flex justify-end gap-2 text-[11px]">
-                <button onClick={cancelDraft} className="text-[var(--muted)] hover:text-[var(--text)] px-2 py-0.5">
-                  Cancel
-                </button>
-                <button
-                  onClick={addComment}
-                  disabled={!draftText.trim()}
-                  className="px-2 py-0.5 rounded bg-[var(--cedar)] text-white disabled:opacity-40"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Queue */}
-          <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
-            {comments.length === 0 && !draftSelection && (
-              <div className="text-[11px] text-[var(--muted)]/60 italic text-center py-8">
-                Highlight text in the document to leave a comment.
-              </div>
-            )}
-            {comments.map((c) => (
-              <div key={c.id} className="border border-[var(--border)] rounded p-2 bg-[var(--bg)]">
-                <div className="flex items-start justify-between gap-2 mb-1">
-                  <pre className="flex-1 text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap max-h-[60px] overflow-hidden break-words">
-                    {c.selection.length > 80 ? c.selection.slice(0, 80) + '…' : c.selection}
-                  </pre>
-                  <button
-                    onClick={() => removeComment(c.id)}
-                    className="text-[var(--muted)] hover:text-red-400 shrink-0"
-                  >
-                    <X size={11} />
-                  </button>
-                </div>
-                <div className="text-[12px] text-[var(--text)]">{c.comment}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* Footer */}
-          <div className="border-t border-[var(--border)] p-2 flex flex-col gap-1.5">
-            {sendErr && <div className="text-[10px] text-red-400 bg-red-900/20 rounded px-2 py-1">{sendErr}</div>}
-            <button
-              onClick={sendAll}
-              disabled={comments.length === 0 || sending}
-              className="px-3 py-1.5 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)] flex items-center justify-center gap-1"
-            >
-              {sending ? 'Sending…' : `Send all (${comments.length})`}
-            </button>
-            <span className="text-[10px] text-[var(--muted)]/60 text-center">
-              File auto-refreshes — watch edits land live.
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
+        ) : (
+          <pre className="p-4 text-[12px] font-mono text-[var(--text)] whitespace-pre-wrap break-words">
+            {content}
+          </pre>
+        )}
+      </div>
+    </CommentableSurface>
   )
 }
 
@@ -532,7 +626,15 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
             onSent={() => { void load() }}
           />
         )}
-        {!loading && !error && content !== null && type === 'code' && <CodeView content={content} lang={lang} />}
+        {!loading && !error && content !== null && type === 'code' && (
+          <CodeView
+            content={content}
+            lang={lang}
+            path={path}
+            sessionId={sessionId ?? null}
+            onSent={() => { void load() }}
+          />
+        )}
       </div>
     </div>
   )
