@@ -39,25 +39,51 @@ function AgentOpCard({
   onOpen: () => void;
 }) {
   const who = `${session.title?.slice(0, 50) || "untitled"}`;
-  const model = session.model || providerLabel(session.provider);
+  const fullModel = session.model || providerLabel(session.provider);
+  const model = fullModel.length > 18 ? fullModel.slice(0, 18) + "…" : fullModel;
+  const agentLabel = session.agent
+    ? `@${session.agent}`
+    : `@${providerLabel(session.provider).toLowerCase()}`;
   return (
     <div
+      onClick={onOpen}
       style={{
         background: "var(--surface)",
         border: "1px solid var(--border)",
         borderRadius: 10,
         padding: 12,
         transition: "all .12s",
+        cursor: "pointer",
       }}
-      onMouseEnter={(e) => (e.currentTarget.style.borderColor = "var(--cedar-line)")}
-      onMouseLeave={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--cedar-line)";
+        e.currentTarget.style.background = "var(--s2)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--border)";
+        e.currentTarget.style.background = "var(--surface)";
+      }}
     >
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>
-          {providerLabel(session.provider)}{session.agent ? ` · ${session.agent}` : ""}
+        <span
+          style={{
+            fontSize: 10.5,
+            fontFamily: "var(--fm)",
+            color: "var(--cedar-2)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+          }}
+          title={session.agent || providerLabel(session.provider)}
+        >
+          {agentLabel}
         </span>
-        <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
-          {model.length > 16 ? model.slice(0, 16) + "…" : model}
+        <span
+          style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)", flexShrink: 0 }}
+          title={fullModel}
+        >
+          {model}
         </span>
       </div>
       <div style={{ fontSize: 12.5, color: "var(--text)", lineHeight: 1.45 }}>{who}</div>
@@ -355,31 +381,24 @@ export default function BoardPage() {
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
             {LANE_DEFS.map((lane) => (
-              <CedarCard key={lane.id} padding={0}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    padding: "12px 14px",
-                    borderBottom: "1px solid var(--border)",
-                  }}
-                >
+              <div key={lane.id} style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, padding: "0 4px" }}>
                   <span
                     style={{
-                      width: 8,
-                      height: 8,
+                      width: 7,
+                      height: 7,
                       borderRadius: "50%",
                       background: lane.dot,
-                      boxShadow: lane.id === "running" ? `0 0 6px ${lane.dot}` : undefined,
+                      boxShadow: lane.id === "running" ? `0 0 8px ${lane.dot}` : undefined,
+                      animation: lane.id === "running" ? "arz-pulse 1.6s infinite" : undefined,
+                      flexShrink: 0,
                     }}
                   />
-                  <span style={{ fontFamily: "var(--fd)", fontSize: 15, color: "var(--text)" }}>
+                  <span style={{ fontFamily: "var(--fd)", fontSize: 16, color: "var(--text)" }}>
                     {lane.label}
                   </span>
                   <span
                     style={{
-                      marginLeft: "auto",
                       fontFamily: "var(--fm)",
                       fontSize: 10.5,
                       color: "var(--muted)",
@@ -390,19 +409,28 @@ export default function BoardPage() {
                 </div>
                 <div
                   style={{
-                    padding: "0 14px 10px",
                     fontFamily: "var(--fm)",
                     fontSize: 10,
-                    color: "var(--text3)",
-                    textTransform: "lowercase",
-                    letterSpacing: ".04em",
+                    color: "var(--muted)",
+                    marginBottom: 10,
+                    padding: "0 4px",
                   }}
                 >
                   {lane.sub}
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {lanes[lane.id].length === 0 && (
-                    <div style={{ padding: "18px 14px", fontSize: 11.5, color: "var(--muted)", textAlign: "center" }}>
+                    <div
+                      style={{
+                        padding: "18px 14px",
+                        fontSize: 11.5,
+                        color: "var(--muted)",
+                        textAlign: "center",
+                        border: "1px dashed var(--hairline)",
+                        borderRadius: 8,
+                        fontFamily: "var(--fm)",
+                      }}
+                    >
                       empty
                     </div>
                   )}
@@ -416,7 +444,7 @@ export default function BoardPage() {
                     />
                   ))}
                 </div>
-              </CedarCard>
+              </div>
             ))}
           </div>
         </section>
