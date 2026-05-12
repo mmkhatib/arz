@@ -588,6 +588,11 @@ export const api = {
     const res = await fetch(`${BASE}/lessons/${id}`, { method: "DELETE" });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   },
+  updateLesson: (id: number, patch: { category?: string; text?: string }) =>
+    request<{ id: number; category: string; text: string; pinned: boolean; created_at: number }>(
+      `/lessons/${id}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    ),
   pinLesson: (id: number, pinned: boolean) =>
     request<{ id: number; pinned: boolean }>(
       `/lessons/${id}/pin`,

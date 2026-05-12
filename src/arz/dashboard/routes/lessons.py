@@ -30,6 +30,26 @@ async def add_lesson(request: Request) -> dict:
     return l.model_dump()
 
 
+@router.patch("/api/lessons/{lesson_id}")
+async def update_lesson(lesson_id: int, request: Request) -> dict:
+    body = await request.json()
+    category = body.get("category")
+    text = body.get("text")
+    if category is None and text is None:
+        raise HTTPException(status_code=422, detail="category or text required")
+    try:
+        l = get_lesson_store().update(
+            lesson_id,
+            category=str(category) if category is not None else None,
+            text=str(text) if text is not None else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    if l is None:
+        raise HTTPException(status_code=404, detail="Lesson not found")
+    return l.model_dump()
+
+
 @router.delete("/api/lessons/{lesson_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_lesson(lesson_id: int) -> None:
     if not get_lesson_store().remove(lesson_id):

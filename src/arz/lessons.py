@@ -162,6 +162,25 @@ class LessonStore:
             self._persist()
             return True
 
+    def update(
+        self, lesson_id: int, *, category: str | None = None, text: str | None = None
+    ) -> Lesson | None:
+        with self._lock:
+            self._reload_if_changed()
+            for l in self._lessons:
+                if l.id != lesson_id:
+                    continue
+                if category is not None:
+                    l.category = category if category in _VALID_CATEGORIES else "knowledge"
+                if text is not None:
+                    t = (text or "").strip()
+                    if not t:
+                        raise ValueError("lesson text is empty")
+                    l.text = t
+                self._persist()
+                return l
+            return None
+
     def set_pinned(self, lesson_id: int, pinned: bool) -> Lesson | None:
         with self._lock:
             for l in self._lessons:

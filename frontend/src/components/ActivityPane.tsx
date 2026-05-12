@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File, CheckCircle, Loader } from "lucide-react";
+import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File } from "lucide-react";
 import { api } from "@/api/client";
 import SegmentedControl from "./SegmentedControl";
 import { useTouchedFiles } from "@/hooks/useTouchedFiles";
@@ -199,87 +199,251 @@ function SubagentCard({
   const hasMore = fullTask.length > 240;
   const status = !entry.done ? "running" : "complete";
 
+  const isRunning = status === "running";
   return (
-    <div className={["mx-2 mb-3 rounded-lg border bg-[var(--surface)] overflow-hidden shadow-sm transition-all", entry.done ? "border-[var(--border)] opacity-90" : "border-[var(--cedar)]/40"].join(" ")}>
-      {/* Header */}
-      <div
-        className={["flex items-center gap-2 px-3 py-2.5 transition-colors", entry.done ? "cursor-pointer hover:bg-[var(--bg)]" : ""].join(" ")}
-        onClick={entry.done ? () => setExpanded((v) => !v) : undefined}
-      >
-        {entry.done
-          ? <CheckCircle size={13} className="text-green-400 shrink-0" />
-          : <Loader size={13} className="text-[var(--cedar)] animate-spin shrink-0" />
-        }
-        <span className="text-[13px] font-medium text-[var(--text)] shrink-0">
-          {entry.done ? "Subagent" : "Subagent running…"}
-        </span>
-        {agentType && (
-          <span className="text-[10px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded shrink-0">
-            {agentType}
+    <div
+      onClick={() => setExpanded((v) => !v)}
+      style={{
+        margin: "0 8px 6px",
+        border: `1px solid ${expanded ? "var(--cedar-line)" : "var(--border)"}`,
+        borderRadius: 8,
+        background: "var(--bg)",
+        cursor: "pointer",
+        transition: "border-color .12s",
+        overflow: "hidden",
+      }}
+    >
+      <div style={{ padding: "9px 10px" }}>
+        {/* Header — dot + name + status */}
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 4 }}>
+          <span
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: "50%",
+              background: isRunning ? "var(--cedar-glow)" : "var(--pine)",
+              boxShadow: isRunning ? "0 0 4px var(--cedar-glow)" : undefined,
+              animation: isRunning ? "arz-pulse 1.6s infinite" : "none",
+              flexShrink: 0,
+            }}
+          />
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 500,
+              color: "var(--text)",
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {agentType ? `@${agentType}` : "subagent"}
           </span>
+          <span
+            style={{
+              fontSize: 9.5,
+              fontFamily: "var(--fm)",
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".06em",
+            }}
+          >
+            {status}
+          </span>
+        </div>
+        {/* Role / task one-liner */}
+        <div
+          style={{
+            fontSize: 11,
+            color: "var(--text3)",
+            lineHeight: 1.45,
+            marginBottom: 6,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {fullTask.split("\n")[0].slice(0, 110)}
+        </div>
+        {/* Progress bar while running */}
+        {isRunning && (
+          <div
+            style={{
+              height: 2,
+              background: "var(--s2)",
+              borderRadius: 1,
+              overflow: "hidden",
+              marginBottom: 7,
+            }}
+          >
+            <div
+              style={{
+                width: "40%",
+                height: "100%",
+                background: "var(--cedar-glow)",
+                boxShadow: "0 0 4px var(--cedar-glow)",
+                animation: "arz-slide 1.4s ease-in-out infinite",
+              }}
+            />
+          </div>
         )}
-        <span className={[
-          "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0",
-          status === "running" ? "bg-amber-400/20 text-amber-300" : "bg-green-500/20 text-green-400",
-        ].join(" ")}>{status}</span>
-        <span className="text-[11px] text-[var(--muted)]/50 font-mono ml-auto shrink-0">{fmtElapsed(elapsed)}</span>
-        {entry.done && (
-          <span className="text-[12px] text-[var(--muted)] bg-[var(--bg)] px-1 rounded shrink-0 ml-1">{expanded ? "▾" : "▸"}</span>
-        )}
+        {/* Footer meta */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 9.5,
+            fontFamily: "var(--fm)",
+            color: "var(--muted)",
+          }}
+        >
+          <span>{entry.name}</span>
+          <span>·</span>
+          <span>{fmtElapsed(elapsed)}</span>
+          {entry.result && (
+            <>
+              <span>·</span>
+              <span>{entry.result.length.toLocaleString()} chars</span>
+            </>
+          )}
+          <span style={{ flex: 1 }} />
+          <span>{expanded ? "▾" : "▸"}</span>
+        </div>
       </div>
-
-      {/* Task description — always visible */}
-      <div className="px-3 pb-2">
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider">Task</span>
-          <div className="flex items-center gap-2">
+      {expanded && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            borderTop: "1px solid var(--hairline)",
+            background: "var(--s2)",
+            padding: "8px 10px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontSize: 10,
+                fontFamily: "var(--fm)",
+                color: "var(--muted)",
+                textTransform: "uppercase",
+                letterSpacing: ".08em",
+                marginBottom: 4,
+              }}
+            >
+              Task
+            </div>
+            <pre
+              style={{
+                margin: 0,
+                padding: "6px 8px",
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                fontFamily: "var(--fm)",
+                fontSize: 11,
+                color: "var(--text2)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                maxHeight: showFullTask ? 400 : 90,
+                overflowY: "auto",
+                lineHeight: 1.55,
+              }}
+            >
+              {showFullTask ? fullTask : taskPreview}
+            </pre>
+            {hasMore && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowFullTask((v) => !v);
+                }}
+                style={{
+                  marginTop: 4,
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--muted)",
+                  fontSize: 10,
+                  cursor: "pointer",
+                }}
+              >
+                {showFullTask ? "Show less" : "Show full task"}
+              </button>
+            )}
+          </div>
+          {entry.done && entry.result && (
+            <div>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--fm)",
+                  color: "var(--muted)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".08em",
+                  marginBottom: 4,
+                }}
+              >
+                Output
+              </div>
+              {hasAnsi(entry.result)
+                ? <TerminalView text={outputText} maxHeightPx={220} />
+                : (
+                  <pre
+                    style={{
+                      margin: 0,
+                      padding: "6px 8px",
+                      background: "var(--bg)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 5,
+                      fontFamily: "var(--fm)",
+                      fontSize: 11,
+                      color: "var(--text2)",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      maxHeight: 220,
+                      overflowY: "auto",
+                      lineHeight: 1.55,
+                    }}
+                  >
+                    {outputText}
+                  </pre>
+                )}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 6 }}>
             <button
               onClick={handleCopy}
-              className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-              title="Copy task to clipboard"
+              style={btnStyle("ghost")}
             >
-              {copied ? "Copied ✓" : "Copy"}
+              {copied ? "Copied ✓" : "Copy task"}
             </button>
             {onSpawnSession && (
-              <button
-                onClick={handleSpawn}
-                className="text-[10px] text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
-                title="Open this task as a new session"
-              >
+              <button onClick={handleSpawn} style={btnStyle("outline")}>
                 New session
               </button>
             )}
           </div>
         </div>
-        <pre
-          className={[
-            "px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-words leading-relaxed text-[var(--muted)]/80",
-            showFullTask ? "max-h-[400px] overflow-y-auto" : "max-h-[80px] overflow-y-auto",
-          ].join(" ")}
-        >
-          {showFullTask ? fullTask : taskPreview}
-        </pre>
-        {hasMore && (
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowFullTask((v) => !v); }}
-            className="mt-1 text-[10px] text-[var(--muted)] hover:text-[var(--text)] transition-colors"
-          >
-            {showFullTask ? "Show less" : "Show full task"}
-          </button>
-        )}
-      </div>
-
-      {/* Result — shown when done and expanded */}
-      {entry.done && entry.result && expanded && (
-        <div className="px-3 pb-2">
-          <div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Output</div>
-          {hasAnsi(entry.result || "")
-            ? <TerminalView text={outputText} maxHeightPx={240} />
-            : <pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[240px] overflow-y-auto leading-relaxed text-[var(--muted)]/80">{outputText}</pre>}
-        </div>
       )}
     </div>
   );
+}
+
+function btnStyle(kind: "ghost" | "outline"): React.CSSProperties {
+  return {
+    padding: "4px 10px",
+    background: kind === "outline" ? "var(--cedar-dim)" : "transparent",
+    border: `1px solid ${kind === "outline" ? "var(--cedar-line)" : "var(--border)"}`,
+    borderRadius: 5,
+    color: kind === "outline" ? "var(--cedar-glow)" : "var(--muted)",
+    fontSize: 11,
+    fontFamily: "var(--fn)",
+    cursor: "pointer",
+  };
 }
 
 
@@ -291,30 +455,6 @@ interface WorkspaceFile {
   ext: string;
   size: number;
   live?: boolean; // touched during this session
-}
-
-/* ── FileRow ── */
-function FileRow({ file, active }: { file: WorkspaceFile; active: boolean }) {
-  const Icon = fileIcon(file.path);
-  const dir = file.rel_path.includes("/")
-    ? file.rel_path.slice(0, file.rel_path.lastIndexOf("/"))
-    : "";
-  return (
-    <div className={[
-      "flex items-center gap-2 px-3 py-1.5 cursor-pointer text-[13px] transition-colors",
-      active ? "bg-[var(--cedar)]/10" : "hover:bg-[var(--bg)]",
-    ].join(" ")}>
-      <Icon size={12} className="text-[var(--muted)] shrink-0" />
-      <div className="flex-1 min-w-0">
-        <div className="text-[var(--text)] truncate text-[12px] flex items-center gap-1">
-          <span className="truncate">{file.name}</span>
-          {file.live && <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" title="Touched this session" />}
-        </div>
-        {dir && <div className="text-[10px] text-[var(--muted)] truncate">{dir}</div>}
-      </div>
-      <span className="text-[9px] text-[var(--muted)]/40 font-mono shrink-0">{formatSize(file.size)}</span>
-    </div>
-  );
 }
 
 function formatSize(bytes: number): string {
@@ -412,19 +552,18 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
     hadSubagents.current = subagentEntries.length > 0;
   }, [subagentEntries.length]);
 
-  // Auto-switch to Files tab and open the latest touched file when one
-  // appears. Acts like a "default to source view" — the moment the agent
-  // creates or edits a file, that file is shown rendered with syntax
-  // highlighting in the right pane.
+  // Auto-switch to Files tab when the agent first touches a file — but
+  // do NOT auto-open the file in the viewer. Per design intent the list
+  // updates live; the viewer only takes over when the user clicks a row.
   const lastSeenTouchedPath = useRef<string | null>(null);
   useEffect(() => {
     if (touchedFiles.length === 0) return;
     const latest = touchedFiles[touchedFiles.length - 1];
     if (latest.path === lastSeenTouchedPath.current) return;
     lastSeenTouchedPath.current = latest.path;
-    setTab("files");
-    setSelectedFile(latest.path);
-  }, [touchedFiles]);
+    if (tab !== "files") setTab("files");
+    // selectedFile intentionally left alone — open on click, not on touch.
+  }, [touchedFiles, tab]);
 
   const lastToolIdx = toolEntries.reduce((last, e, i) => (!e.done ? i : last), -1);
   const activeIdx = toolEntries.findIndex((e) => !e.done);
@@ -538,20 +677,10 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
 
               {/* Files tab */}
               {tab === "files" && (
-                allFiles.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                    <FileText size={24} /><span className="text-[13px]">No files yet</span>
-                  </div>
-                ) : (
-                  allFiles.map((f) => (
-                    <div
-                      key={f.path}
-                      onClick={() => setSelectedFile(f.path)}
-                    >
-                      <FileRow file={f} active={false} />
-                    </div>
-                  ))
-                )
+                <ActivityFilesView
+                  files={allFiles}
+                  onOpen={(p) => setSelectedFile(p)}
+                />
               )}
 
               {/* Subagents tab */}
@@ -737,6 +866,237 @@ function ActivityLogView({ entries }: { entries: { type: string; time: string; s
         <span className="text-[var(--muted)]">
           {visible.length}/{entries.length}
         </span>
+      </div>
+    </div>
+  );
+}
+
+// ── ActivityFilesView — design-matched file list with click-to-open ──
+// Each row is collapsable: click the chevron expands a small preview
+// with View / Open buttons. Click the body opens the file in the
+// FileViewer. Status row at top counts live vs static.
+function ActivityFilesView({
+  files,
+  onOpen,
+}: {
+  files: WorkspaceFile[];
+  onOpen: (path: string) => void;
+}) {
+  const [expanded, setExpanded] = useState<string | null>(null);
+  if (files.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+        <FileText size={24} />
+        <span className="text-[13px]">No files yet</span>
+      </div>
+    );
+  }
+  const liveCount = files.filter((f) => f.live).length;
+  const staticCount = files.length - liveCount;
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          gap: 12,
+          padding: "10px 12px 8px",
+          flexWrap: "wrap",
+          borderBottom: "1px solid var(--hairline)",
+        }}
+      >
+        {liveCount > 0 && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontSize: 10.5,
+              fontFamily: "var(--fm)",
+              color: "var(--text3)",
+            }}
+          >
+            <span
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                background: "var(--cedar-glow)",
+                boxShadow: "0 0 4px var(--cedar-glow)",
+              }}
+            />
+            {liveCount} touched
+          </span>
+        )}
+        {staticCount > 0 && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontSize: 10.5,
+              fontFamily: "var(--fm)",
+              color: "var(--text3)",
+            }}
+          >
+            <span
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: "50%",
+                background: "var(--text3)",
+              }}
+            />
+            {staticCount} other
+          </span>
+        )}
+      </div>
+      <div style={{ padding: 6 }}>
+        {files.map((f) => {
+          const isOpen = expanded === f.path;
+          const Icon = fileIcon(f.path);
+          return (
+            <div
+              key={f.path}
+              style={{
+                marginBottom: 4,
+                border: `1px solid ${isOpen ? "var(--cedar-line)" : "var(--border)"}`,
+                borderRadius: 6,
+                background: "var(--bg)",
+                overflow: "hidden",
+                transition: "border-color .12s",
+              }}
+            >
+              <div
+                onClick={() => setExpanded((cur) => (cur === f.path ? null : f.path))}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "7px 9px",
+                  cursor: "pointer",
+                }}
+                title="Click for preview · double-click to open"
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  onOpen(f.path);
+                }}
+              >
+                <span
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: f.live ? "var(--cedar-glow)" : "var(--text3)",
+                    boxShadow: f.live ? "0 0 4px var(--cedar-glow)" : undefined,
+                    flexShrink: 0,
+                  }}
+                />
+                <Icon size={11} className="text-[var(--muted)] shrink-0" />
+                <span
+                  style={{
+                    fontSize: 11.5,
+                    fontFamily: "var(--fm)",
+                    color: "var(--text)",
+                    flex: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {f.rel_path}
+                </span>
+                {f.size > 0 && (
+                  <span
+                    style={{
+                      fontSize: 9.5,
+                      fontFamily: "var(--fm)",
+                      color: "var(--muted)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {formatSize(f.size)}
+                  </span>
+                )}
+              </div>
+              {isOpen && (
+                <div
+                  style={{
+                    borderTop: "1px solid var(--hairline)",
+                    background: "var(--s2)",
+                    padding: "8px 10px",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 10,
+                      fontFamily: "var(--fm)",
+                      color: "var(--muted)",
+                      marginBottom: 5,
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                    }}
+                  >
+                    path
+                  </div>
+                  <div
+                    style={{
+                      fontFamily: "var(--fm)",
+                      fontSize: 11,
+                      color: "var(--text2)",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      marginBottom: 9,
+                    }}
+                    title={f.path}
+                  >
+                    {f.path}
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpen(f.path);
+                      }}
+                      style={{
+                        flex: 1,
+                        padding: "5px 10px",
+                        background: "var(--cedar-dim)",
+                        border: "1px solid var(--cedar-line)",
+                        borderRadius: 6,
+                        color: "var(--cedar-glow)",
+                        fontSize: 11.5,
+                        fontFamily: "var(--fn)",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Open file
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void navigator.clipboard?.writeText(f.path);
+                      }}
+                      style={{
+                        padding: "5px 10px",
+                        background: "transparent",
+                        border: "1px solid var(--border)",
+                        borderRadius: 6,
+                        color: "var(--muted)",
+                        fontSize: 11.5,
+                        fontFamily: "var(--fn)",
+                        cursor: "pointer",
+                      }}
+                      title="Copy path"
+                    >
+                      Copy path
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
