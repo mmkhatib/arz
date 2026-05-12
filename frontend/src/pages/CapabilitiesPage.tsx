@@ -396,26 +396,139 @@ function ToolsView({ tools, onEdit }: { tools: ToolView[]; onEdit: (name: string
     return <Empty title="No tools loaded" sub='Click "New tool" to write one. Tools live in ~/.arz/tools/.' icon={<Wrench size={28} />} />;
   }
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 12 }}>
-      {tools.map((t) => (
-        <CedarCard key={t.name} padding={14} hoverable onClick={() => onEdit(t.name)} style={{ cursor: "pointer" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <Wrench size={13} style={{ color: "var(--cedar-2)" }} />
-              <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>{t.name}</span>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+        gap: 14,
+      }}
+    >
+      {tools.map((t) => {
+        const props = (t.input_schema?.properties ?? {}) as Record<string, unknown>;
+        const propNames = Object.keys(props);
+        const hasError = !!t.error;
+        return (
+          <CedarCard
+            key={t.name}
+            padding={18}
+            hoverable
+            onClick={() => onEdit(t.name)}
+            style={{ position: "relative", overflow: "hidden", cursor: "pointer" }}
+          >
+            {/* Header — icon tile + name + kind row + Toggle/Pencil */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "flex-start",
+                justifyContent: "space-between",
+                gap: 10,
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                <div
+                  style={{
+                    width: 36,
+                    height: 36,
+                    borderRadius: 8,
+                    background: hasError ? "rgba(180, 70, 70, 0.18)" : "var(--cedar-dim)",
+                    border: `1px solid ${hasError ? "var(--ember)" : "var(--cedar-line)"}`,
+                    color: hasError ? "var(--ember)" : "var(--cedar-glow)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    flexShrink: 0,
+                  }}
+                >
+                  <Wrench size={16} />
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div
+                    style={{
+                      fontFamily: "var(--fd)",
+                      fontSize: 18,
+                      color: "var(--text)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t.name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 10.5,
+                      color: "var(--muted)",
+                      fontFamily: "var(--fm)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                      marginTop: 2,
+                    }}
+                  >
+                    builtin · {propNames.length} input{propNames.length === 1 ? "" : "s"}
+                  </div>
+                </div>
+              </div>
+              <Pencil
+                size={13}
+                style={{ color: "var(--text3)", flexShrink: 0, marginTop: 2 }}
+              />
             </div>
-            <Pencil size={11} style={{ color: "var(--text3)" }} />
-          </div>
-          <div style={{ fontSize: 11.5, color: "var(--text3)", lineHeight: 1.5 }}>
-            {t.description?.slice(0, 140) || "—"}
-          </div>
-          {t.error && (
-            <div style={{ marginTop: 8, fontSize: 11, color: "var(--danger, #b25)", fontFamily: "var(--fm)" }}>
-              load error — click to fix
+
+            {/* Description */}
+            <div
+              style={{
+                fontSize: 12.5,
+                color: "var(--text2)",
+                marginTop: 12,
+                lineHeight: 1.55,
+                display: "-webkit-box",
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+            >
+              {t.description || <span style={{ color: "var(--muted)" }}>No description.</span>}
             </div>
-          )}
-        </CedarCard>
-      ))}
+
+            {/* Input-schema chips along the bottom */}
+            <div
+              style={{
+                display: "flex",
+                gap: 4,
+                flexWrap: "wrap",
+                marginTop: 12,
+                paddingTop: 12,
+                borderTop: "1px solid var(--hairline)",
+              }}
+            >
+              {propNames.length === 0 && (
+                <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+                  no parameters
+                </span>
+              )}
+              {propNames.slice(0, 5).map((p) => (
+                <Tag key={p} color="muted">{p}</Tag>
+              ))}
+              {propNames.length > 5 && (
+                <Tag color="muted">+{propNames.length - 5}</Tag>
+              )}
+            </div>
+
+            {hasError && (
+              <div
+                style={{
+                  marginTop: 10,
+                  fontSize: 11,
+                  color: "var(--ember)",
+                  fontFamily: "var(--fm)",
+                }}
+              >
+                load error — click to fix
+              </div>
+            )}
+          </CedarCard>
+        );
+      })}
     </div>
   );
 }
