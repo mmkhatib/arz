@@ -23,7 +23,9 @@ import {
   Power,
   AlertTriangle,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
+  MoreHorizontal,
   ChevronsUpDown,
   ChevronsDownUp,
   Users,
@@ -110,6 +112,18 @@ export default function ChannelsPage() {
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   const [showFolderEdit, setShowFolderEdit] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState<boolean>(
+    () => localStorage.getItem("arz:channels-nav-collapsed") === "1",
+  );
+  const [railCollapsed, setRailCollapsed] = useState<boolean>(
+    () => localStorage.getItem("arz:channels-rail-collapsed") === "1",
+  );
+  useEffect(() => {
+    localStorage.setItem("arz:channels-nav-collapsed", navCollapsed ? "1" : "0");
+  }, [navCollapsed]);
+  useEffect(() => {
+    localStorage.setItem("arz:channels-rail-collapsed", railCollapsed ? "1" : "0");
+  }, [railCollapsed]);
   const feedRef = useRef<HTMLDivElement>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const prevArchivedCount = useRef(0);
@@ -353,12 +367,17 @@ export default function ChannelsPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: linkedProject
-            ? "240px minmax(0, 1fr) 290px"
-            : "240px minmax(0, 1fr)",
+          gridTemplateColumns: [
+            navCollapsed ? "36px" : "240px",
+            "minmax(0, 1fr)",
+            linkedProject ? (railCollapsed ? "36px" : "290px") : null,
+          ]
+            .filter(Boolean)
+            .join(" "),
           flex: 1,
           minHeight: 0,
           overflow: "hidden",
+          transition: "grid-template-columns 180ms",
         }}
       >
         {/* ── Left rail ─────────────────────────────────────────── */}
@@ -370,6 +389,8 @@ export default function ChannelsPage() {
           onCreate={() => setShowCreate(true)}
           historyOpen={historyOpen}
           onToggleHistory={() => setHistoryOpen((v) => !v)}
+          collapsed={navCollapsed}
+          onToggleCollapse={() => setNavCollapsed((v) => !v)}
         />
 
         {/* ── Center: feed ──────────────────────────────────────── */}
@@ -449,19 +470,6 @@ export default function ChannelsPage() {
                           Folder
                         </Btn>
                       )}
-                      <Btn
-                        size="sm"
-                        kind="ghost"
-                        icon={<Pencil size={11} />}
-                        onClick={() => setShowFolderEdit(true)}
-                        title={
-                          linkedProject.repo_path
-                            ? `Change work folder (current: ${linkedProject.repo_path})`
-                            : "Set work folder for this project"
-                        }
-                      >
-                        {linkedProject.repo_path ? "Change folder" : "Set folder"}
-                      </Btn>
                     </>
                   )}
                   <Btn
@@ -471,15 +479,6 @@ export default function ChannelsPage() {
                     onClick={() => setShowInvite(true)}
                   >
                     Invite
-                  </Btn>
-                  <Btn
-                    size="sm"
-                    kind="ghost"
-                    icon={<Users size={11} />}
-                    onClick={() => setShowMembers(true)}
-                    title="Manage members — rename, see roles"
-                  >
-                    Members ({active.members.length})
                   </Btn>
                   <a
                     href={api.exportChannelUrl(active.id, "md")}
@@ -499,15 +498,20 @@ export default function ChannelsPage() {
                   >
                     ⤓ Export
                   </a>
-                  {active.status === "dismissed" ? (
+                  {active.status === "dismissed" && (
                     <Btn size="sm" kind="soft" icon={<Power size={11} />} onClick={wake}>
                       Reactivate
                     </Btn>
-                  ) : (
-                    <Btn size="sm" kind="ghost" icon={<Archive size={11} />} onClick={close}>
-                      Close
-                    </Btn>
                   )}
+                  <ChannelMoreMenu
+                    onChangeFolder={() => setShowFolderEdit(true)}
+                    folderLabel={linkedProject?.repo_path ? "Change folder" : "Set folder"}
+                    showFolder={!!linkedProject}
+                    onMembers={() => setShowMembers(true)}
+                    memberCount={active.members.length}
+                    canClose={active.status !== "dismissed"}
+                    onClose={close}
+                  />
                 </div>
                 {active.topic && (
                   <div style={{ marginTop: 4, fontSize: 12, color: "var(--muted)" }}>
@@ -654,6 +658,8 @@ export default function ChannelsPage() {
             project={linkedProject}
             onSelectTask={setSelectedTask}
             onOpenProject={() => navigate(`/projects/${encodeURIComponent(linkedProject.id)}`)}
+            collapsed={railCollapsed}
+            onToggleCollapse={() => setRailCollapsed((v) => !v)}
           />
         )}
       </div>
@@ -699,6 +705,8 @@ function ChannelNav({
   onCreate,
   historyOpen,
   onToggleHistory,
+  collapsed,
+  onToggleCollapse,
 }: {
   channels: Channel[];
   archivedChannels: Channel[];
@@ -707,7 +715,48 @@ function ChannelNav({
   onCreate: () => void;
   historyOpen: boolean;
   onToggleHistory: () => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
+  if (collapsed) {
+    return (
+      <aside
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "8px 4px",
+          background: "var(--surface)",
+          borderRight: "1px solid var(--border)",
+        }}
+      >
+        <button
+          onClick={onToggleCollapse}
+          title="Expand channels"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--muted)",
+            cursor: "pointer",
+            padding: 6,
+          }}
+        >
+          <ChevronRight size={14} />
+        </button>
+        <div
+          title={`${channels.length} active`}
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--fm)",
+            color: "var(--cedar-2)",
+            marginTop: 4,
+          }}
+        >
+          {channels.length}
+        </div>
+      </aside>
+    );
+  }
   return (
     <aside
       style={{
@@ -755,6 +804,19 @@ function ChannelNav({
           }}
         >
           +
+        </button>
+        <button
+          onClick={onToggleCollapse}
+          title="Collapse channels"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--muted)",
+            cursor: "pointer",
+            padding: 2,
+          }}
+        >
+          <ChevronLeft size={13} />
         </button>
       </div>
 
@@ -1137,11 +1199,55 @@ function ProjectRail({
   project,
   onOpenProject,
   onSelectTask,
+  collapsed,
+  onToggleCollapse,
 }: {
   project: ProjectSummary;
   onOpenProject: () => void;
   onSelectTask: (t: ProjectTask) => void;
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
+  if (collapsed) {
+    return (
+      <aside
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          padding: "8px 4px",
+          borderLeft: "1px solid var(--border)",
+          background: "var(--surface)",
+        }}
+      >
+        <button
+          onClick={onToggleCollapse}
+          title={`Expand project (${project.open_tasks} open)`}
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--muted)",
+            cursor: "pointer",
+            padding: 6,
+          }}
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <Briefcase size={13} className="text-[var(--cedar-glow)]" />
+        <div
+          title={`${project.open_tasks} open tasks`}
+          style={{
+            fontSize: 10,
+            fontFamily: "var(--fm)",
+            color: "var(--cedar-2)",
+            marginTop: 4,
+          }}
+        >
+          {project.open_tasks}
+        </div>
+      </aside>
+    );
+  }
   const grouped: Record<string, ProjectTask[]> = {
     in_progress: [],
     blocked: [],
@@ -1195,6 +1301,20 @@ function ProjectRail({
         <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>
           {project.open_tasks} open
         </span>
+        <button
+          onClick={onToggleCollapse}
+          title="Collapse project rail"
+          style={{
+            background: "transparent",
+            border: "none",
+            color: "var(--muted)",
+            cursor: "pointer",
+            padding: 2,
+            marginLeft: 4,
+          }}
+        >
+          <ChevronRight size={13} />
+        </button>
       </div>
       <div style={{ padding: "12px 14px", borderBottom: "1px solid var(--hairline)" }}>
         <div style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}>{project.name}</div>
@@ -1650,6 +1770,135 @@ const _UsersIcon = Users;
 void _UsersIcon;
 
 // ── Change folder modal ──────────────────────────────────────
+// ── Channel header overflow menu ─────────────────────────────
+function ChannelMoreMenu({
+  showFolder,
+  folderLabel,
+  onChangeFolder,
+  onMembers,
+  memberCount,
+  canClose,
+  onClose,
+}: {
+  showFolder: boolean;
+  folderLabel: string;
+  onChangeFolder: () => void;
+  onMembers: () => void;
+  memberCount: number;
+  canClose: boolean;
+  onClose: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      const t = e.target as HTMLElement;
+      if (!t.closest("[data-channel-more]")) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  return (
+    <div style={{ position: "relative" }} data-channel-more>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        title="More channel actions"
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 28,
+          height: 26,
+          background: open ? "var(--cedar-dim)" : "var(--bg)",
+          border: `1px solid ${open ? "var(--cedar-line)" : "var(--border)"}`,
+          borderRadius: 6,
+          color: "var(--muted)",
+          cursor: "pointer",
+        }}
+      >
+        <MoreHorizontal size={13} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            right: 0,
+            minWidth: 200,
+            background: "var(--surface)",
+            border: "1px solid var(--border2)",
+            borderRadius: 8,
+            padding: 4,
+            zIndex: 40,
+            boxShadow: "0 6px 18px rgba(0,0,0,.25)",
+          }}
+        >
+          {showFolder && (
+            <MoreItem
+              icon={<Pencil size={11} />}
+              label={folderLabel}
+              onClick={() => { setOpen(false); onChangeFolder(); }}
+            />
+          )}
+          <MoreItem
+            icon={<Users size={11} />}
+            label={`Members (${memberCount})`}
+            onClick={() => { setOpen(false); onMembers(); }}
+          />
+          {canClose && (
+            <MoreItem
+              icon={<Archive size={11} />}
+              label="Close channel"
+              tone="danger"
+              onClick={() => { setOpen(false); onClose(); }}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoreItem({
+  icon,
+  label,
+  tone,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  tone?: "danger";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        width: "100%",
+        padding: "7px 10px",
+        background: "transparent",
+        border: "none",
+        borderRadius: 6,
+        color: tone === "danger" ? "var(--ember)" : "var(--text)",
+        fontSize: 12.5,
+        fontFamily: "var(--fn)",
+        cursor: "pointer",
+        textAlign: "left",
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--s2)")}
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+    >
+      <span style={{ display: "flex", color: tone === "danger" ? "var(--ember)" : "var(--muted)" }}>
+        {icon}
+      </span>
+      {label}
+    </button>
+  );
+}
+
 // ── Members modal — rename / view roles ─────────────────────
 function MembersModal({
   channelId,
