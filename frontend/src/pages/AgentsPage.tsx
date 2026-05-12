@@ -11,12 +11,36 @@ import {
   Tag,
   TopoLines,
 } from "@/components/CedarUI";
-import { api, type AgentConfig } from "@/api/client";
+import { api, type AgentConfig, type AgentStats } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
+
+const ALL_PROVIDERS = ["claude-code", "kiro-cli", "codex", "gemini", "ollama", "anthropic"];
+
+function effectiveProviders(a: AgentConfig): string[] {
+  if (a.providers && a.providers.length > 0) return a.providers;
+  return a.provider ? [a.provider] : [];
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return String(n);
+}
+
+function fmtRelTime(ts: number | null): string {
+  if (!ts) return "never";
+  const d = Math.round((Date.now() / 1000 - ts) / 86400);
+  if (d < 1) return "today";
+  if (d < 7) return `${d}d ago`;
+  if (d < 60) return `${Math.round(d / 7)}w ago`;
+  return `${Math.round(d / 30)}mo ago`;
+}
 
 export default function AgentsPage() {
   const dialog = useDialog();
   const [agents, setAgents] = useState<AgentConfig[]>([]);
+  const [stats, setStats] = useState<Record<string, AgentStats>>({});
+  const [installedProviders, setInstalledProviders] = useState<string[]>([]);
   const [activeName, setActiveName] = useState<string | null>(null);
   const [editing, setEditing] = useState<AgentConfig | null>(null);
   const [creating, setCreating] = useState(false);
@@ -27,10 +51,25 @@ export default function AgentsPage() {
       setAgents(data);
       if (!activeName && data.length > 0) setActiveName(data[0].name);
     } catch {}
+    try {
+      const s = await api.agentStats();
+      const map: Record<string, AgentStats> = {};
+      for (const row of s) map[row.name] = row;
+      setStats(map);
+    } catch {}
   };
 
   useEffect(() => {
     refresh();
+    api.getInstallerStatus().then((r) => {
+      const installed = r.clis.filter((c) => c.installed).map((c) => c.name);
+      // ollama present as any local model
+      if (r.ollama_installed_models?.length > 0 && !installed.includes("ollama")) {
+        installed.push("ollama");
+      }
+      if (!installed.includes("anthropic")) installed.push("anthropic");
+      setInstalledProviders(installed);
+    }).catch(() => setInstalledProviders(ALL_PROVIDERS));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -110,6 +149,7 @@ export default function AgentsPage() {
         {/* Left rail — search + Popular / All sections */}
         <AgentRail
           agents={agents}
+          stats={stats}
           activeName={activeName}
           onPick={(name) => { setActiveName(name); setEditing(null); }}
         />
@@ -119,6 +159,7 @@ export default function AgentsPage() {
           <AgentEditor
             initial={editing}
             isNew={creating}
+            installedProviders={installedProviders}
             onCancel={() => { setEditing(null); setCreating(false); }}
             onSave={submitEdit}
           />
@@ -153,9 +194,24 @@ export default function AgentsPage() {
               </div>
             </div>
 
-            <Field label="Provider" value={<Tag color="cedar">{active.provider}</Tag>} />
+            <Field
+              label="Compatible LLMs"
+              value={
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                  {effectiveProviders(active).map((p) => (
+                    <Tag key={p} color={p === active.provider ? "cedar" : "muted"}>{p}{p === active.provider ? " ★" : ""}</Tag>
+                  ))}
+                </div>
+              }
+            />
             <Field label="Model" value={<span style={{ fontFamily: "var(--fm)", fontSize: 12 }}>{active.model || "default"}</span>} />
             <Field label="Approval" value={<Tag color={active.approval_mode === "yolo" ? "ember" : active.approval_mode === "trust" ? "dawn" : "cedar"}>{active.approval_mode}</Tag>} />
+            <Field
+              label="Usage"
+              value={
+                <StatsRow s={stats[active.name]} />
+              }
+            />
             {active.work_dir && <Field label="Work dir" value={<span style={{ fontFamily: "var(--fm)", fontSize: 11.5, color: "var(--text3)" }}>{active.work_dir}</span>} />}
             {active.tool_allowlist?.length > 0 && (
               <Field
@@ -214,6 +270,29 @@ export default function AgentsPage() {
   );
 }
 
+function StatsRow({ s }: { s: AgentStats | undefined }) {
+  if (!s || s.runs === 0) {
+    return <span style={{ fontFamily: "var(--fm)", fontSize: 11.5, color: "var(--text3)" }}>never used</span>;
+  }
+  return (
+    <div style={{ display: "flex", gap: 12, fontFamily: "var(--fm)", fontSize: 11.5, color: "var(--text2)", flexWrap: "wrap" }}>
+      <Stat label="runs" value={String(s.runs)} />
+      <Stat label="msgs" value={String(s.messages)} />
+      <Stat label="tokens" value={`${fmtTokens(s.tokens_in)}↓ / ${fmtTokens(s.tokens_out)}↑`} />
+      <Stat label="last" value={fmtRelTime(s.last_used)} />
+    </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4 }}>
+      <span style={{ color: "var(--muted)", fontSize: 10 }}>{label}</span>
+      <span style={{ color: "var(--text)", fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    </span>
+  );
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: "1px solid var(--hairline)" }}>
@@ -237,15 +316,31 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 function AgentEditor({
   initial,
   isNew,
+  installedProviders,
   onCancel,
   onSave,
 }: {
   initial: AgentConfig;
   isNew: boolean;
+  installedProviders: string[];
   onCancel: () => void;
   onSave: (a: AgentConfig) => void;
 }) {
-  const [a, setA] = useState<AgentConfig>(initial);
+  const [a, setA] = useState<AgentConfig>({
+    ...initial,
+    providers: initial.providers && initial.providers.length > 0
+      ? initial.providers
+      : (initial.provider ? [initial.provider] : []),
+  });
+  const picks = a.providers ?? [];
+  const togglePick = (p: string) => {
+    const next = picks.includes(p) ? picks.filter((x) => x !== p) : [...picks, p];
+    // Keep preferred provider valid — fall to first remaining when removed.
+    const preferred = picks.includes(p) && a.provider === p
+      ? (next[0] || "")
+      : (a.provider || next[0] || "");
+    setA({ ...a, providers: next, provider: preferred });
+  };
 
   const inp = (k: keyof AgentConfig, type: "text" | "textarea" = "text") => {
     const Component = type === "text" ? "input" : "textarea";
@@ -283,28 +378,69 @@ function AgentEditor({
         </div>
       </div>
 
+      <Wrap label="Name">{inp("name")}</Wrap>
+      <div style={{ height: 12 }} />
+      <Wrap label="Compatible LLMs — click the star to set the preferred one">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+          {ALL_PROVIDERS.map((p) => {
+            const checked = picks.includes(p);
+            const installed = installedProviders.length === 0 || installedProviders.includes(p);
+            const isPreferred = a.provider === p;
+            return (
+              <button
+                key={p}
+                type="button"
+                onClick={() => togglePick(p)}
+                disabled={!installed && !checked}
+                title={installed ? "" : "Not installed"}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "5px 10px",
+                  background: checked ? "var(--cedar-dim)" : "var(--bg)",
+                  border: `1px solid ${checked ? "var(--cedar-line)" : "var(--border)"}`,
+                  borderRadius: 7,
+                  color: checked ? "var(--cedar-glow)" : (installed ? "var(--text)" : "var(--muted)"),
+                  fontSize: 12,
+                  fontFamily: "var(--fn)",
+                  cursor: !installed && !checked ? "not-allowed" : "pointer",
+                  opacity: !installed && !checked ? 0.5 : 1,
+                }}
+              >
+                <span style={{
+                  width: 12, height: 12, borderRadius: 3, display: "inline-flex",
+                  alignItems: "center", justifyContent: "center", fontSize: 10,
+                  background: checked ? "var(--cedar-glow)" : "transparent",
+                  color: "var(--bg)",
+                  border: checked ? "none" : "1px solid var(--border)",
+                }}>{checked ? "✓" : ""}</span>
+                {p}
+                {checked && (
+                  <span
+                    role="button"
+                    onClick={(e) => { e.stopPropagation(); setA({ ...a, provider: p }); }}
+                    title={isPreferred ? "Preferred" : "Set as preferred"}
+                    style={{
+                      cursor: "pointer",
+                      color: isPreferred ? "var(--dawn)" : "var(--muted)",
+                      fontSize: 11,
+                      marginLeft: 2,
+                    }}
+                  >
+                    {isPreferred ? "★" : "☆"}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>
+          The starred one is used by default when spawning a session with this agent.
+        </div>
+      </Wrap>
+      <div style={{ height: 12 }} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-        <Wrap label="Name">{inp("name")}</Wrap>
-        <Wrap label="Provider">
-          <select
-            value={a.provider}
-            onChange={(e) => setA({ ...a, provider: e.target.value })}
-            style={{
-              width: "100%",
-              padding: "8px 10px",
-              background: "var(--bg)",
-              border: "1px solid var(--border)",
-              borderRadius: 7,
-              color: "var(--text)",
-              fontSize: 13,
-              fontFamily: "var(--fn)",
-            }}
-          >
-            {["claude-code", "kiro-cli", "codex", "gemini", "ollama", "anthropic"].map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-        </Wrap>
         <Wrap label="Model">{inp("model")}</Wrap>
         <Wrap label="Approval">
           <select
@@ -368,10 +504,12 @@ function Wrap({ label, children }: { label: string; children: React.ReactNode })
 // ── Left rail — search + Popular / All sections ──────────────
 function AgentRail({
   agents,
+  stats,
   activeName,
   onPick,
 }: {
   agents: AgentConfig[];
+  stats: Record<string, AgentStats>;
   activeName: string | null;
   onPick: (name: string) => void;
 }) {
@@ -382,7 +520,7 @@ function AgentRail({
     !q ||
     a.name.toLowerCase().includes(q) ||
     a.description.toLowerCase().includes(q) ||
-    a.provider.toLowerCase().includes(q);
+    effectiveProviders(a).some((p) => p.toLowerCase().includes(q));
 
   const popular = agents.filter((a) => a.popular && matches(a));
   const rest = agents.filter((a) => !a.popular && matches(a));
@@ -414,17 +552,17 @@ function AgentRail({
         )}
         {showPopularSection &&
           popular.map((a) => (
-            <AgentRow key={a.name} a={a} active={activeName === a.name} onPick={() => onPick(a.name)} />
+            <AgentRow key={a.name} a={a} stat={stats[a.name]} active={activeName === a.name} onPick={() => onPick(a.name)} />
           ))}
         {(rest.length > 0 || !showPopularSection) && (
           <SectionHeader label={`${q ? "Results" : "All agents"} · ${rest.length + (showPopularSection ? 0 : popular.length)}`} />
         )}
         {!showPopularSection &&
           popular.map((a) => (
-            <AgentRow key={a.name} a={a} active={activeName === a.name} onPick={() => onPick(a.name)} />
+            <AgentRow key={a.name} a={a} stat={stats[a.name]} active={activeName === a.name} onPick={() => onPick(a.name)} />
           ))}
         {rest.map((a) => (
-          <AgentRow key={a.name} a={a} active={activeName === a.name} onPick={() => onPick(a.name)} />
+          <AgentRow key={a.name} a={a} stat={stats[a.name]} active={activeName === a.name} onPick={() => onPick(a.name)} />
         ))}
         {popular.length === 0 && rest.length === 0 && (
           <div style={{ padding: 24, textAlign: "center", fontSize: 12.5, color: "var(--muted)" }}>
@@ -460,10 +598,12 @@ function SectionHeader({ label }: { label: string }) {
 
 function AgentRow({
   a,
+  stat,
   active,
   onPick,
 }: {
   a: AgentConfig;
+  stat?: AgentStats;
   active: boolean;
   onPick: () => void;
 }) {
@@ -484,6 +624,22 @@ function AgentRow({
           {a.name}
         </span>
         {a.is_default && <Star size={11} style={{ color: "var(--dawn)", fill: "var(--dawn)" }} />}
+        {stat && stat.runs > 0 && (
+          <span
+            title={`${stat.runs} run${stat.runs === 1 ? "" : "s"} · ${stat.messages} msgs`}
+            style={{
+              fontSize: 10,
+              fontFamily: "var(--fm)",
+              color: "var(--muted)",
+              padding: "1px 6px",
+              border: "1px solid var(--border)",
+              borderRadius: 999,
+              flexShrink: 0,
+            }}
+          >
+            {stat.runs}
+          </span>
+        )}
       </div>
       <div
         style={{

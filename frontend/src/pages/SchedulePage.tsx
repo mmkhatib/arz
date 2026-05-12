@@ -250,7 +250,7 @@ function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry)
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 24, alignItems: "start" }}>
       <div style={{ position: "relative", aspectRatio: "1", maxWidth: 540, margin: "0 auto", width: "100%" }}>
-        <svg viewBox="0 0 400 400" style={{ width: "100%", height: "100%" }}>
+        <svg viewBox="-60 -60 520 520" style={{ width: "100%", height: "100%", overflow: "visible" }}>
           <defs>
             <linearGradient id="dayg" x1="0" y1="0" x2="1" y2="0">
               <stop offset="0%" stopColor="var(--stone)" stopOpacity=".3" />
@@ -273,16 +273,17 @@ function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry)
           })}
           {[0, 6, 12, 18].map((i) => {
             const a = angle(i);
-            const x = cx + 200 * Math.cos(a);
-            const y = cy + 200 * Math.sin(a);
+            const x = cx + 210 * Math.cos(a);
+            const y = cy + 210 * Math.sin(a);
             return (
               <text
                 key={i}
                 x={x}
-                y={y + 4}
+                y={y}
                 textAnchor="middle"
+                dominantBaseline="middle"
                 fontFamily="var(--fm)"
-                fontSize="10"
+                fontSize="11"
                 fill="var(--muted)"
               >
                 {String(i).padStart(2, "0")}

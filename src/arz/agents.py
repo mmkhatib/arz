@@ -11,7 +11,13 @@ from pydantic import BaseModel
 
 class AgentConfig(BaseModel):
     name: str
+    # `provider` is the agent's preferred LLM for spawning new sessions.
     provider: str = "claude-code"
+    # `providers` lists every installed LLM provider this agent is
+    # compatible with. When empty, falls back to `[provider]`. Lets the
+    # /agents UI surface multi-provider compat without breaking existing
+    # configs.
+    providers: list[str] = []
     model: str = ""
     work_dir: str = ""
     system_prompt: str = ""

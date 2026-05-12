@@ -162,6 +162,7 @@ export interface OverviewResponse {
 export interface AgentConfig {
   name: string;
   provider: string;
+  providers?: string[];
   model: string;
   work_dir: string;
   system_prompt: string;
@@ -170,6 +171,15 @@ export interface AgentConfig {
   description: string;
   is_default: boolean;
   popular?: boolean;
+}
+
+export interface AgentStats {
+  name: string;
+  runs: number;
+  messages: number;
+  tokens_in: number;
+  tokens_out: number;
+  last_used: number | null;
 }
 
 export interface McpServer {
@@ -500,6 +510,7 @@ export const api = {
 
   // ── Agents ──
   listAgents: () => request<AgentConfig[]>("/agents"),
+  agentStats: () => request<AgentStats[]>("/agents/stats"),
   createAgent: (agent: Omit<AgentConfig, never>) =>
     request<AgentConfig>("/agents", { method: "POST", body: JSON.stringify(agent) }),
   updateAgent: (name: string, agent: Omit<AgentConfig, "name">) =>

@@ -22,6 +22,7 @@ def _registry(request: Request) -> AgentRegistry:
 class AgentCreate(BaseModel):
     name: str
     provider: str = "claude-code"
+    providers: list[str] = []
     model: str = ""
     work_dir: str = ""
     system_prompt: str = ""
@@ -58,3 +59,39 @@ async def update_agent(name: str, body: AgentCreate, request: Request) -> AgentC
 async def delete_agent(name: str, request: Request) -> None:
     if not _registry(request).delete(name):
         raise HTTPException(404, f"Agent '{name}' not found")
+
+
+class AgentStats(BaseModel):
+    name: str
+    runs: int = 0
+    messages: int = 0
+    tokens_in: int = 0
+    tokens_out: int = 0
+    last_used: float | None = None
+
+
+@router.get("/api/agents/stats", response_model=list[AgentStats])
+async def agent_stats(request: Request) -> list[AgentStats]:
+    """Aggregate usage stats per agent from every saved session.
+
+    A "run" = a session whose `agent` field is set. `messages` counts every
+    turn in those sessions. Token totals roll up `message.usage` per turn.
+    """
+    mgr = request.app.state.session_manager
+    # Cover both active + closed.
+    sessions = list(mgr.list_active()) + list(mgr.list_inactive())
+    by_agent: dict[str, AgentStats] = {}
+    for s in sessions:
+        if not getattr(s, "agent", None):
+            continue
+        stats = by_agent.setdefault(s.agent, AgentStats(name=s.agent))
+        stats.runs += 1
+        for msg in s.messages:
+            stats.messages += 1
+            u = getattr(msg, "usage", None) or {}
+            stats.tokens_in += int(u.get("input_tokens") or u.get("prompt_tokens") or 0)
+            stats.tokens_out += int(u.get("output_tokens") or u.get("completion_tokens") or 0)
+        last = s.updated_at.timestamp() if s.updated_at else None
+        if last and (stats.last_used is None or last > stats.last_used):
+            stats.last_used = last
+    return sorted(by_agent.values(), key=lambda x: -(x.last_used or 0))
