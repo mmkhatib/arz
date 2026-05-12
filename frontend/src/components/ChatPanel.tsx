@@ -499,10 +499,20 @@ export default function ChatPanel({
   const [streaming, setStreaming] = useState(false);
   // Single-slot send queue. While a turn is in flight, one more user
   // message can sit here; it fires automatically when the turn ends.
+  // Held in a ref + state so doSend's finally can read it synchronously
+  // without re-rendering the world.
   const [queuedMessage, setQueuedMessage] = useState<{
     text: string;
     files?: import("@/api/client").UploadedFile[];
   } | null>(null);
+  const queuedRef = useRef<{
+    text: string;
+    files?: import("@/api/client").UploadedFile[];
+  } | null>(null);
+  const setQueued = (q: typeof queuedRef.current) => {
+    queuedRef.current = q;
+    setQueuedMessage(q);
+  };
   const [streamBuffer, setStreamBuffer] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
@@ -698,7 +708,7 @@ export default function ChatPanel({
     // the gateway. Drop earlier queued messages — the most recent
     // intent wins.
     if (streaming) {
-      setQueuedMessage({ text: message, files });
+      setQueued({ text: message, files });
       return;
     }
     if (files && files.length > 0) {
@@ -714,18 +724,30 @@ export default function ChatPanel({
     return doSend(message);
   };
 
-  // Drain the queue once the in-flight turn finishes. Tiny delay lets
-  // the streaming bubble unmount cleanly before the next turn replaces it.
+  // Drain the queue once the in-flight turn finishes. Earlier version
+  // cleared queuedMessage *before* the setTimeout fired, which retriggered
+  // the effect and its cleanup canceled the very timer that would have
+  // sent the message. Now: read from the ref, schedule the send, then
+  // clear once delivered. Re-entrancy guarded by `draining`.
+  const drainingRef = useRef(false);
   useEffect(() => {
-    if (streaming || !queuedMessage) return;
-    const q = queuedMessage;
-    setQueuedMessage(null);
+    if (streaming || !queuedRef.current || drainingRef.current) return;
+    drainingRef.current = true;
+    const q = queuedRef.current;
     const t = setTimeout(() => {
+      // Clear *after* dispatching — handleSend reads streaming from the
+      // current closure; by the time it runs the send, streaming flipped
+      // to true and we don't want a stale queued chip lingering.
       void handleSend(q.text, q.files);
+      setQueued(null);
+      drainingRef.current = false;
     }, 50);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      drainingRef.current = false;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [streaming, queuedMessage]);
+  }, [streaming]);
 
   // Drain an SSE Response, updating UI state as events arrive. Used for
   // both fresh sends (POST /api/chat) and re-attaches (GET /api/chat/{id}/stream).
@@ -1076,7 +1098,7 @@ export default function ChatPanel({
         focusSignal={focusSignal}
         draftKey={sessionId}
         queuedPreview={queuedMessage?.text ?? null}
-        onCancelQueued={() => setQueuedMessage(null)}
+        onCancelQueued={() => setQueued(null)}
       />
     </div>
   );
