@@ -190,7 +190,14 @@ export default function MessageBubble({
               message.text
             )
           ) : (
-            <ReactMarkdown
+            <>
+              {message.tool_calls && message.tool_calls.length > 0 && (
+                <InlineToolStrip
+                  calls={message.tool_calls}
+                  onOpenFile={onFileOpen}
+                />
+              )}
+              <ReactMarkdown
               remarkPlugins={[remarkMath]}
               rehypePlugins={[rehypeKatex]}
               components={{
@@ -253,6 +260,7 @@ export default function MessageBubble({
             >
               {message.text}
             </ReactMarkdown>
+            </>
           )}
         </div>
 
@@ -353,6 +361,155 @@ export default function MessageBubble({
           👤
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Inline tool strip — shows tool calls in-bubble ────────────
+// Single call: one row. 2-3 calls: flat list. 4+: collapsed-by-default
+// "N tools" header with the first 3 shown, the rest behind a toggle.
+// Click any row with a file_path / path / target_file argument and
+// the FileViewer opens (when onOpenFile is wired).
+function InlineToolStrip({
+  calls,
+  onOpenFile,
+}: {
+  calls: { name: string; input: string }[];
+  onOpenFile?: (path: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(calls.length < 4);
+  if (calls.length === 0) return null;
+  const visible = expanded ? calls : calls.slice(0, 3);
+  return (
+    <div
+      style={{
+        marginBottom: 10,
+        background: "var(--s2)",
+        border: "1px solid var(--border)",
+        borderRadius: 8,
+        overflow: "hidden",
+      }}
+    >
+      {calls.length >= 2 && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            padding: "6px 10px",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--cedar-2)",
+            fontSize: 11,
+            fontFamily: "var(--fm)",
+            textAlign: "left",
+            borderBottom: expanded ? "1px solid var(--hairline)" : "none",
+          }}
+        >
+          <span style={{ fontSize: 11 }}>{expanded ? "▾" : "▸"}</span>
+          <span style={{ textTransform: "uppercase", letterSpacing: ".08em" }}>
+            {calls.length} tool{calls.length === 1 ? "" : "s"}
+          </span>
+          <span style={{ color: "var(--muted)", flex: 1 }}>
+            {calls.slice(0, 4).map((c) => c.name).join(" · ")}
+            {calls.length > 4 ? " · …" : ""}
+          </span>
+        </button>
+      )}
+      {expanded &&
+        visible.map((c, i) => <InlineToolRow key={i} call={c} onOpenFile={onOpenFile} />)}
+      {expanded && !expanded /* placeholder */}
+      {expanded && calls.length > visible.length && (
+        <div
+          style={{
+            padding: "5px 10px",
+            fontSize: 10.5,
+            fontFamily: "var(--fm)",
+            color: "var(--muted)",
+            borderTop: "1px solid var(--hairline)",
+          }}
+        >
+          +{calls.length - visible.length} more
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InlineToolRow({
+  call,
+  onOpenFile,
+}: {
+  call: { name: string; input: string };
+  onOpenFile?: (path: string) => void;
+}) {
+  const { summary, filePath } = (() => {
+    try {
+      const obj = JSON.parse(call.input) as Record<string, unknown>;
+      const fp = (obj.file_path || obj.path || obj.target_file || obj.filename) as
+        | string
+        | undefined;
+      const cmd = (obj.command || obj.cmd) as string | undefined;
+      const q = (obj.pattern || obj.query) as string | undefined;
+      const first = Object.values(obj).find((v) => typeof v === "string") as
+        | string
+        | undefined;
+      return {
+        summary: cmd || q || fp || first || "",
+        filePath: typeof fp === "string" ? fp : null,
+      };
+    } catch {
+      return { summary: call.input.slice(0, 120), filePath: null };
+    }
+  })();
+  const clickable = !!(filePath && onOpenFile);
+  return (
+    <div
+      onClick={clickable ? () => onOpenFile!(filePath!) : undefined}
+      title={clickable ? `Open ${filePath}` : call.input}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "5px 10px 5px 24px",
+        fontSize: 11.5,
+        fontFamily: "var(--fm)",
+        color: "var(--text2)",
+        cursor: clickable ? "pointer" : "default",
+        borderTop: "1px solid var(--hairline)",
+        transition: "background 100ms",
+      }}
+      onMouseEnter={(e) => {
+        if (clickable) e.currentTarget.style.background = "var(--bg)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = "transparent";
+      }}
+    >
+      <span
+        style={{
+          width: 5,
+          height: 5,
+          borderRadius: "50%",
+          background: "var(--cedar-2)",
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ color: "var(--cedar-glow)", flexShrink: 0 }}>{call.name}</span>
+      <span
+        style={{
+          color: "var(--muted)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          flex: 1,
+        }}
+      >
+        {summary}
+      </span>
     </div>
   );
 }
