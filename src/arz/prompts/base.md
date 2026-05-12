@@ -83,7 +83,9 @@ it's additive.
 - `<note title="meshclaw-port-decisions">…multi-line markdown…</note>`
 - `<todo>follow up on the GitHub Actions cache miss</todo>` — append a TODO
   to the shared Operations action-items panel. Use this for genuine
-  user-facing follow-ups, NOT for in-turn scratch work.
+  user-facing follow-ups, NOT for in-turn scratch work. Optional
+  `priority="low|normal|high"`; default is `normal`. Use `high` only when
+  the user explicitly flags urgency or the follow-up unblocks something.
 
 Worked examples (note the tag is REQUIRED, not optional):
 

@@ -2,7 +2,7 @@
 // Tabs across the top, then content.
 
 import { useEffect, useRef, useState } from "react";
-import { Wrench, Sparkles, Server, Plus, Loader2, RefreshCw, Trash2, Play, Pencil } from "lucide-react";
+import { Wrench, Sparkles, Server, Plus, Loader2, RefreshCw, Trash2, Play, Pencil, ExternalLink } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
@@ -185,77 +185,133 @@ function McpView({
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
             {items.map((m) => (
-              <CedarCard key={`${m.source}-${m.name}`} padding={18} hoverable>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-                    <div
-                      style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 8,
-                        background: "var(--cedar-dim)",
-                        border: "1px solid var(--cedar-line)",
-                        color: "var(--cedar-glow)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        flexShrink: 0,
-                      }}
-                    >
-                      <Server size={16} />
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontFamily: "var(--fd)", fontSize: 18, color: "var(--text)" }}>{m.name}</div>
-                      <div
-                        style={{
-                          fontSize: 10.5,
-                          color: "var(--muted)",
-                          fontFamily: "var(--fm)",
-                          textTransform: "uppercase",
-                          letterSpacing: ".08em",
-                          marginTop: 2,
-                        }}
-                      >
-                        mcp · {m.source}
-                      </div>
-                    </div>
-                  </div>
-                  <Toggle
-                    on={m.enabled}
-                    title={m.enabled ? "Disable" : "Enable"}
-                    onClick={async () => {
-                      try {
-                        const updated = await api.toggleMcpServer(m.source, m.name);
-                        setMcps(mcps.map((x) => (x.source === updated.source && x.name === updated.name ? updated : x)));
-                      } catch {}
-                    }}
-                  />
-                </div>
-                <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 12, lineHeight: 1.5, fontFamily: "var(--fm)" }}>
-                  {m.command}
-                </div>
-                {m.args.length > 0 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 4,
-                      flexWrap: "wrap",
-                      marginTop: 12,
-                      paddingTop: 12,
-                      borderTop: "1px solid var(--hairline)",
-                    }}
-                  >
-                    {m.args.slice(0, 5).map((a, i) => (
-                      <Tag key={i} color="muted">{a}</Tag>
-                    ))}
-                  </div>
-                )}
-              </CedarCard>
+              <McpCard
+                key={`${m.source}-${m.name}`}
+                m={m}
+                onToggled={(updated) =>
+                  setMcps(mcps.map((x) => (x.source === updated.source && x.name === updated.name ? updated : x)))
+                }
+              />
             ))}
           </div>
         </section>
       ))}
     </div>
+  );
+}
+
+function McpCard({ m, onToggled }: { m: McpServer; onToggled: (updated: McpServer) => void }) {
+  const [busy, setBusy] = useState(false);
+  const dim = !m.enabled;
+  return (
+    <CedarCard
+      padding={18}
+      hoverable
+      style={{
+        opacity: dim ? 0.55 : 1,
+        filter: dim ? "saturate(0.3)" : undefined,
+        transition: "opacity .15s, filter .15s",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              background: "var(--cedar-dim)",
+              border: "1px solid var(--cedar-line)",
+              color: "var(--cedar-glow)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Server size={16} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontFamily: "var(--fd)", fontSize: 18, color: "var(--text)" }}>{m.name}</span>
+              {m.source_url && (
+                <a
+                  href={m.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title={`Open ${m.source_url}`}
+                  style={{ color: "var(--muted)", display: "inline-flex", alignItems: "center" }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <ExternalLink size={12} />
+                </a>
+              )}
+            </div>
+            <div
+              style={{
+                fontSize: 10.5,
+                color: "var(--muted)",
+                fontFamily: "var(--fm)",
+                textTransform: "uppercase",
+                letterSpacing: ".08em",
+                marginTop: 2,
+              }}
+            >
+              mcp · {m.source}{!m.enabled && " · disabled"}
+            </div>
+          </div>
+        </div>
+        <Toggle
+          on={m.enabled}
+          title={m.enabled ? "Disable" : "Enable"}
+          onClick={async () => {
+            if (busy) return;
+            setBusy(true);
+            try {
+              const updated = await api.toggleMcpServer(m.source, m.name);
+              onToggled(updated);
+            } catch {} finally {
+              setBusy(false);
+            }
+          }}
+        />
+      </div>
+      {m.description && (
+        <div style={{ fontSize: 12.5, color: "var(--text2)", marginTop: 10, lineHeight: 1.45 }}>
+          {m.description}
+        </div>
+      )}
+      {m.command && (
+        <div
+          style={{
+            fontSize: 11.5,
+            color: "var(--text3)",
+            marginTop: 10,
+            lineHeight: 1.45,
+            fontFamily: "var(--fm)",
+            wordBreak: "break-all",
+          }}
+        >
+          <span style={{ color: "var(--muted)" }}>$ </span>{m.command}
+        </div>
+      )}
+      {m.args.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            flexWrap: "wrap",
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: "1px solid var(--hairline)",
+          }}
+        >
+          {m.args.slice(0, 5).map((a, i) => (
+            <Tag key={i} color="muted">{a}</Tag>
+          ))}
+        </div>
+      )}
+    </CedarCard>
   );
 }
 
@@ -745,6 +801,7 @@ function InstallMcpModal({
   onInstalled: () => void;
 }) {
   const [source, setSource] = useState("");
+  const [description, setDescription] = useState("");
   const [command, setCommand] = useState("");
   const [args, setArgs] = useState("");
   const [env, setEnv] = useState("");
@@ -756,6 +813,7 @@ function InstallMcpModal({
   useEffect(() => {
     if (!open) {
       setSource("");
+      setDescription("");
       setCommand("");
       setArgs("");
       setEnv("");
@@ -792,6 +850,7 @@ function InstallMcpModal({
       const res = await api.installMcp(
         {
           source: src,
+          description: description.trim() || undefined,
           command: command.trim() || undefined,
           args: args.trim() ? args.split(/\s+/) : undefined,
           env: envObj,
@@ -872,6 +931,15 @@ function InstallMcpModal({
           <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
             Git URL clones + installs deps · npm: installs globally · local path is registered as-is.
           </div>
+        </div>
+        <div>
+          <CedarLabel>Description (optional)</CedarLabel>
+          <CedarInput
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What this MCP exposes — shows up on the card"
+            disabled={installing}
+          />
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
           <div>

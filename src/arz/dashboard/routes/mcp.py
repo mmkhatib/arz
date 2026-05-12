@@ -32,6 +32,13 @@ class McpServer(BaseModel):
     env: dict[str, str] = {}
     source: str
     enabled: bool = True
+    # Human-readable description shown on the card. Either user-supplied
+    # at install time or auto-derived from the source URL.
+    description: str = ""
+    # Original URL/source string (git URL, npm package, local path) so the
+    # capabilities card can link out to the project. Empty for entries
+    # that come from ~/.claude or ~/.kiro (no install metadata).
+    source_url: str = ""
 
 
 def _load_overrides() -> dict[str, bool]:
@@ -46,6 +53,36 @@ def _load_overrides() -> dict[str, bool]:
 def _save_overrides(overrides: dict[str, bool]) -> None:
     _OVERRIDES_PATH.parent.mkdir(parents=True, exist_ok=True)
     _OVERRIDES_PATH.write_text(json.dumps(overrides, indent=2), encoding="utf-8")
+
+
+def _browseable_url(src: str) -> str:
+    """Turn an install source into something you can open in a browser.
+
+    Strips ``.git``, turns ``npm:pkg`` into the npmjs.com page, and leaves
+    bare HTTPS URLs alone. Returns "" for local paths (no remote to link).
+    """
+    s = (src or "").strip()
+    if not s:
+        return ""
+    if s.startswith(("http://", "https://")):
+        return s[:-4] if s.endswith(".git") else s
+    if s.startswith("npm:"):
+        pkg = s[4:].lstrip("/")
+        return f"https://www.npmjs.com/package/{pkg}"
+    return ""
+
+
+def _autodescribe(src: str, kind: str) -> str:
+    if not src:
+        return ""
+    if kind == "npm" or src.startswith("npm:"):
+        pkg = src.removeprefix("npm:") or src
+        return f"npm package: {pkg}"
+    if src.startswith(("http://", "https://")):
+        return f"From {src.rsplit('/', 1)[-1].removesuffix('.git')}"
+    if kind == "local":
+        return f"Local: {src}"
+    return ""
 
 
 def _collect_from_dict(
@@ -87,6 +124,7 @@ async def list_mcp_servers() -> list[McpServer]:
     # Arz-managed registry (installed via the UI/API)
     reg = _load_registry()
     for nm, cfg in (reg.get("servers") or {}).items():
+        src_url = cfg.get("source") or ""
         servers.append(
             McpServer(
                 name=nm,
@@ -95,6 +133,8 @@ async def list_mcp_servers() -> list[McpServer]:
                 env=cfg.get("env", {}) or {},
                 source="arz",
                 enabled=overrides.get(f"arz:{nm}", True),
+                description=cfg.get("description") or _autodescribe(src_url, cfg.get("kind") or ""),
+                source_url=_browseable_url(src_url),
             )
         )
 
@@ -124,23 +164,14 @@ async def toggle_mcp_server(source: str, name: str) -> McpServer:
     overrides[key] = not overrides.get(key, True)
     _save_overrides(overrides)
 
-    # Return the updated server
-    for src, path in _MCP_SOURCES:
-        if src != source or not path.exists():
-            continue
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            cfg = data.get("mcpServers", {}).get(name, {})
-            return McpServer(
-                name=name,
-                command=cfg.get("command", ""),
-                args=cfg.get("args", []),
-                env=cfg.get("env", {}),
-                source=source,
-                enabled=overrides[key],
-            )
-        except Exception:
-            pass
+    # Re-run the full listing so the returned record carries every field
+    # (command, args, description, source_url) that the card needs — not
+    # just the toggled bit. Otherwise toggling blanks out the card body.
+    servers = await list_mcp_servers()
+    for s in servers:
+        if s.source == source and s.name == name:
+            return s
+    # Fallback if the source disappeared between toggle and re-list.
     return McpServer(name=name, source=source, enabled=overrides[key])
 
 
@@ -223,6 +254,7 @@ async def install_mcp(request: Request) -> StreamingResponse:
     command = (body.get("command") or "").strip()
     args = body.get("args") or []
     env = body.get("env") or {}
+    description = (body.get("description") or "").strip()
     if not isinstance(args, list) or not isinstance(env, dict):
         raise HTTPException(status_code=422, detail="args must be list, env must be object")
 
@@ -372,6 +404,7 @@ async def install_mcp(request: Request) -> StreamingResponse:
                 "command": cmd_default,
                 "args": args_default,
                 "env": env,
+                "description": description or _autodescribe(source, kind),
             }
             _save_registry(reg)
             yield f"\n✓ registered MCP server '{name}'\n"

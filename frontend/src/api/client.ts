@@ -189,6 +189,8 @@ export interface McpServer {
   env: Record<string, string>;
   source: string;
   enabled: boolean;
+  description?: string;
+  source_url?: string;
 }
 
 export type ProjectStatus = "active" | "paused" | "done" | "archived";
@@ -232,11 +234,14 @@ export interface ProjectSummary {
   max_concurrent_subagents: number;
 }
 
+export type ActionItemPriority = "low" | "normal" | "high";
+
 export interface ActionItem {
   id: string;
   text: string;
   status: "open" | "done" | "dismissed";
   source_kind: "user" | "agent";
+  priority: ActionItemPriority;
   session_id: string | null;
   created_at: number;
   updated_at: number;
@@ -524,7 +529,7 @@ export const api = {
   listMcpServers: () => request<McpServer[]>("/mcp/servers"),
   toggleMcpServer: (source: string, name: string) =>
     request<McpServer>(`/mcp/servers/${encodeURIComponent(source)}/${encodeURIComponent(name)}/toggle`, { method: "POST" }),
-  installMcp: (body: { source: string; name?: string; command?: string; args?: string[]; env?: Record<string, string> }, signal?: AbortSignal): Promise<Response> =>
+  installMcp: (body: { source: string; name?: string; command?: string; args?: string[]; env?: Record<string, string>; description?: string }, signal?: AbortSignal): Promise<Response> =>
     fetch(`${BASE}/mcp/install`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -955,12 +960,12 @@ export const api = {
     }),
 
   listActionItems: () => request<ActionItem[]>("/action-items"),
-  createActionItem: (text: string) =>
+  createActionItem: (text: string, priority: ActionItemPriority = "normal") =>
     request<ActionItem>("/action-items", {
       method: "POST",
-      body: JSON.stringify({ text, source_kind: "user" }),
+      body: JSON.stringify({ text, source_kind: "user", priority }),
     }),
-  patchActionItem: (id: string, patch: { text?: string; status?: "open" | "done" | "dismissed" }) =>
+  patchActionItem: (id: string, patch: { text?: string; status?: "open" | "done" | "dismissed"; priority?: ActionItemPriority }) =>
     request<ActionItem>(`/action-items/${id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),

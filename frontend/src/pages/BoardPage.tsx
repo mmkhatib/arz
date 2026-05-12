@@ -13,7 +13,7 @@ import {
   Btn,
   TopoLines,
 } from "@/components/CedarUI";
-import { api, type SessionSummary, type ActionItem } from "@/api/client";
+import { api, type SessionSummary, type ActionItem, type ActionItemPriority } from "@/api/client";
 
 type Lane = "waiting" | "running" | "idle" | "failed";
 
@@ -296,6 +296,19 @@ export default function BoardPage() {
     try { await api.patchActionItem(id, { status }); } catch {}
   };
 
+  const cyclePriority = async (id: string) => {
+    const next: Record<ActionItemPriority, ActionItemPriority> = {
+      low: "normal",
+      normal: "high",
+      high: "low",
+    };
+    setActionItems((p) => p.map((i) => (i.id === id ? { ...i, priority: next[i.priority] } : i)));
+    try {
+      const cur = actionItems.find((i) => i.id === id);
+      if (cur) await api.patchActionItem(id, { priority: next[cur.priority] });
+    } catch {}
+  };
+
   const removeItem = async (id: string) => {
     setActionItems((p) => p.filter((i) => i.id !== id));
     try { await api.deleteActionItem(id); } catch {}
@@ -361,7 +374,7 @@ export default function BoardPage() {
                       boxShadow: lane.id === "running" ? `0 0 6px ${lane.dot}` : undefined,
                     }}
                   />
-                  <span style={{ fontSize: 12.5, fontWeight: 500, color: "var(--text)" }}>
+                  <span style={{ fontFamily: "var(--fd)", fontSize: 15, color: "var(--text)" }}>
                     {lane.label}
                   </span>
                   <span
@@ -374,6 +387,18 @@ export default function BoardPage() {
                   >
                     {lanes[lane.id].length}
                   </span>
+                </div>
+                <div
+                  style={{
+                    padding: "0 14px 10px",
+                    fontFamily: "var(--fm)",
+                    fontSize: 10,
+                    color: "var(--text3)",
+                    textTransform: "lowercase",
+                    letterSpacing: ".04em",
+                  }}
+                >
+                  {lane.sub}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 8 }}>
                   {lanes[lane.id].length === 0 && (
@@ -544,6 +569,7 @@ export default function BoardPage() {
                       )}
                     </div>
                   </div>
+                  <PriorityPill priority={it.priority} done={it.status === "done"} onClick={() => cyclePriority(it.id)} />
                   {it.status === "open" && (
                     <Btn size="sm" kind="ghost" icon={<XIcon size={11} />} onClick={() => setStatus(it.id, "dismissed")} title="Dismiss" />
                   )}
@@ -567,5 +593,42 @@ export default function BoardPage() {
         </section>
       </div>
     </CedarPage>
+  );
+}
+
+function PriorityPill({
+  priority,
+  done,
+  onClick,
+}: {
+  priority: ActionItemPriority;
+  done: boolean;
+  onClick: () => void;
+}) {
+  const color: Record<ActionItemPriority, string> = {
+    high: "var(--cedar-glow)",
+    normal: "var(--cedar-2)",
+    low: "var(--text3)",
+  };
+  return (
+    <button
+      onClick={(e) => { e.stopPropagation(); onClick(); }}
+      title={`Priority: ${priority} — click to cycle`}
+      style={{
+        background: "transparent",
+        border: `1px solid ${color[priority]}`,
+        color: color[priority],
+        borderRadius: 3,
+        padding: "2px 7px",
+        fontSize: 9.5,
+        fontFamily: "var(--fm)",
+        textTransform: "uppercase",
+        letterSpacing: ".08em",
+        cursor: "pointer",
+        opacity: done ? 0.4 : 1,
+      }}
+    >
+      {priority}
+    </button>
   );
 }

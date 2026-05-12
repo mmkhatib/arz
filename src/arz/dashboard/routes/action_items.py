@@ -22,11 +22,15 @@ router = APIRouter(dependencies=[Depends(require_token)])
 _STORE = Path.home() / ".arz" / "action_items.json"
 
 
+Priority = Literal["low", "normal", "high"]
+
+
 class ActionItem(BaseModel):
     id: str
     text: str
     status: Literal["open", "done", "dismissed"] = "open"
     source_kind: Literal["user", "agent"] = "user"
+    priority: Priority = "normal"
     session_id: str | None = None
     created_at: float = 0.0
     updated_at: float = 0.0
@@ -35,12 +39,14 @@ class ActionItem(BaseModel):
 class ActionItemCreate(BaseModel):
     text: str
     source_kind: Literal["user", "agent"] = "user"
+    priority: Priority = "normal"
     session_id: str | None = None
 
 
 class ActionItemPatch(BaseModel):
     text: str | None = None
     status: Literal["open", "done", "dismissed"] | None = None
+    priority: Priority | None = None
 
 
 def _load() -> list[ActionItem]:
@@ -77,6 +83,7 @@ async def create_item(body: ActionItemCreate) -> ActionItem:
         id=uuid.uuid4().hex[:12],
         text=text[:500],
         source_kind=body.source_kind,
+        priority=body.priority,
         session_id=body.session_id,
         created_at=now,
         updated_at=now,
@@ -95,6 +102,8 @@ async def patch_item(item_id: str, body: ActionItemPatch) -> ActionItem:
                 it.text = body.text.strip()[:500]
             if body.status is not None:
                 it.status = body.status
+            if body.priority is not None:
+                it.priority = body.priority
             it.updated_at = time.time()
             items[i] = it
             _save(items)
@@ -111,7 +120,12 @@ async def delete_item(item_id: str) -> None:
     _save(new_items)
 
 
-def add_from_agent(text: str, *, session_id: str | None = None) -> ActionItem | None:
+def add_from_agent(
+    text: str,
+    *,
+    session_id: str | None = None,
+    priority: Priority = "normal",
+) -> ActionItem | None:
     """Helper invoked by the inline-tag pipeline when an LLM emits a
     ``<todo>``-style tag. Dedupes by exact text-match on open items."""
     text = (text or "").strip()
@@ -126,6 +140,7 @@ def add_from_agent(text: str, *, session_id: str | None = None) -> ActionItem | 
         id=uuid.uuid4().hex[:12],
         text=text[:500],
         source_kind="agent",
+        priority=priority,
         session_id=session_id,
         created_at=now,
         updated_at=now,

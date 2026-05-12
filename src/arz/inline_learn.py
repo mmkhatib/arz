@@ -156,7 +156,10 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
             elif ex.kind == "todo":
                 from arz.dashboard.routes.action_items import add_from_agent
 
-                if add_from_agent(ex.body, session_id=session_id):
+                prio = (ex.attrs.get("priority") or "normal").lower()
+                if prio not in {"low", "normal", "high"}:
+                    prio = "normal"
+                if add_from_agent(ex.body, session_id=session_id, priority=prio):  # type: ignore[arg-type]
                     counts["todo"] += 1
                 else:
                     counts["skipped"] += 1
