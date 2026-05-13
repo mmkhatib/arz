@@ -24,6 +24,21 @@ const PATH_KEYS = [
   "uri",
 ];
 
+// Collapse escaped backslashes left over from Python-repr wrapping +
+// JSON transport. A Windows path on the wire arrives as
+// "C:\\\\Users\\\\…" (each real backslash escaped twice — once by JSON,
+// once by Python's repr). We want the live string "C:\Users\…" so the
+// backend can open it and the UI can display it without visual noise.
+function normalizeExtractedPath(p: string): string {
+  if (!p) return p;
+  let out = p;
+  // Two passes — covers single and double Python-repr wraps.
+  for (let i = 0; i < 2; i++) {
+    if (out.includes("\\\\")) out = out.replace(/\\\\/g, "\\");
+  }
+  return out.trim();
+}
+
 // Try hard to extract a usable path from a tool's input. Accepts JSON,
 // Python-repr wrapped JSON (the `{'raw': '…'}` shape Claude Code emits),
 // quoted JSON-strings, plain text, and Windows-style paths.
@@ -65,12 +80,12 @@ function extractPath(toolName: string, toolInput: string): string | null {
       `['"]` + key + `['"]\\s*:\\s*['"]([^'"]+?\\.[A-Za-z0-9]{1,8})['"]`,
     );
     const m = (candidate.match(re) || toolInput.match(re));
-    if (m && m[1]) return m[1];
+    if (m && m[1]) return normalizeExtractedPath(m[1]);
   }
 
   // 3. Plain string input — may itself be a path or a quoted path.
   const trimmed = (candidate || toolInput).trim();
-  if (looksLikePath(trimmed)) return trimmed;
+  if (looksLikePath(trimmed)) return normalizeExtractedPath(trimmed);
 
   // 4. Find a path-looking token in the raw text (handles tool inputs
   //    that include file paths as the first arg). Covers both POSIX and
@@ -78,20 +93,20 @@ function extractPath(toolName: string, toolInput: string): string | null {
   const m = trimmed.match(
     /(?:["']?)([A-Za-z]:[\\/][^\s"'`,;)\]]+\.[A-Za-z0-9]{1,8}|\/[^\s"'`,;)\]]+\.[A-Za-z0-9]{1,8}|\.{0,2}[\/\\][^\s"'`,;)\]]+\.[A-Za-z0-9]{1,8})(?:["']?)/,
   );
-  if (m) return m[1];
+  if (m) return normalizeExtractedPath(m[1]);
 
   return null;
 }
 
 function pickPathFromObject(obj: unknown): string | null {
   if (!obj || typeof obj !== "object") {
-    if (typeof obj === "string" && looksLikePath(obj)) return obj;
+    if (typeof obj === "string" && looksLikePath(obj)) return normalizeExtractedPath(obj);
     return null;
   }
   const record = obj as Record<string, unknown>;
   for (const k of PATH_KEYS) {
     const v = record[k];
-    if (typeof v === "string" && v.trim()) return v.trim();
+    if (typeof v === "string" && v.trim()) return normalizeExtractedPath(v.trim());
   }
   for (const wrap of ["params", "args", "arguments", "raw"]) {
     const inner = record[wrap];
@@ -136,7 +151,14 @@ function storageKey(sessionId: string) {
 function loadFromStorage(sessionId: string): TouchedFile[] {
   try {
     const raw = localStorage.getItem(storageKey(sessionId));
-    return raw ? (JSON.parse(raw) as TouchedFile[]) : [];
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as TouchedFile[];
+    // One-shot migration: paths captured before the normalizer landed
+    // may contain double-escaped Windows backslashes. Collapse them so
+    // the entry actually opens.
+    return parsed
+      .map((f) => ({ ...f, path: normalizeExtractedPath(f.path) }))
+      .filter((f, i, arr) => arr.findIndex((g) => g.path === f.path) === i);
   } catch {
     return [];
   }
