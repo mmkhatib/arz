@@ -2,8 +2,9 @@
  * FileViewer — full-height file viewer with syntax highlighting and type-aware rendering.
  * Ports the MeshClaw FileRenderers + MarkdownPanel approach into Arz's design system.
  */
-import { memo, useState, useEffect, useRef, useMemo } from 'react'
-import { X, Copy, ChevronRight, ChevronDown, RefreshCw } from 'lucide-react'
+import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { createPortal } from 'react-dom'
+import { X, Copy, ChevronRight, ChevronDown, RefreshCw, Maximize2, Minimize2 } from 'lucide-react'
 import { api } from '@/api/client'
 import { highlight, langForPath } from '@/utils/hljs'
 import { CedarMarkdown } from './CedarMarkdown'
@@ -515,6 +516,71 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   const [loading, setLoading] = useState(true)
   const [copied, setCopied] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
+  const overlayRef = useRef<HTMLDivElement | null>(null)
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+
+  // Body scroll lock while the overlay is up — stops the chat scrolling
+  // underneath when the user wheels inside the fullscreen file.
+  useEffect(() => {
+    if (!fullscreen) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = prev }
+  }, [fullscreen])
+
+  // Esc precedence: when fullscreen, Esc exits fullscreen first, then
+  // (on a second press) closes the panel. Keeps users from accidentally
+  // dismissing the side panel just because they wanted to shrink it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (fullscreen) {
+        e.preventDefault()
+        setFullscreen(false)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [fullscreen])
+
+  // Auto-focus the first focusable element inside the overlay once on
+  // mount so keyboard users land somewhere reasonable. dataset.focused
+  // works as a once-flag — re-renders don't re-steal focus.
+  const overlayMount = useCallback((el: HTMLDivElement | null) => {
+    overlayRef.current = el
+    if (!el || el.dataset.focused === '1') return
+    el.dataset.focused = '1'
+    const first = el.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    )
+    first?.focus()
+  }, [])
+
+  // Focus trap — Tab / Shift+Tab cycle within the overlay. Skip when
+  // focus is inside a code editor surface so its own tab semantics win.
+  const trapTab = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return
+    const active = document.activeElement as HTMLElement | null
+    if (active?.closest('.monaco-editor, .cm-editor, textarea, [contenteditable="true"]')) return
+    const root = overlayRef.current
+    if (!root) return
+    const focusables = Array.from(
+      root.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((n) => n.offsetParent !== null)
+    if (focusables.length === 0) return
+    const first = focusables[0]
+    const last = focusables[focusables.length - 1]
+    if (e.shiftKey && active === first) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
 
   const name = path.split('/').pop() || path
   const ext = name.split('.').pop()?.toLowerCase() || ''
@@ -565,87 +631,131 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
     setTimeout(() => setCopied(false), 1500)
   }
 
+  // Single source of truth for the renderer tree — mounted once inline
+  // OR once in the fullscreen portal, never both, so Monaco/iframes don't
+  // double-instantiate.
+  const renderBody = () => (
+    <div className="flex-1 overflow-hidden min-h-0" ref={bodyRef}>
+      {loading && (
+        <div className="flex items-center justify-center h-full text-[var(--muted)]/40 text-[13px]">
+          Loading…
+        </div>
+      )}
+      {!loading && error && (
+        <div className="p-4 text-red-400 text-[12px]">{error}</div>
+      )}
+      {!loading && !error && type === 'binary' && (
+        <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2">
+          <span className="text-3xl">📦</span>
+          <span className="text-[13px]">Binary file — cannot preview</span>
+          <span className="text-[11px] font-mono">.{ext}</span>
+        </div>
+      )}
+      {!loading && !error && type === 'image' && (
+        <div className="flex items-center justify-center h-full p-4 bg-[var(--surface)]">
+          <img
+            src={`/api/files/read?path=${encodeURIComponent(path)}`}
+            alt={name}
+            className="max-w-full max-h-full object-contain"
+          />
+        </div>
+      )}
+      {!loading && !error && content !== null && type === 'json' && <JsonView content={content} />}
+      {!loading && !error && content !== null && type === 'csv' && <CsvView content={content} path={path} />}
+      {!loading && !error && content !== null && type === 'html' && <HtmlView content={content} />}
+      {!loading && !error && content !== null && type === 'markdown' && (
+        <MarkdownView
+          content={content}
+          path={path}
+          sessionId={sessionId ?? null}
+          onSent={() => { void load() }}
+        />
+      )}
+      {!loading && !error && content !== null && type === 'code' && (
+        <CodeView
+          content={content}
+          lang={lang}
+          path={path}
+          sessionId={sessionId ?? null}
+          onSent={() => { void load() }}
+        />
+      )}
+    </div>
+  )
+
+  const renderHeader = (isFs: boolean) => (
+    <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] shrink-0 bg-[var(--surface)]">
+      <span className="flex-1 text-[12px] font-medium text-[var(--text)] truncate" title={path}>{name}</span>
+      {ext && (
+        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[var(--border)] text-[var(--muted)] uppercase shrink-0">{ext}</span>
+      )}
+      {content && (
+        <button
+          onClick={copy}
+          className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors"
+        >
+          {copied ? 'Copied!' : <Copy size={11} />}
+        </button>
+      )}
+      <button
+        onClick={handleRefresh}
+        disabled={refreshing || type === 'binary' || type === 'image'}
+        className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 disabled:opacity-30 transition-colors"
+        title="Refresh"
+      >
+        <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
+      </button>
+      <button
+        onClick={() => setFullscreen((v) => !v)}
+        className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors"
+        title={isFs ? 'Exit full screen (Esc)' : 'Full screen'}
+      >
+        {isFs ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+      </button>
+      <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors">
+        <X size={14} />
+      </button>
+    </div>
+  )
+
+  const renderSubheader = () => (
+    <div className="px-3 py-1 border-b border-[var(--border)] shrink-0">
+      <span className="text-[10px] text-[var(--muted)]/50 font-mono truncate block" title={path}>{path}</span>
+    </div>
+  )
+
+  if (fullscreen) {
+    return createPortal(
+      <div
+        ref={overlayMount}
+        role="dialog"
+        aria-modal="true"
+        aria-label={`File preview: ${name}`}
+        onKeyDown={trapTab}
+        className="fixed inset-0 z-[9999] bg-[var(--bg)] flex flex-col"
+        style={{ animation: 'arz-fadein .12s ease-out' }}
+      >
+        {renderHeader(true)}
+        {renderSubheader()}
+        {/* Reading-width gutters so long lines don't span ultrawide monitors */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 min-h-0 mx-auto w-full max-w-[1400px] flex flex-col">
+            {renderBody()}
+          </div>
+        </div>
+        <div className="border-t border-[var(--border)] px-4 py-1.5 text-[10px] text-[var(--muted)] font-mono truncate" title={path}>
+          {path}
+        </div>
+      </div>,
+      document.body,
+    )
+  }
+
   return (
     <div className="flex flex-col h-full bg-[var(--bg)]">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border)] shrink-0 bg-[var(--surface)]">
-        <span className="flex-1 text-[12px] font-medium text-[var(--text)] truncate" title={path}>{name}</span>
-        {ext && (
-          <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-[var(--border)] text-[var(--muted)] uppercase shrink-0">{ext}</span>
-        )}
-        {content && (
-          <button
-            onClick={copy}
-            className="text-[10px] px-1.5 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors"
-          >
-            {copied ? 'Copied!' : <Copy size={11} />}
-          </button>
-        )}
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing || type === 'binary' || type === 'image'}
-          className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 disabled:opacity-30 transition-colors"
-          title="Refresh"
-        >
-          <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} />
-        </button>
-        <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors">
-          <X size={14} />
-        </button>
-      </div>
-
-      {/* Sub-header: full path */}
-      <div className="px-3 py-1 border-b border-[var(--border)] shrink-0">
-        <span className="text-[10px] text-[var(--muted)]/50 font-mono truncate block" title={path}>{path}</span>
-      </div>
-
-      {/* Content */}
-      <div className="flex-1 overflow-hidden min-h-0">
-        {loading && (
-          <div className="flex items-center justify-center h-full text-[var(--muted)]/40 text-[13px]">
-            Loading…
-          </div>
-        )}
-        {!loading && error && (
-          <div className="p-4 text-red-400 text-[12px]">{error}</div>
-        )}
-        {!loading && !error && type === 'binary' && (
-          <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2">
-            <span className="text-3xl">📦</span>
-            <span className="text-[13px]">Binary file — cannot preview</span>
-            <span className="text-[11px] font-mono">.{ext}</span>
-          </div>
-        )}
-        {!loading && !error && type === 'image' && (
-          <div className="flex items-center justify-center h-full p-4 bg-[var(--surface)]">
-            <img
-              src={`/api/files/read?path=${encodeURIComponent(path)}`}
-              alt={name}
-              className="max-w-full max-h-full object-contain"
-            />
-          </div>
-        )}
-        {!loading && !error && content !== null && type === 'json' && <JsonView content={content} />}
-        {!loading && !error && content !== null && type === 'csv' && <CsvView content={content} path={path} />}
-        {!loading && !error && content !== null && type === 'html' && <HtmlView content={content} />}
-        {!loading && !error && content !== null && type === 'markdown' && (
-          <MarkdownView
-            content={content}
-            path={path}
-            sessionId={sessionId ?? null}
-            onSent={() => { void load() }}
-          />
-        )}
-        {!loading && !error && content !== null && type === 'code' && (
-          <CodeView
-            content={content}
-            lang={lang}
-            path={path}
-            sessionId={sessionId ?? null}
-            onSent={() => { void load() }}
-          />
-        )}
-      </div>
+      {renderHeader(false)}
+      {renderSubheader()}
+      {renderBody()}
     </div>
   )
 })
