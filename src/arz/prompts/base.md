@@ -109,7 +109,14 @@ or any other CDN library. Keep widgets self-contained — no external state.
   - density=`off` — do not emit `<arzwidget>` at all; markdown only.
 
 When the user explicitly asks ("show me a chart", "build a calculator",
-"render a dashboard") emit a widget regardless of density.
+"render a dashboard", "create an animated …", "make a demo page",
+"build an interactive …") emit a widget regardless of density.
+
+**Prefer `<arzwidget>` over writing an HTML file to disk** unless the
+user explicitly asks for the file. Inline widgets render immediately in
+chat; on-disk files require an approval prompt + the user to find them.
+If the user genuinely wants the file, write it AND also include an inline
+`<arzwidget>` so they see it right away.
 
 Worked examples (note the tag is REQUIRED, not optional):
 

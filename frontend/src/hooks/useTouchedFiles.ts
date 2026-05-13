@@ -25,7 +25,8 @@ const PATH_KEYS = [
 ];
 
 // Try hard to extract a usable path from a tool's input. Accepts JSON,
-// quoted JSON-strings, or plain text with a path token.
+// Python-repr wrapped JSON (the `{'raw': '…'}` shape Claude Code emits),
+// quoted JSON-strings, plain text, and Windows-style paths.
 function extractPath(toolName: string, toolInput: string): string | null {
   if (!toolName || !toolInput) return null;
   const lower = toolName.toLowerCase();
@@ -34,47 +35,92 @@ function extractPath(toolName: string, toolInput: string): string | null {
     /file|read|write|edit|view|notebook/.test(lower);
   if (!looksLikeFileTool) return null;
 
-  // 1. JSON object with a known key.
-  try {
-    const obj = JSON.parse(toolInput);
-    if (obj && typeof obj === "object") {
-      for (const k of PATH_KEYS) {
-        const v = (obj as Record<string, unknown>)[k];
-        if (typeof v === "string" && v.trim()) return v.trim();
-      }
-      // Some tools nest input under "params" or "args".
-      for (const wrap of ["params", "args", "arguments"]) {
-        const inner = (obj as Record<string, unknown>)[wrap];
-        if (inner && typeof inner === "object") {
-          for (const k of PATH_KEYS) {
-            const v = (inner as Record<string, unknown>)[k];
-            if (typeof v === "string" && v.trim()) return v.trim();
-          }
-        }
-      }
-    } else if (typeof obj === "string" && looksLikePath(obj)) {
-      return obj;
-    }
-  } catch {
-    /* not JSON */
+  // 0. Some providers (claude-code) wrap the JSON in a Python repr like
+  //    {'raw': '<json string>'} — single-quoted, with escaped inner JSON.
+  //    Pull the inner JSON out before parsing so we don't blow past it.
+  let candidate = toolInput;
+  const rawMatch = candidate.match(/['"]raw['"]\s*:\s*['"]([\s\S]*)['"]\s*\}\s*$/);
+  if (rawMatch) {
+    // The inner string has escaped quotes — unescape the most common ones.
+    candidate = rawMatch[1].replace(/\\\\/g, "\\").replace(/\\"/g, '"').replace(/\\'/g, "'");
   }
 
-  // 2. Plain string input — may itself be a path or a quoted path.
-  const trimmed = toolInput.trim();
+  // 1. JSON object with a known key.
+  for (const text of [candidate, toolInput]) {
+    try {
+      const obj = JSON.parse(text);
+      const found = pickPathFromObject(obj);
+      if (found) return found;
+    } catch {
+      /* not JSON, fall through */
+    }
+  }
+
+  // 2. Regex-pull `"file_path": "..."` out of the raw blob, regardless of
+  //    JSON shape. Covers double- and single-quoted wrappers and works
+  //    when the outer container isn't strict JSON.
+  for (const key of PATH_KEYS) {
+    // Build a regex that matches "key" : "value" with either quote style.
+    const re = new RegExp(
+      `['"]` + key + `['"]\\s*:\\s*['"]([^'"]+?\\.[A-Za-z0-9]{1,8})['"]`,
+    );
+    const m = (candidate.match(re) || toolInput.match(re));
+    if (m && m[1]) return m[1];
+  }
+
+  // 3. Plain string input — may itself be a path or a quoted path.
+  const trimmed = (candidate || toolInput).trim();
   if (looksLikePath(trimmed)) return trimmed;
 
-  // 3. Find a path-looking token in the raw text (handles tool inputs
-  //    that include file paths as the first arg).
-  const m = trimmed.match(/(?:["']?)([\/\w.\-_~]*\/[\w.\-_]+\.[\w]+)(?:["']?)/);
+  // 4. Find a path-looking token in the raw text (handles tool inputs
+  //    that include file paths as the first arg). Covers both POSIX and
+  //    Windows separators.
+  const m = trimmed.match(
+    /(?:["']?)([A-Za-z]:[\\/][^\s"'`,;)\]]+\.[A-Za-z0-9]{1,8}|\/[^\s"'`,;)\]]+\.[A-Za-z0-9]{1,8}|\.{0,2}[\/\\][^\s"'`,;)\]]+\.[A-Za-z0-9]{1,8})(?:["']?)/,
+  );
   if (m) return m[1];
 
   return null;
 }
 
+function pickPathFromObject(obj: unknown): string | null {
+  if (!obj || typeof obj !== "object") {
+    if (typeof obj === "string" && looksLikePath(obj)) return obj;
+    return null;
+  }
+  const record = obj as Record<string, unknown>;
+  for (const k of PATH_KEYS) {
+    const v = record[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  for (const wrap of ["params", "args", "arguments", "raw"]) {
+    const inner = record[wrap];
+    if (typeof inner === "string") {
+      // `raw` is often a stringified JSON blob; try parsing it.
+      try {
+        const parsed = JSON.parse(inner);
+        const found = pickPathFromObject(parsed);
+        if (found) return found;
+      } catch {
+        /* skip */
+      }
+    } else if (inner && typeof inner === "object") {
+      const found = pickPathFromObject(inner);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function looksLikePath(s: string): boolean {
   if (!s || s.length > 500) return false;
-  // Heuristic: contains a slash and an extension, OR is an absolute path.
-  return /^\/?[\w.\-_~/]+\.[a-z0-9]{1,8}$/i.test(s) || s.startsWith("/");
+  // POSIX (/foo/bar.ext or rel/bar.ext or bar.ext) or Windows (C:\foo\bar.ext).
+  if (/^[A-Za-z]:[\\/]/.test(s)) return true;
+  if (/^\/?[\w.\-_~/]+\.[a-z0-9]{1,8}$/i.test(s)) return true;
+  // Bare filename with an extension counts — agents writing `hello.html`
+  // in the cwd shouldn't get skipped.
+  if (/^[\w.\-_~]+\.[a-z0-9]{1,8}$/i.test(s)) return true;
+  return false;
 }
 
 export interface TouchedFile {

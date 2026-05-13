@@ -404,10 +404,20 @@ function CsvView({ content, path }: { content: string; path: string }) {
 }
 
 /* ── HTML sandboxed viewer ── */
+//
+// Allow scripts so animations / Chart.js / D3 demos actually run, but
+// drop allow-same-origin so the iframe lives at a unique opaque origin
+// and cannot read parent cookies / localStorage. allow-popups so links
+// the user clicks open normally; allow-forms for interactive widgets.
 function HtmlView({ content }: { content: string }) {
   return (
     <div className="h-full border border-[var(--border)] overflow-hidden bg-white">
-      <iframe srcDoc={content} sandbox="" className="w-full h-full border-none" title="HTML Preview" />
+      <iframe
+        srcDoc={content}
+        sandbox="allow-scripts allow-popups allow-forms"
+        className="w-full h-full border-none"
+        title="HTML Preview"
+      />
     </div>
   )
 }
