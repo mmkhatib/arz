@@ -48,6 +48,16 @@ def build_prefix(
     """
     parts: list[str] = []
 
+    # 0. Runtime hint about widget rendering. Injected on EVERY turn (not
+    # just at process start) so persistent providers — claude-code, kiro —
+    # that were spawned with an older base prompt still get nudged toward
+    # `<arzwidget>` for visual asks. Cheap (~250 chars) and the agent can
+    # ignore it when irrelevant.
+    if config is not None:
+        density = getattr(getattr(config, "dashboard", None), "widget_density", "more")
+        if density in {"more", "less"}:
+            parts.append(_widget_hint(density))
+
     # 1. Always-on preferences/projects/memory_notes
     if enable_memory_files:
         try:
@@ -82,6 +92,20 @@ def build_prefix(
     if not parts:
         return ""
     return "\n\n".join(parts)
+
+
+def _widget_hint(density: str) -> str:
+    """Per-turn nudge so old persistent processes also see the widget rule."""
+    return (
+        "<arz-runtime>\n"
+        f"widget_density={density}. You render in a browser chat UI, not a terminal. "
+        "For any visual / animated / chart / interactive / 'html' request, emit "
+        '<arzwidget title="…">…raw HTML/CSS/JS…</arzwidget> INLINE in your reply. '
+        "Tailwind + any CDN script tag works. Do NOT write .html files unless the user "
+        "explicitly says 'write', 'save', or 'create a file'. Do NOT say "
+        '"open it in a browser" — the browser is already here.\n'
+        "</arz-runtime>"
+    )
 
 
 def _recall_block(user_message: str, *, recall_k: int, config: Any | None) -> str:
