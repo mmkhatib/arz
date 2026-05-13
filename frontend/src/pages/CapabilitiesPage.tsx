@@ -17,28 +17,32 @@ import {
   Toggle,
   TopoLines,
 } from "@/components/CedarUI";
-import { api, type McpServer, type PromptTemplate, type ToolView } from "@/api/client";
+import { api, type McpServer, type PromptTemplate, type ToolView, type Skill } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
 
-type Tab = "mcp" | "prompts" | "tools";
+type Tab = "mcp" | "prompts" | "tools" | "skills";
 
 export default function CapabilitiesPage() {
   const [tab, setTab] = useState<Tab>("mcp");
   const [mcps, setMcps] = useState<McpServer[]>([]);
   const [prompts, setPrompts] = useState<PromptTemplate[]>([]);
   const [tools, setTools] = useState<ToolView[]>([]);
+  const [skills, setSkills] = useState<Skill[]>([]);
   const [showInstall, setShowInstall] = useState(false);
   const [showNewPrompt, setShowNewPrompt] = useState(false);
+  const [showNewSkill, setShowNewSkill] = useState(false);
   const [editingTool, setEditingTool] = useState<{ name: string; isNew: boolean } | null>(null);
 
   const refreshMcps = () => api.listMcpServers().then(setMcps).catch(() => {});
   const refreshTools = () => api.listTools().then(setTools).catch(() => {});
   const refreshPrompts = () => api.listPrompts().then(setPrompts).catch(() => {});
+  const refreshSkills = () => api.listSkills().then(setSkills).catch(() => {});
 
   useEffect(() => {
     refreshMcps();
     refreshPrompts();
     refreshTools();
+    refreshSkills();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -53,7 +57,7 @@ export default function CapabilitiesPage() {
               The <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>capabilities</em> of the grove.
             </>
           }
-          sub={`${mcps.length} MCP servers · ${prompts.length} saved prompts · ${tools.length} builtin tools`}
+          sub={`${mcps.length} MCP servers · ${prompts.length} prompts · ${tools.length} builtin tools · ${skills.length} skills`}
           right={
             <>
               <SegSeg<Tab>
@@ -63,6 +67,7 @@ export default function CapabilitiesPage() {
                   { value: "mcp", label: "MCP" },
                   { value: "prompts", label: "Prompts" },
                   { value: "tools", label: "Tools" },
+                  { value: "skills", label: "Skills" },
                 ]}
               />
               {tab === "mcp" && (
@@ -97,6 +102,25 @@ export default function CapabilitiesPage() {
                   </Btn>
                 </>
               )}
+              {tab === "skills" && (
+                <>
+                  <Btn
+                    kind="soft"
+                    icon={<RefreshCw size={12} />}
+                    onClick={refreshSkills}
+                    title="Refresh skills list"
+                  >
+                    Reload
+                  </Btn>
+                  <Btn
+                    kind="solid"
+                    icon={<Plus size={13} />}
+                    onClick={() => setShowNewSkill(true)}
+                  >
+                    New skill
+                  </Btn>
+                </>
+              )}
             </>
           }
         />
@@ -115,6 +139,14 @@ export default function CapabilitiesPage() {
         )}
         {tab === "tools" && (
           <ToolsView tools={tools} onEdit={(name) => setEditingTool({ name, isNew: false })} />
+        )}
+        {tab === "skills" && (
+          <SkillsView
+            skills={skills}
+            refresh={refreshSkills}
+            showNew={showNewSkill}
+            closeNew={() => setShowNewSkill(false)}
+          />
         )}
       </div>
       <InstallMcpModal
@@ -444,6 +476,294 @@ function PromptsView({
         </div>
       </CedarModal>
     </>
+  );
+}
+
+function SkillsView({
+  skills,
+  refresh,
+  showNew,
+  closeNew,
+}: {
+  skills: Skill[];
+  refresh: () => void;
+  showNew: boolean;
+  closeNew: () => void;
+}) {
+  const dialog = useDialog();
+  const [active, setActive] = useState<Skill | null>(null);
+  const [draft, setDraft] = useState({ title: "", body: "", tags: "" });
+  useEffect(() => {
+    if (!showNew) setDraft({ title: "", body: "", tags: "" });
+  }, [showNew]);
+
+  const auto = skills.filter((s) => s.namespace === "auto");
+  const curated = skills.filter((s) => s.namespace === "curated");
+
+  const onDelete = async (s: Skill) => {
+    const ok = await dialog.confirm({
+      title: `Delete skill "${s.title}"?`,
+      body: s.namespace === "curated" ? "This is a curated skill — gone for good." : "Auto-skill — Hermes may recreate it after similar sessions.",
+      tone: "danger",
+    });
+    if (!ok) return;
+    try {
+      await api.deleteSkill(s.namespace, s.name);
+      refresh();
+      if (active?.name === s.name) setActive(null);
+    } catch (e) {
+      await dialog.notify({ title: "Delete failed", body: String(e), tone: "danger" });
+    }
+  };
+
+  const onPromote = async (s: Skill) => {
+    try {
+      await api.promoteSkill(s.name);
+      refresh();
+    } catch (e) {
+      await dialog.notify({ title: "Promote failed", body: String(e), tone: "danger" });
+    }
+  };
+
+  const onCreate = async () => {
+    const t = draft.title.trim();
+    const b = draft.body.trim();
+    if (!t || !b) return;
+    const tags = draft.tags.split(",").map((s) => s.trim()).filter(Boolean);
+    try {
+      await api.createCuratedSkill(t, b, tags);
+      closeNew();
+      refresh();
+    } catch (e) {
+      await dialog.notify({ title: "Save failed", body: String(e), tone: "danger" });
+    }
+  };
+
+  if (skills.length === 0 && !showNew) {
+    return (
+      <Empty
+        title="No skills yet"
+        sub="Curated skills are hand-written; auto-skills land here after Hermes consolidates a multi-tool session. Enable Hermes in Settings → Memory."
+        icon={<Sparkles size={28} />}
+      />
+    );
+  }
+
+  return (
+    <>
+      {showNew && (
+        <CedarCard padding={20} style={{ marginBottom: 18 }}>
+          <CedarLabel>Title</CedarLabel>
+          <CedarInput
+            value={draft.title}
+            onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            placeholder="Bisect a flaky test"
+            autoFocus
+          />
+          <div style={{ height: 10 }} />
+          <CedarLabel>Body (markdown)</CedarLabel>
+          <CedarTextArea
+            value={draft.body}
+            onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+            rows={10}
+            style={{ fontFamily: "var(--fm)", fontSize: 12 }}
+            placeholder="## When to use&#10;...&#10;&#10;## Steps&#10;1. ..."
+          />
+          <div style={{ height: 10 }} />
+          <CedarLabel>Tags (comma separated)</CedarLabel>
+          <CedarInput
+            value={draft.tags}
+            onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+            placeholder="debug, testing"
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
+            <Btn kind="ghost" onClick={closeNew}>Cancel</Btn>
+            <Btn kind="solid" onClick={onCreate} disabled={!draft.title.trim() || !draft.body.trim()}>
+              Save
+            </Btn>
+          </div>
+        </CedarCard>
+      )}
+
+      {curated.length > 0 && (
+        <SkillSection title="Curated" count={curated.length}>
+          {curated.map((s) => (
+            <SkillCard key={`${s.namespace}-${s.name}`} skill={s} onOpen={() => setActive(s)} onDelete={() => onDelete(s)} />
+          ))}
+        </SkillSection>
+      )}
+      {auto.length > 0 && (
+        <SkillSection title="Auto (Hermes)" count={auto.length} hint="Learned from past sessions. Promote one to mark it curated and immune from auto-updates.">
+          {auto.map((s) => (
+            <SkillCard
+              key={`${s.namespace}-${s.name}`}
+              skill={s}
+              onOpen={() => setActive(s)}
+              onDelete={() => onDelete(s)}
+              onPromote={() => onPromote(s)}
+            />
+          ))}
+        </SkillSection>
+      )}
+
+      <CedarModal
+        open={!!active}
+        onClose={() => setActive(null)}
+        width={720}
+        eyebrow={active?.namespace === "curated" ? "curated skill" : "auto skill"}
+        title={active?.title || ""}
+      >
+        {active && (
+          <div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap", alignItems: "center" }}>
+              <Tag color={active.namespace === "curated" ? "cedar" : "stone"}>{active.namespace}</Tag>
+              <Tag color="muted">v{active.version}</Tag>
+              <Tag color="muted">{active.tool_calls} tool calls</Tag>
+              {active.tags.map((t) => <Tag key={t} color="muted">#{t}</Tag>)}
+              <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+                updated {new Date(active.updated * 1000).toLocaleString()}
+              </span>
+            </div>
+            <pre
+              style={{
+                background: "var(--bg)",
+                border: "1px solid var(--border)",
+                borderRadius: 8,
+                padding: 14,
+                fontFamily: "var(--fm)",
+                fontSize: 12,
+                lineHeight: 1.6,
+                color: "var(--text)",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                margin: 0,
+                maxHeight: 480,
+                overflowY: "auto",
+              }}
+            >
+              {active.body}
+            </pre>
+            {active.source_session && (
+              <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+                source session: <code>{active.source_session}</code>
+              </div>
+            )}
+          </div>
+        )}
+      </CedarModal>
+    </>
+  );
+}
+
+function SkillSection({
+  title,
+  count,
+  hint,
+  children,
+}: {
+  title: string;
+  count: number;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section style={{ marginBottom: 24 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          marginBottom: 10,
+          fontFamily: "var(--fm)",
+          fontSize: 10.5,
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: ".14em",
+        }}
+      >
+        <span style={{ width: 16, height: 1, background: "var(--cedar-glow)" }} />
+        {title}
+        <span style={{ color: "var(--text3)" }}>· {count}</span>
+      </div>
+      {hint && (
+        <div style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 10, padding: "0 2px" }}>
+          {hint}
+        </div>
+      )}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 12 }}>
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function SkillCard({
+  skill,
+  onOpen,
+  onDelete,
+  onPromote,
+}: {
+  skill: Skill;
+  onOpen: () => void;
+  onDelete: () => void;
+  onPromote?: () => void;
+}) {
+  // Quick body preview — first non-header line
+  const preview = skill.body
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l && !l.startsWith("#") && !l.startsWith("---")) || "";
+
+  return (
+    <CedarCard padding={16} hoverable onClick={onOpen}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+          <div
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 7,
+              background: "var(--cedar-dim)",
+              border: "1px solid var(--cedar-line)",
+              color: "var(--cedar-glow)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <Sparkles size={14} />
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontFamily: "var(--fd)", fontSize: 15, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {skill.title}
+            </div>
+            <div style={{ fontSize: 10, fontFamily: "var(--fm)", color: "var(--muted)", textTransform: "uppercase", letterSpacing: ".08em", marginTop: 2 }}>
+              {skill.namespace} · v{skill.version} · {skill.tool_calls} calls
+            </div>
+          </div>
+        </div>
+      </div>
+      {preview && (
+        <div style={{ fontSize: 12, color: "var(--text2)", lineHeight: 1.5, marginBottom: 10, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+          {preview}
+        </div>
+      )}
+      {skill.tags.length > 0 && (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 10 }}>
+          {skill.tags.slice(0, 4).map((t) => <Tag key={t} color="muted">#{t}</Tag>)}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6, paddingTop: 10, borderTop: "1px solid var(--hairline)" }} onClick={(e) => e.stopPropagation()}>
+        {onPromote && (
+          <Btn size="sm" kind="outline" onClick={onPromote} title="Move to curated (immune from auto-updates)">
+            Promote
+          </Btn>
+        )}
+        <div style={{ flex: 1 }} />
+        <Btn size="sm" kind="ghost" icon={<Trash2 size={11} />} onClick={onDelete} title="Delete" />
+      </div>
+    </CedarCard>
   );
 }
 

@@ -89,6 +89,21 @@ class MemoryConfig(BaseModel):
     markdown_dir: str = "~/.arz/memory"
 
 
+class SkillsConfig(BaseModel):
+    """Auto-skill creation (Hermes pipeline) settings.
+
+    When enabled, the memory consolidator inspects each candidate session
+    after a run and, if the session used ≥`min_tool_calls` tools, asks
+    the LLM to extract a reusable skill into ~/.arz/skills/auto/.
+    Skills are deduped against curated + existing auto skills by step
+    similarity. Curated skills are never overwritten.
+    """
+
+    auto_create_from_sessions: bool = False
+    min_tool_calls: int = 5
+    similarity_threshold: float = 0.7
+
+
 class ArzConfig(BaseModel):
     """Root Arz configuration."""
 
@@ -98,4 +113,5 @@ class ArzConfig(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     whatsapp: WhatsAppConfig = Field(default_factory=WhatsAppConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
     log_level: str = "INFO"

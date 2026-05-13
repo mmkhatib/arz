@@ -42,6 +42,7 @@ from arz.dashboard.routes.prompts import router as prompts_router
 from arz.dashboard.routes.search import router as search_router
 from arz.dashboard.routes.sessions import router as sessions_router
 from arz.dashboard.routes.settings import router as settings_router
+from arz.dashboard.routes.skills import router as skills_router
 from arz.dashboard.routes.subagents import router as subagents_router
 from arz.dashboard.routes.taskrunner import router as taskrunner_router
 from arz.dashboard.routes.tools import router as tools_router
@@ -280,7 +281,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.50", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.51", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -519,6 +520,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(installer_router)
     app.include_router(consolidator_router)
     app.include_router(action_items_router)
+    app.include_router(skills_router)
     app.include_router(folders_router)
     app.include_router(projects_router)
 

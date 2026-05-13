@@ -256,6 +256,31 @@ export interface PromptTemplate {
   updated_at: number;
 }
 
+export interface Skill {
+  name: string;
+  title: string;
+  namespace: "auto" | "curated";
+  body: string;
+  created: number;
+  updated: number;
+  source_session: string;
+  version: number;
+  tool_calls: number;
+  tags: string[];
+}
+
+export interface SkillAuditEntry {
+  ts: number;
+  event: string;
+  name?: string;
+  namespace?: string;
+  version?: number;
+  source_session?: string;
+  reason?: string;
+  overlap_with?: string;
+  tool_calls?: number;
+}
+
 export interface Settings {
   provider: "claude-code" | "kiro-cli" | "codex" | "anthropic";
   model: string;
@@ -268,6 +293,8 @@ export interface Settings {
   auto_recall: boolean;
   recall_k: number;
   widget_density: "more" | "less" | "off";
+  skills_auto_create: boolean;
+  skills_min_tool_calls: number;
 }
 
 export interface SSEChunk {
@@ -543,6 +570,26 @@ export const api = {
   },
 
   // ── Prompts ──
+  // ── Skills (Hermes) ─────────────────────────────────────────
+  listSkills: () => request<Skill[]>("/skills"),
+  getSkill: (namespace: "auto" | "curated", name: string) =>
+    request<Skill>(`/skills/${namespace}/${encodeURIComponent(name)}`),
+  deleteSkill: async (namespace: "auto" | "curated", name: string): Promise<void> => {
+    const res = await fetch(`${BASE}/skills/${namespace}/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  promoteSkill: (name: string) =>
+    request<{ name: string; namespace: string }>(`/skills/auto/${encodeURIComponent(name)}/promote`, {
+      method: "POST",
+    }),
+  createCuratedSkill: (title: string, body: string, tags: string[] = []) =>
+    request<{ name: string; namespace: string }>("/skills/curated", {
+      method: "POST",
+      body: JSON.stringify({ title, body, tags }),
+    }),
+  skillsAudit: (limit = 50) =>
+    request<SkillAuditEntry[]>(`/skills/audit?limit=${limit}`),
+
   listPrompts: () => request<PromptTemplate[]>("/prompts"),
   createPrompt: (title: string, body: string, tags: string[] = []) =>
     request<PromptTemplate>("/prompts", { method: "POST", body: JSON.stringify({ title, body, tags }) }),

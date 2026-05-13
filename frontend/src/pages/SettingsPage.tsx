@@ -280,6 +280,31 @@ export default function SettingsPage() {
                   </li>
                 </ul>
               </div>
+              <div style={{ height: 18, borderTop: "1px solid var(--hairline)", marginTop: 18 }} />
+              <SettingRow
+                label="Auto-create skills (Hermes)"
+                desc="After a session with enough tool calls, ask the LLM to extract a reusable skill into ~/.arz/skills/auto/. Gated by sensitive-session detection, output redaction, similarity dedup, and a full audit log."
+              >
+                <Toggle
+                  on={draft.skills_auto_create}
+                  onClick={() => update({ skills_auto_create: !draft.skills_auto_create })}
+                />
+              </SettingRow>
+              {draft.skills_auto_create && (
+                <SettingRow
+                  label="Min tool calls"
+                  desc="Sessions with fewer than this many tool calls are ignored."
+                >
+                  <input
+                    type="number"
+                    value={draft.skills_min_tool_calls}
+                    min={1}
+                    max={100}
+                    onChange={(e) => update({ skills_min_tool_calls: Number(e.target.value) })}
+                    style={{ ...inp, width: 100 }}
+                  />
+                </SettingRow>
+              )}
             </CedarCard>
           )}
 

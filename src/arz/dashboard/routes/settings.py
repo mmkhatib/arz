@@ -80,6 +80,8 @@ class SettingsResponse(BaseModel):
     auto_recall: bool
     recall_k: int
     widget_density: WidgetDensity = "more"
+    skills_auto_create: bool = False
+    skills_min_tool_calls: int = 5
 
 
 class SettingsPatch(BaseModel):
@@ -94,6 +96,8 @@ class SettingsPatch(BaseModel):
     auto_recall: bool | None = None
     recall_k: int | None = Field(default=None, ge=1, le=20)
     widget_density: WidgetDensity | None = None
+    skills_auto_create: bool | None = None
+    skills_min_tool_calls: int | None = Field(default=None, ge=1, le=100)
 
 
 def _to_response(cfg) -> SettingsResponse:
@@ -109,6 +113,10 @@ def _to_response(cfg) -> SettingsResponse:
         auto_recall=cfg.dashboard.auto_recall,
         recall_k=cfg.dashboard.recall_k,
         widget_density=getattr(cfg.dashboard, "widget_density", "more"),
+        skills_auto_create=bool(
+            getattr(getattr(cfg, "skills", None), "auto_create_from_sessions", False)
+        ),
+        skills_min_tool_calls=int(getattr(getattr(cfg, "skills", None), "min_tool_calls", 5)),
     )
 
 
@@ -145,6 +153,18 @@ async def patch_settings(body: SettingsPatch, request: Request) -> SettingsRespo
         cfg.dashboard.recall_k = body.recall_k
     if body.widget_density is not None:
         cfg.dashboard.widget_density = body.widget_density
+    if body.skills_auto_create is not None:
+        if not hasattr(cfg, "skills"):
+            from arz.config.schema import SkillsConfig
+
+            cfg.skills = SkillsConfig()
+        cfg.skills.auto_create_from_sessions = body.skills_auto_create
+    if body.skills_min_tool_calls is not None:
+        if not hasattr(cfg, "skills"):
+            from arz.config.schema import SkillsConfig
+
+            cfg.skills = SkillsConfig()
+        cfg.skills.min_tool_calls = body.skills_min_tool_calls
 
     save_config(cfg)
     return _to_response(cfg)
