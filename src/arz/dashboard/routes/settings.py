@@ -65,6 +65,9 @@ def apply_log_level(level: str | None) -> None:
 ProviderName = Literal["claude-code", "kiro-cli", "codex", "anthropic"]
 
 
+WidgetDensity = Literal["more", "less", "off"]
+
+
 class SettingsResponse(BaseModel):
     provider: ProviderName
     model: str
@@ -76,6 +79,7 @@ class SettingsResponse(BaseModel):
     log_level: str
     auto_recall: bool
     recall_k: int
+    widget_density: WidgetDensity = "more"
 
 
 class SettingsPatch(BaseModel):
@@ -89,6 +93,7 @@ class SettingsPatch(BaseModel):
     log_level: str | None = None
     auto_recall: bool | None = None
     recall_k: int | None = Field(default=None, ge=1, le=20)
+    widget_density: WidgetDensity | None = None
 
 
 def _to_response(cfg) -> SettingsResponse:
@@ -103,6 +108,7 @@ def _to_response(cfg) -> SettingsResponse:
         log_level=cfg.log_level,
         auto_recall=cfg.dashboard.auto_recall,
         recall_k=cfg.dashboard.recall_k,
+        widget_density=getattr(cfg.dashboard, "widget_density", "more"),
     )
 
 
@@ -137,6 +143,8 @@ async def patch_settings(body: SettingsPatch, request: Request) -> SettingsRespo
         cfg.dashboard.auto_recall = body.auto_recall
     if body.recall_k is not None:
         cfg.dashboard.recall_k = body.recall_k
+    if body.widget_density is not None:
+        cfg.dashboard.widget_density = body.widget_density
 
     save_config(cfg)
     return _to_response(cfg)

@@ -33,14 +33,19 @@ def _read_base() -> str:
         return ""
 
 
-def resolve_system_prompt(agent_system_prompt: str | None = None) -> str:
+def resolve_system_prompt(
+    agent_system_prompt: str | None = None,
+    *,
+    widget_density: str | None = None,
+) -> str:
     base = _read_base()
     role = (agent_system_prompt or "").strip()
-    if not role:
-        return base
-    if not base:
-        return role
-    return f"{base}\n\n## Role\n\n{role}"
+    parts = [base] if base else []
+    if role:
+        parts.append(f"## Role\n\n{role}")
+    if widget_density and widget_density in {"more", "less", "off"}:
+        parts.append(f"## Runtime settings\n\n- Widget density: `{widget_density}`")
+    return "\n\n".join(parts)
 
 
 def get_user_override_path() -> Path:

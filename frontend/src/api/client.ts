@@ -267,6 +267,7 @@ export interface Settings {
   log_level: string;
   auto_recall: boolean;
   recall_k: number;
+  widget_density: "more" | "less" | "off";
 }
 
 export interface SSEChunk {

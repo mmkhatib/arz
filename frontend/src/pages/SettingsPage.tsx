@@ -320,9 +320,36 @@ export default function SettingsPage() {
           )}
 
           {section === "appearance" && (
-            <CedarCard padding={24}>
-              <AppearanceSettings />
-            </CedarCard>
+            <>
+              <CedarCard padding={24}>
+                <AppearanceSettings />
+              </CedarCard>
+              {draft && (
+                <CedarCard padding={24} style={{ marginTop: 14 }}>
+                  <SettingRow
+                    label="Widget density"
+                    desc="How eagerly agents render inline interactive widgets (charts, dashboards, calculators) instead of plain markdown."
+                  >
+                    <select
+                      value={draft.widget_density}
+                      onChange={(e) =>
+                        update({ widget_density: e.target.value as "more" | "less" | "off" })
+                      }
+                      style={{ ...inp, width: 150 }}
+                    >
+                      <option value="more">More — default</option>
+                      <option value="less">Less — markdown first</option>
+                      <option value="off">Off — never</option>
+                    </select>
+                  </SettingRow>
+                  <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--muted)", lineHeight: 1.55 }}>
+                    Widgets are sandboxed iframes; Tailwind is preloaded and agents can pull in
+                    Chart.js / D3 / Alpine from any CDN. Toggling to <code>off</code> tells the
+                    model to never reach for a widget.
+                  </div>
+                </CedarCard>
+              )}
+            </>
           )}
 
           {section === "advanced" && (

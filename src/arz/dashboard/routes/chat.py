@@ -81,7 +81,10 @@ def _make_provider(
                 agent_prompt = agent.system_prompt
         except Exception:
             pass
-    system_prompt = resolve_system_prompt(agent_prompt or config.dashboard.system_prompt or None)
+    system_prompt = resolve_system_prompt(
+        agent_prompt or config.dashboard.system_prompt or None,
+        widget_density=getattr(config.dashboard, "widget_density", None),
+    )
 
     if provider_name == "claude-code":
         from arz.providers.claude_code import ClaudeCodeProvider

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -6,6 +6,52 @@ import "katex/dist/katex.min.css";
 import type { MessageRecord } from "@/api/client";
 import MermaidBlock from "./MermaidBlock";
 import { formatTokens } from "@/utils/tokens";
+import Widget from "./Widget";
+
+type MsgSegment =
+  | { kind: "text"; value: string }
+  | { kind: "widget"; title: string; html: string };
+
+const _WIDGET_OPEN = /<(arzwidget|mcwidget)(\s+[^>]*)?>/i;
+
+// Split a chat message into text and widget chunks so the widget body
+// (raw HTML + scripts) bypasses ReactMarkdown / sanitisation entirely.
+function splitWidgets(text: string): MsgSegment[] {
+  if (!text || (!text.includes("<arzwidget") && !text.includes("<mcwidget"))) {
+    return [{ kind: "text", value: text }];
+  }
+  const out: MsgSegment[] = [];
+  let rest = text;
+  while (rest.length > 0) {
+    const open = rest.match(_WIDGET_OPEN);
+    if (!open || open.index === undefined) {
+      out.push({ kind: "text", value: rest });
+      break;
+    }
+    if (open.index > 0) {
+      out.push({ kind: "text", value: rest.slice(0, open.index) });
+    }
+    const tag = open[1];
+    const attrs = open[2] || "";
+    const tagEnd = open.index + open[0].length;
+    const closeRe = new RegExp(`</${tag}\\s*>`, "i");
+    const closeMatch = rest.slice(tagEnd).match(closeRe);
+    if (!closeMatch || closeMatch.index === undefined) {
+      out.push({ kind: "text", value: rest });
+      break;
+    }
+    const body = rest.slice(tagEnd, tagEnd + closeMatch.index);
+    const titleMatch =
+      attrs.match(/title\s*=\s*"([^"]*)"/i) || attrs.match(/title\s*=\s*'([^']*)'/i);
+    out.push({
+      kind: "widget",
+      title: (titleMatch?.[1] || "Widget").slice(0, 120),
+      html: body.trim(),
+    });
+    rest = rest.slice(tagEnd + closeMatch.index + closeMatch[0].length);
+  }
+  return out;
+}
 
 function shortModel(model: string): string {
   // Compress "claude-opus-4-7" → "Opus 4.7", "claude-haiku-4-5-20251001" → "Haiku 4.5"
@@ -113,6 +159,7 @@ export default function MessageBubble({
   onCycleVersion,
 }: Props) {
   const isUser = message.role === "user";
+  const segments = useMemo(() => splitWidgets(message.text), [message.text]);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.text);
 
@@ -197,7 +244,12 @@ export default function MessageBubble({
                   onOpenFile={onFileOpen}
                 />
               )}
+              {segments.map((seg, segIdx) =>
+                seg.kind === "widget" ? (
+                  <Widget key={segIdx} title={seg.title} html={seg.html} />
+                ) : !seg.value.trim() ? null : (
               <ReactMarkdown
+              key={segIdx}
               remarkPlugins={[remarkMath]}
               rehypePlugins={[rehypeKatex]}
               components={{
@@ -258,8 +310,10 @@ export default function MessageBubble({
                 hr: () => <hr className="border-[var(--border)] my-3" />,
               }}
             >
-              {message.text}
+              {seg.value}
             </ReactMarkdown>
+                )
+              )}
             </>
           )}
         </div>

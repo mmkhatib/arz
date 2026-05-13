@@ -44,6 +44,15 @@ class DashboardConfig(BaseModel):
     # Warm pool: pre-spawn N providers at startup so the first user
     # message doesn't pay the 3-10s cold-start cost. 0 = disabled.
     warm_pool_size: int = 0
+    # Inline widgets: agents may emit `<arzwidget title="…">…</arzwidget>`
+    # blocks of raw HTML/CSS/JS that render as sandboxed iframes inline
+    # in the dashboard chat. Density tunes how eagerly agents reach for
+    # widgets vs. plain markdown:
+    #   "more" — default; agents pick widgets for any visual content
+    #   "less" — agents only render widgets when markdown clearly can't
+    #            express the information (charts, interactive tools)
+    #   "off"  — agents never emit widgets; markdown only.
+    widget_density: Literal["more", "less", "off"] = "more"
 
 
 class SlackConfig(BaseModel):

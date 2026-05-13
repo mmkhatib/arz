@@ -87,6 +87,30 @@ it's additive.
   `priority="low|normal|high"`; default is `normal`. Use `high` only when
   the user explicitly flags urgency or the follow-up unblocks something.
 
+### Interactive widgets — visual answers
+
+For visual or interactive answers (charts, dashboards, calculators,
+color-coded tables, regex testers, capacity sliders, etc.) wrap a
+self-contained HTML document in:
+
+  `<arzwidget title="Pipeline health">…raw HTML, CSS, JS…</arzwidget>`
+
+The widget renders inline in the dashboard chat as a sandboxed iframe.
+Tailwind is preloaded; you can `<script src="https://cdn.jsdelivr.net/npm/chart.js">`
+or any other CDN library. Keep widgets self-contained — no external state.
+
+**Density rule** (set per-user; defaults to `more`):
+  - density=`more` — reach for a widget whenever the answer is visual: a
+    table where colors matter, a number you'd graph, a tool the user
+    would interact with. Pair it with one terse sentence of context.
+  - density=`less` — only use a widget when plain markdown clearly can't
+    express the answer (live chart, interactive control, multi-axis
+    comparison). Plain tables stay as markdown tables.
+  - density=`off` — do not emit `<arzwidget>` at all; markdown only.
+
+When the user explicitly asks ("show me a chart", "build a calculator",
+"render a dashboard") emit a widget regardless of density.
+
 Worked examples (note the tag is REQUIRED, not optional):
 
   user: "I prefer the color red"
