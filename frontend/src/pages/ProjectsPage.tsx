@@ -17,6 +17,7 @@ import {
   TopoLines,
 } from "@/components/CedarUI";
 import { api, type ProjectSummary } from "@/api/client";
+import { projectPath } from "@/utils/sessionUrl";
 
 function relTime(epoch: number): string {
   if (!epoch) return "—";
@@ -49,8 +50,10 @@ export default function ProjectsPage() {
   }, []);
 
   const handleCreated = async (id: string) => {
-    await refresh();
-    navigate(`/projects/${encodeURIComponent(id)}`);
+    const fresh = await api.listProjects().catch(() => projects);
+    setProjects(fresh);
+    const created = fresh.find((p) => p.id === id);
+    navigate(projectPath(created?.name, id));
   };
 
   const open = projects.filter((p) => p.status === "active").length;
@@ -101,7 +104,7 @@ export default function ProjectsPage() {
                 key={p.id}
                 padding={18}
                 hoverable
-                onClick={() => navigate(`/projects/${encodeURIComponent(p.id)}`)}
+                onClick={() => navigate(projectPath(p.name, p.id))}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>

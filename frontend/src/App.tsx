@@ -27,9 +27,13 @@ export default function App() {
           <Route path="/chat/:slug" element={<ChatPage />} />
           <Route path="/board" element={<BoardPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
+          {/* Param doubles as `:slug` for new URLs (with ?pid=<id>) or as
+              the project id directly for legacy bookmarks. The page reads
+              ?pid first and falls back to the path segment. */}
           <Route path="/projects/:id" element={<ProjectDetailPage />} />
           <Route path="/autopilot" element={<AutopilotPage />} />
           <Route path="/channels" element={<ChannelsPage />} />
+          <Route path="/channels/:slug" element={<ChannelsPage />} />
           <Route path="/overview" element={<OverviewPage />} />
           <Route path="/agents" element={<AgentsPage />} />
           <Route path="/memory" element={<MemoryPage />} />

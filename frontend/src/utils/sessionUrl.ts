@@ -21,6 +21,31 @@ export function chatPath(title: string | undefined | null, sessionId: string): s
   return `/chat/${slugify(title)}?sid=${encodeURIComponent(sessionId)}`;
 }
 
+export function channelPath(name: string | undefined | null, channelId: string): string {
+  return `/channels/${slugify(name)}?cid=${encodeURIComponent(channelId)}`;
+}
+
+export function projectPath(name: string | undefined | null, projectId: string): string {
+  return `/projects/${slugify(name)}?pid=${encodeURIComponent(projectId)}`;
+}
+
+/** Read a channel id from the URL. Accepts `?cid=…` (current) and `?ch=…` (legacy). */
+export function readChannelIdFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const sp = new URLSearchParams(window.location.search);
+  return sp.get("cid") || sp.get("ch") || null;
+}
+
+/** Read a project id from the URL. Accepts `?pid=…` (current) and the
+ *  legacy `/projects/:id` path segment for old bookmarks. */
+export function readProjectIdFromUrl(pathParam?: string | null): string | null {
+  if (typeof window === "undefined") return pathParam || null;
+  const sp = new URLSearchParams(window.location.search);
+  const fromQuery = sp.get("pid");
+  if (fromQuery) return fromQuery;
+  return pathParam || null;
+}
+
 /** Pull a session id out of legacy and current URL shapes:
  *   /chat/<slug>?sid=ID    (current)
  *   /?sid=ID

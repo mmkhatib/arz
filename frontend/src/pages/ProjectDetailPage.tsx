@@ -3,7 +3,7 @@
 // off the orchestrator on a tied channel.
 
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   Layers,
@@ -42,6 +42,7 @@ import {
 } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
 import { TaskDetailModal } from "@/components/TaskDetailModal";
+import { channelPath, projectPath } from "@/utils/sessionUrl";
 
 type Tab = "brief" | "tasks" | "files" | "subagents" | "log";
 
@@ -62,7 +63,11 @@ const STATUS_ORDER: ProjectTaskStatus[] = [
 ];
 
 export default function ProjectDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  // URL shape is `/projects/<slug>?pid=<id>`. Prefer `?pid=`; fall back to
+  // the path segment so legacy `/projects/<rawId>` bookmarks still resolve.
+  const { id: paramId } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
+  const id = searchParams.get("pid") || paramId;
   const navigate = useNavigate();
   const dialog = useDialog();
   const [project, setProject] = useState<ProjectSummary | null>(null);
@@ -102,6 +107,18 @@ export default function ProjectDetailPage() {
     return () => { clearInterval(t); document.removeEventListener("visibilitychange", onVis); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, project?.status]);
+
+  // Keep URL bookmarkable: /projects/<slug>?pid=<id>. Rewriting on
+  // project rename so the URL slug stays in sync without losing the
+  // pid anchor.
+  useEffect(() => {
+    if (!project) return;
+    const target = projectPath(project.name, project.id);
+    const current = window.location.pathname + window.location.search;
+    if (current !== target) {
+      navigate(target, { replace: true });
+    }
+  }, [project, navigate]);
 
   if (!project) {
     return (
@@ -153,7 +170,7 @@ export default function ProjectDetailPage() {
       await refresh();
       // Navigate to channels page; the orchestrator turn streams in
       // the channel feed.
-      navigate(`/channels?ch=${encodeURIComponent(r.channel_id)}`);
+      navigate(channelPath(project?.name, r.channel_id));
     } catch (e) {
       await dialog.notify({ title: "Kickoff failed", body: String(e), tone: "danger" });
     } finally {
@@ -242,7 +259,7 @@ export default function ProjectDetailPage() {
                 <Btn
                   kind="solid"
                   icon={<Layers size={13} />}
-                  onClick={() => navigate(`/channels?ch=${encodeURIComponent(project.channel_id!)}`)}
+                  onClick={() => navigate(channelPath(project.name, project.channel_id!))}
                 >
                   Open channel
                 </Btn>
@@ -284,7 +301,7 @@ export default function ProjectDetailPage() {
                   size="sm"
                   kind="soft"
                   icon={<Play size={11} />}
-                  onClick={() => navigate(`/channels?ch=${encodeURIComponent(project.channel_id!)}`)}
+                  onClick={() => navigate(channelPath(project.name, project.channel_id!))}
                 >
                   Open chat
                 </Btn>
@@ -1562,7 +1579,7 @@ function SubagentsTab({
                 kind="solid"
                 icon={<Layers size={13} />}
                 onClick={() =>
-                  navigate(`/channels?ch=${encodeURIComponent(project.channel_id!)}`)
+                  navigate(channelPath(project.name, project.channel_id!))
                 }
               >
                 Open channel

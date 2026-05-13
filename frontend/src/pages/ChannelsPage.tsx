@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { channelPath, projectPath } from "@/utils/sessionUrl";
 import {
   Plus,
   Send,
@@ -133,17 +134,34 @@ export default function ChannelsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [expandAll, setExpandAll] = useState(false);
 
-  // Apply ?ch=<slug> on first load and clear it from the URL.
+  // Apply ?cid=<id> (or legacy ?ch=<id>) on first load.
   useEffect(() => {
-    const ch = searchParams.get("ch");
-    if (ch) {
-      setActiveId(ch);
-      const next = new URLSearchParams(searchParams);
-      next.delete("ch");
-      setSearchParams(next, { replace: true });
+    const cid = searchParams.get("cid") || searchParams.get("ch");
+    if (cid) {
+      setActiveId(cid);
+      if (searchParams.has("ch")) {
+        // Migrate legacy ?ch= into the new ?cid= shape silently.
+        const next = new URLSearchParams(searchParams);
+        next.delete("ch");
+        next.set("cid", cid);
+        setSearchParams(next, { replace: true });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep the URL bookmarkable: /channels/<slug>?cid=<id>. Slug derives
+  // from channel name so renames update the URL automatically. Use
+  // replace so flipping channels doesn't spam history.
+  useEffect(() => {
+    if (!activeId) return;
+    const ch = channels.find((c) => c.id === activeId);
+    const target = channelPath(ch?.name, activeId);
+    const current = window.location.pathname + window.location.search;
+    if (current !== target) {
+      navigate(target, { replace: true });
+    }
+  }, [activeId, channels, navigate]);
 
   // Project list — used to render the right-rail when a channel is wired
   // to one, and to surface a "Promote to project" CTA when not.
@@ -331,7 +349,7 @@ export default function ChannelsPage() {
           }}
           onGotoProject={() => {
             setSelectedTask(null);
-            navigate(`/projects/${encodeURIComponent(linkedProject.id)}`);
+            navigate(projectPath(linkedProject.name, linkedProject.id));
           }}
         />
       )}
@@ -657,7 +675,7 @@ export default function ChannelsPage() {
           <ProjectRail
             project={linkedProject}
             onSelectTask={setSelectedTask}
-            onOpenProject={() => navigate(`/projects/${encodeURIComponent(linkedProject.id)}`)}
+            onOpenProject={() => navigate(projectPath(linkedProject.name, linkedProject.id))}
             collapsed={railCollapsed}
             onToggleCollapse={() => setRailCollapsed((v) => !v)}
           />
