@@ -137,6 +137,40 @@ class OrphanReaper:
 def _pid_alive(pid: int) -> bool:
     if pid <= 0:
         return False
+    import sys
+
+    if sys.platform == "win32":
+        # os.kill(pid, 0) on Windows isn't a "ping" — Python translates it
+        # into TerminateProcess(pid, 0) via Win32, which depending on the
+        # target binary throws OSError(WinError 11) "incorrect format"
+        # instead of cleanly answering. Use OpenProcess + GetExitCodeProcess
+        # via ctypes so we get a real liveness check.
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            STILL_ACTIVE = 259
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+            if not handle:
+                # ERROR_INVALID_PARAMETER (87) → pid not found = dead.
+                # Anything else (5 access denied etc.) → assume alive
+                # so we don't reap-and-forget a real orphan.
+                err = ctypes.get_last_error()
+                return err not in (87,)
+            try:
+                code = wintypes.DWORD()
+                if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return True
+                return code.value == STILL_ACTIVE
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            # If ctypes lookup itself blew up, fall through to assuming
+            # alive — false-positive is better than a startup crash.
+            return True
+
     try:
         os.kill(pid, 0)
         return True
@@ -144,6 +178,10 @@ def _pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         # Process exists but is owned by someone else — alive.
+        return True
+    except OSError:
+        # Catch-all defensive: e.g. Windows shouldn't reach here after the
+        # branch above, but if it ever does, don't crash the gateway start.
         return True
 
 
