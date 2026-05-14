@@ -501,6 +501,98 @@ function MarkdownView({
   )
 }
 
+/* ── Shared file body ──────────────────────────────────────────────
+ *
+ * Type-aware body renderer used by the side-panel FileViewer AND by the
+ * inline WrittenFilePreviewCard in chat. One renderer, one decision tree
+ * for "given a path + content, what view?" — so any future format
+ * (e.g. CSV row colors, JSON schema badges) lands in one place instead
+ * of drifting between two cards.
+ *
+ * Notes for callers:
+ *   - `content` may be `null` (loading / fetch failed). Pair with
+ *     `loading` / `error` to render skeletons / messages.
+ *   - `sessionId` + `onSent` are only meaningful for editable views
+ *     (markdown / code); inline chat callers pass `null` and the
+ *     comment rail stays hidden.
+ *   - `maxHeight` clamps the content area so an enormous file doesn't
+ *     blow out the chat row. Defaults to `100%` which is fine in the
+ *     side panel.
+ */
+export function FileBody({
+  path,
+  content,
+  loading = false,
+  error = null,
+  sessionId = null,
+  onSent,
+  maxHeight,
+}: {
+  path: string
+  content: string | null
+  loading?: boolean
+  error?: string | null
+  sessionId?: string | null
+  onSent?: () => void
+  maxHeight?: number | string
+}) {
+  const name = path.split(/[\\/]/).pop() || path
+  const ext = name.split('.').pop()?.toLowerCase() || ''
+  const type = detectType(path)
+  const lang = langForPath(path)
+  const style: React.CSSProperties = maxHeight
+    ? { maxHeight, overflow: 'hidden', minHeight: 0, display: 'flex', flexDirection: 'column' }
+    : { height: '100%', minHeight: 0 }
+  return (
+    <div className="flex-1 overflow-hidden" style={style}>
+      {loading && (
+        <div className="flex items-center justify-center h-full text-[var(--muted)]/40 text-[13px]">
+          Loading…
+        </div>
+      )}
+      {!loading && error && (
+        <div className="p-4 text-red-400 text-[12px]">{error}</div>
+      )}
+      {!loading && !error && type === 'binary' && (
+        <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-6">
+          <span className="text-3xl">📦</span>
+          <span className="text-[13px]">Binary file — cannot preview</span>
+          <span className="text-[11px] font-mono">.{ext}</span>
+        </div>
+      )}
+      {!loading && !error && type === 'image' && (
+        <div className="flex items-center justify-center h-full p-4 bg-[var(--surface)]">
+          <img
+            src={`/api/files/read?path=${encodeURIComponent(path)}`}
+            alt={name}
+            className="max-w-full max-h-full object-contain"
+          />
+        </div>
+      )}
+      {!loading && !error && content !== null && type === 'json' && <JsonView content={content} />}
+      {!loading && !error && content !== null && type === 'csv' && <CsvView content={content} path={path} />}
+      {!loading && !error && content !== null && type === 'html' && <HtmlView content={content} />}
+      {!loading && !error && content !== null && type === 'markdown' && (
+        <MarkdownView
+          content={content}
+          path={path}
+          sessionId={sessionId}
+          onSent={onSent}
+        />
+      )}
+      {!loading && !error && content !== null && type === 'code' && (
+        <CodeView
+          content={content}
+          lang={lang}
+          path={path}
+          sessionId={sessionId}
+          onSent={onSent}
+        />
+      )}
+    </div>
+  )
+}
+
 /* ── Main FileViewer ── */
 interface Props {
   path: string
@@ -585,7 +677,6 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   const name = path.split('/').pop() || path
   const ext = name.split('.').pop()?.toLowerCase() || ''
   const type = detectType(path)
-  const lang = langForPath(path)
 
   const load = async () => {
     setLoading(true); setError(null)
@@ -635,51 +726,15 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   // OR once in the fullscreen portal, never both, so Monaco/iframes don't
   // double-instantiate.
   const renderBody = () => (
-    <div className="flex-1 overflow-hidden min-h-0" ref={bodyRef}>
-      {loading && (
-        <div className="flex items-center justify-center h-full text-[var(--muted)]/40 text-[13px]">
-          Loading…
-        </div>
-      )}
-      {!loading && error && (
-        <div className="p-4 text-red-400 text-[12px]">{error}</div>
-      )}
-      {!loading && !error && type === 'binary' && (
-        <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2">
-          <span className="text-3xl">📦</span>
-          <span className="text-[13px]">Binary file — cannot preview</span>
-          <span className="text-[11px] font-mono">.{ext}</span>
-        </div>
-      )}
-      {!loading && !error && type === 'image' && (
-        <div className="flex items-center justify-center h-full p-4 bg-[var(--surface)]">
-          <img
-            src={`/api/files/read?path=${encodeURIComponent(path)}`}
-            alt={name}
-            className="max-w-full max-h-full object-contain"
-          />
-        </div>
-      )}
-      {!loading && !error && content !== null && type === 'json' && <JsonView content={content} />}
-      {!loading && !error && content !== null && type === 'csv' && <CsvView content={content} path={path} />}
-      {!loading && !error && content !== null && type === 'html' && <HtmlView content={content} />}
-      {!loading && !error && content !== null && type === 'markdown' && (
-        <MarkdownView
-          content={content}
-          path={path}
-          sessionId={sessionId ?? null}
-          onSent={() => { void load() }}
-        />
-      )}
-      {!loading && !error && content !== null && type === 'code' && (
-        <CodeView
-          content={content}
-          lang={lang}
-          path={path}
-          sessionId={sessionId ?? null}
-          onSent={() => { void load() }}
-        />
-      )}
+    <div ref={bodyRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      <FileBody
+        path={path}
+        content={content}
+        loading={loading}
+        error={error}
+        sessionId={sessionId ?? null}
+        onSent={() => { void load() }}
+      />
     </div>
   )
 
