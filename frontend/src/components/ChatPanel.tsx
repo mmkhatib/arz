@@ -10,7 +10,10 @@ import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity 
 import { formatTokens } from "@/utils/tokens";
 import { useDialog } from "@/components/Dialog";
 
-function ThinkingDots() {
+/* Preserved for revert: original three-dot bouncer. Was the only
+ * "model is thinking" indicator before the word-ticker landed. Kept
+ * exported under a Classic name so swapping back is a one-line change. */
+export function ThinkingDotsClassic() {
   return (
     <span className="inline-flex items-center gap-1 py-0.5">
       {[0, 1, 2].map((i) => (
@@ -20,6 +23,76 @@ function ThinkingDots() {
           style={{ animation: `arz-bounce 1.2s ease-in-out ${i * 0.2}s infinite` }}
         />
       ))}
+    </span>
+  );
+}
+
+/* Words cycled by ThinkingDots. Mirrors Claude Code's vibe — verbs that
+ * actually evoke deliberation rather than a flat "Loading…". Sampled in
+ * shuffle order so the same word doesn't surface twice in a row. */
+const _THINKING_VERBS = [
+  "Pondering", "Considering", "Computing", "Thinking", "Reasoning",
+  "Synthesizing", "Reflecting", "Cogitating", "Mulling", "Brewing",
+  "Plotting", "Sketching", "Weighing", "Investigating", "Parsing",
+  "Distilling", "Crafting", "Tuning", "Hatching", "Sleuthing",
+  "Untangling", "Threading", "Stitching", "Wrangling", "Drafting",
+  "Composing", "Aligning", "Mapping", "Tracing", "Conjuring",
+  "Spelunking", "Forging", "Whittling", "Refining", "Polishing",
+  "Deliberating", "Charting", "Tinkering", "Surveying", "Branching",
+  "Sequencing", "Decoding", "Calibrating", "Resolving", "Sharpening",
+  "Sifting", "Stewing", "Marinating", "Percolating", "Excavating",
+  "Foraging", "Foreshadowing", "Annotating", "Reckoning", "Scaffolding",
+];
+
+function ThinkingDots() {
+  const [idx, setIdx] = useState(() => Math.floor(Math.random() * _THINKING_VERBS.length));
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setIdx((prev) => {
+        // Pick a fresh index — never the one we just showed.
+        let next = Math.floor(Math.random() * _THINKING_VERBS.length);
+        if (next === prev) next = (next + 1) % _THINKING_VERBS.length;
+        return next;
+      });
+    }, 1600);
+    return () => window.clearInterval(id);
+  }, []);
+  const word = _THINKING_VERBS[idx];
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 py-0.5"
+      style={{ fontSize: 12.5, color: "var(--cedar)", fontFamily: "var(--fn)" }}
+    >
+      {/* Two small bouncing dots — height ≤ current 6px so the row
+          doesn't grow when the indicator swaps in. */}
+      <span className="inline-flex items-center gap-[3px]">
+        {[0, 1, 2].map((i) => (
+          <span
+            key={i}
+            className="w-1 h-1 rounded-full bg-[var(--cedar)]"
+            style={{
+              animation: `arz-bounce 1.2s ease-in-out ${i * 0.18}s infinite`,
+              opacity: 0.7,
+            }}
+          />
+        ))}
+      </span>
+      {/* Word with a soft cedar-glow shimmer + slide-in. `key` is the
+          index so React remounts on each cycle and the entry animation
+          replays cleanly. */}
+      <span
+        key={idx}
+        className="inline-block"
+        style={{
+          animation: "arz-thinking-word 1.6s ease-in-out",
+          color: "var(--cedar)",
+          textShadow: "0 0 6px color-mix(in srgb, var(--cedar-glow) 35%, transparent)",
+          letterSpacing: ".01em",
+        }}
+      >
+        {word}
+        <span style={{ opacity: 0.55 }}>…</span>
+      </span>
     </span>
   );
 }

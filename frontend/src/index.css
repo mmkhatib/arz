@@ -429,6 +429,12 @@ pre, code {
 @keyframes arz-slide  { from { transform: translateX(-8px); opacity: 0 } to { transform: translateX(0); opacity: 1 } }
 @keyframes arz-grow   { from { transform: scaleY(0); opacity: 0 } to { transform: scaleY(1); opacity: 1 } }
 @keyframes cedarShimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }
+@keyframes arz-thinking-word {
+  0%   { opacity: 0; transform: translateY(2px); filter: blur(1px); }
+  15%  { opacity: 1; transform: translateY(0); filter: blur(0); }
+  85%  { opacity: 1; transform: translateY(0); filter: blur(0); }
+  100% { opacity: 0; transform: translateY(-2px); filter: blur(1px); }
+}
 
 .fade-up    { animation: arz-fadeup .22s ease forwards; }
 .fade-in    { animation: arz-fadein .25s ease forwards; }
