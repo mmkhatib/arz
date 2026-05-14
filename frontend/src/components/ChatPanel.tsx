@@ -44,55 +44,124 @@ const _THINKING_VERBS = [
   "Foraging", "Foreshadowing", "Annotating", "Reckoning", "Scaffolding",
 ];
 
+/*
+ * Letter ticker — mirrors codepen.io/jackrugile/pen/GROaam.
+ *
+ * Each letter scrambles through random glyphs at varying opacity, then
+ * locks in left-to-right one letter at a time. Once the word is fully
+ * resolved we hold briefly, then swap to the next verb and re-scramble.
+ *
+ * Height stays at the row's natural line-height (no leading bouncing
+ * dots and no trailing "…", per the spec the user pasted in).
+ */
+const _SCRAMBLE_CHARS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890!@#$%^&*()-_=+{}|[]\\;':\"<>?,./`~".split("");
+const _CYCLES_PER_LETTER = 5;   // how many random frames before locking the next letter
+const _FRAME_INTERVAL_MS = 32;  // ~30 fps — feels like the codepen
+const _HOLD_AFTER_RESOLVE_MS = 750;
+
+function randChar(): string {
+  return _SCRAMBLE_CHARS[Math.floor(Math.random() * _SCRAMBLE_CHARS.length)];
+}
+
 function ThinkingDots() {
-  const [idx, setIdx] = useState(() => Math.floor(Math.random() * _THINKING_VERBS.length));
+  const [wordIdx, setWordIdx] = useState(() =>
+    Math.floor(Math.random() * _THINKING_VERBS.length),
+  );
+  const target = (_THINKING_VERBS[wordIdx] || "Thinking").toUpperCase();
+  const [display, setDisplay] = useState<string[]>(() => target.split(""));
+  const [locked, setLocked] = useState<number>(0); // how many letters have resolved
+  const [opacities, setOpacities] = useState<number[]>(() => target.split("").map(() => 1));
+  const cycleRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+
+  // When the target word changes, reset to scramble state.
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setIdx((prev) => {
-        // Pick a fresh index — never the one we just showed.
-        let next = Math.floor(Math.random() * _THINKING_VERBS.length);
-        if (next === prev) next = (next + 1) % _THINKING_VERBS.length;
-        return next;
+    setDisplay(target.split("").map(() => randChar()));
+    setOpacities(target.split("").map(() => Math.random()));
+    setLocked(0);
+    cycleRef.current = 0;
+  }, [target]);
+
+  // Frame loop — drives the scramble + locks one letter every
+  // _CYCLES_PER_LETTER frames.
+  useEffect(() => {
+    const tick = () => {
+      setLocked((curLocked) => {
+        // Snapshot the locked count so the closure stays consistent
+        // with the display/opacity updates we issue below.
+        if (curLocked >= target.length) {
+          // Word fully resolved — hold, then swap to the next verb.
+          timerRef.current = window.setTimeout(() => {
+            setWordIdx((prev) => {
+              let next = Math.floor(Math.random() * _THINKING_VERBS.length);
+              if (next === prev) next = (next + 1) % _THINKING_VERBS.length;
+              return next;
+            });
+          }, _HOLD_AFTER_RESOLVE_MS);
+          return curLocked;
+        }
+
+        // Scramble every letter past curLocked + jitter their opacity.
+        setDisplay((prev) =>
+          prev.map((ch, i) => {
+            if (i < curLocked) return ch;
+            if (target[i] === " ") return " ";
+            return randChar();
+          }),
+        );
+        setOpacities((prev) =>
+          prev.map((_op, i) => (i < curLocked ? 1 : Math.random())),
+        );
+
+        if (cycleRef.current < _CYCLES_PER_LETTER) {
+          cycleRef.current += 1;
+          timerRef.current = window.setTimeout(tick, _FRAME_INTERVAL_MS);
+          return curLocked;
+        }
+
+        // Cycle done — lock the next letter and continue.
+        cycleRef.current = 0;
+        setDisplay((prev) => prev.map((ch, i) => (i === curLocked ? target[i] : ch)));
+        setOpacities((prev) => prev.map((op, i) => (i === curLocked ? 1 : op)));
+        timerRef.current = window.setTimeout(tick, _FRAME_INTERVAL_MS);
+        return curLocked + 1;
       });
-    }, 1600);
-    return () => window.clearInterval(id);
-  }, []);
-  const word = _THINKING_VERBS[idx];
+    };
+    timerRef.current = window.setTimeout(tick, _FRAME_INTERVAL_MS);
+    return () => {
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    };
+  }, [target]);
+
   return (
     <span
-      className="inline-flex items-center gap-1.5 py-0.5"
-      style={{ fontSize: 12.5, color: "var(--cedar)", fontFamily: "var(--fn)" }}
+      className="inline-flex items-center py-0.5"
+      style={{
+        fontFamily: "var(--fm)",
+        fontSize: 12.5,
+        lineHeight: 1,
+        letterSpacing: ".08em",
+        // Soft cedar glow matching the codepen's green halo.
+        textShadow:
+          "0 0 8px color-mix(in srgb, var(--cedar-glow) 45%, transparent), 0 0 4px color-mix(in srgb, var(--cedar-glow) 30%, transparent)",
+      }}
     >
-      {/* Two small bouncing dots — height ≤ current 6px so the row
-          doesn't grow when the indicator swaps in. */}
-      <span className="inline-flex items-center gap-[3px]">
-        {[0, 1, 2].map((i) => (
-          <span
-            key={i}
-            className="w-1 h-1 rounded-full bg-[var(--cedar)]"
-            style={{
-              animation: `arz-bounce 1.2s ease-in-out ${i * 0.18}s infinite`,
-              opacity: 0.7,
-            }}
-          />
-        ))}
-      </span>
-      {/* Word with a soft cedar-glow shimmer + slide-in. `key` is the
-          index so React remounts on each cycle and the entry animation
-          replays cleanly. */}
-      <span
-        key={idx}
-        className="inline-block"
-        style={{
-          animation: "arz-thinking-word 1.6s ease-in-out",
-          color: "var(--cedar)",
-          textShadow: "0 0 6px color-mix(in srgb, var(--cedar-glow) 35%, transparent)",
-          letterSpacing: ".01em",
-        }}
-      >
-        {word}
-        <span style={{ opacity: 0.55 }}>…</span>
-      </span>
+      {display.map((ch, i) => (
+        <span
+          key={i}
+          style={{
+            display: "inline-block",
+            width: ch === " " ? "0.4em" : "0.7em",
+            textAlign: "center",
+            color: i < locked ? "var(--cedar-glow)" : "var(--text)",
+            opacity: i < locked ? 1 : opacities[i] ?? 1,
+            transition: i < locked ? "color .15s" : "none",
+          }}
+        >
+          {ch}
+        </span>
+      ))}
     </span>
   );
 }
