@@ -14,6 +14,68 @@ type MsgSegment =
 
 const _WIDGET_OPEN = /<(arzwidget|mcwidget)(\s+[^>]*)?>/i;
 
+/* Path-shaped tokens we want to make click-to-open. Catches:
+ *   /abs/posix/path.ext
+ *   ./rel/path.ext  ../rel/path.ext  rel/path.ext  rel\\path.ext
+ *   C:\\Users\\foo\\bar.ext   C:/Users/foo/bar.ext
+ * Bare filenames must have a known-ish extension to qualify (≤8 chars,
+ * alphanumeric) so we don't wrap "etc." or "fig.4".
+ */
+const _PATH_RE =
+  /(?<![\w/\\-])((?:[A-Za-z]:[\\/][^\s"'`<>()\[\]{}|]+\.[A-Za-z0-9]{1,8})|(?:\.{1,2}[\\/][^\s"'`<>()\[\]{}|]+\.[A-Za-z0-9]{1,8})|(?:\/[\w.\-_~][\w.\-_~/]*\.[A-Za-z0-9]{1,8})|(?:[\w.\-_~]+[\\/][\w.\-_~][\w.\-_~\\/]*\.[A-Za-z0-9]{1,8}))(?![\w])/g;
+
+/** remark plugin: split text nodes on path-shaped tokens and replace
+ *  matches with synthetic link nodes carrying `#arz-file:<path>`. The
+ *  ReactMarkdown `a` override below intercepts the scheme and renders a
+ *  themed click-to-open pill. */
+function remarkFilePaths() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return () => (tree: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const visit = (node: any) => {
+      if (!node || !node.children) return;
+      // Skip code blocks / inline code / our own synthetic links.
+      if (node.type === "code" || node.type === "inlineCode") return;
+      if (
+        node.type === "link" &&
+        typeof node.url === "string" &&
+        node.url.startsWith("#arz-file:")
+      ) {
+        return;
+      }
+      const out: unknown[] = [];
+      for (const child of node.children) {
+        if (child.type !== "text" || typeof child.value !== "string") {
+          out.push(child);
+          continue;
+        }
+        const v: string = child.value;
+        let last = 0;
+        let m: RegExpExecArray | null;
+        _PATH_RE.lastIndex = 0;
+        let pushed = false;
+        while ((m = _PATH_RE.exec(v)) !== null) {
+          pushed = true;
+          if (m.index > last) out.push({ type: "text", value: v.slice(last, m.index) });
+          out.push({
+            type: "link",
+            url: `#arz-file:${m[1]}`,
+            children: [{ type: "text", value: m[1] }],
+          });
+          last = m.index + m[0].length;
+        }
+        if (!pushed) out.push(child);
+        else if (last < v.length) out.push({ type: "text", value: v.slice(last) });
+      }
+      node.children = out;
+      for (const c of out as { type: string; children?: unknown }[]) {
+        if (c.children) visit(c);
+      }
+    };
+    visit(tree);
+  };
+}
+
 // Split a chat message into text and widget chunks so the widget body
 // (raw HTML + scripts) bypasses ReactMarkdown / sanitisation entirely.
 function splitWidgets(text: string): MsgSegment[] {
@@ -117,6 +179,145 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? "Copied!" : "Copy"}
     </button>
+  );
+}
+
+/* ── Written-file inline preview ───────────────────────────────────
+ *
+ * When a Write / Edit tool call produced a code file in this turn we
+ * render the content inline as a syntax-highlighted code block. Saves
+ * the user a click into the Activity pane just to see what landed.
+ *
+ * Skipped for `.html` (those should be inlined as <arzwidget>) and for
+ * unknown / binary types.
+ */
+const _CODE_EXTS = new Set([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs",
+  "py", "rb", "go", "rs", "java", "kt", "swift", "cs",
+  "cpp", "cc", "c", "h", "hpp",
+  "sh", "bash", "zsh", "fish",
+  "css", "scss", "less", "vue", "svelte",
+  "json", "yaml", "yml", "toml", "ini",
+  "md", "mdx", "sql", "graphql", "gql", "proto",
+  "lua", "pl", "scala", "clj", "ex", "exs", "elm", "erl", "dart",
+]);
+
+const _EXT_TO_LANG: Record<string, string> = {
+  tsx: "tsx", ts: "typescript", jsx: "jsx", js: "javascript", mjs: "javascript", cjs: "javascript",
+  py: "python", rb: "ruby", go: "go", rs: "rust", java: "java", kt: "kotlin", swift: "swift",
+  cs: "csharp", cpp: "cpp", cc: "cpp", c: "c", h: "c", hpp: "cpp",
+  sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
+  css: "css", scss: "scss", less: "less", vue: "html", svelte: "html",
+  json: "json", yaml: "yaml", yml: "yaml", toml: "toml",
+  md: "markdown", mdx: "markdown", sql: "sql",
+};
+
+function _stripPyRepr(raw: string): string {
+  // Claude Code wraps tool input as `{'raw': '<json>'}`. Pull the inner.
+  const m = raw.match(/^\s*\{\s*['"]raw['"]\s*:\s*['"]([\s\S]*)['"]\s*\}\s*$/);
+  if (!m) return raw;
+  return m[1].replace(/\\\\/g, "\\").replace(/\\"/g, '"').replace(/\\'/g, "'");
+}
+
+function _extractFileWrite(input: string): { path: string; content: string } | null {
+  if (!input) return null;
+  const candidate = _stripPyRepr(input);
+  for (const text of [candidate, input]) {
+    try {
+      const obj = JSON.parse(text) as Record<string, unknown>;
+      const fp = (obj.file_path || obj.path || obj.target_file) as string | undefined;
+      const content = (obj.content || obj.new_string || obj.text) as string | undefined;
+      if (typeof fp === "string" && typeof content === "string") {
+        return { path: fp, content };
+      }
+    } catch { /* try next */ }
+  }
+  // Regex fallback: extract file_path and content even when surrounding JSON is malformed.
+  const fpM = candidate.match(/['"]file_path['"]\s*:\s*['"]([^'"]+)['"]/);
+  const contentM = candidate.match(/['"]content['"]\s*:\s*['"]([\s\S]*?)['"][,}]/);
+  if (fpM && contentM) {
+    let content = contentM[1].replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\"/g, '"');
+    if (content.endsWith("\\")) content = content.slice(0, -1);
+    return { path: fpM[1], content };
+  }
+  return null;
+}
+
+function WrittenFilePreview({
+  calls,
+  onOpenFile,
+}: {
+  calls: { name: string; input: string }[];
+  onOpenFile?: (path: string) => void;
+}) {
+  const previews = useMemo(() => {
+    const out: { key: string; path: string; content: string; ext: string }[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < calls.length; i++) {
+      const c = calls[i];
+      if (!/^(Write|Edit|MultiEdit|create_file|write_file|write_to_file|str_replace)$/i.test(c.name)) continue;
+      const got = _extractFileWrite(c.input);
+      if (!got || !got.content) continue;
+      const ext = (got.path.split(".").pop() || "").toLowerCase();
+      if (ext === "html" || ext === "htm") continue;          // these become widgets
+      if (!_CODE_EXTS.has(ext)) continue;                     // skip binary/unknown
+      // Dedupe by path — same Write retried only renders once.
+      if (seen.has(got.path)) continue;
+      seen.add(got.path);
+      out.push({ key: `${i}-${got.path}`, path: got.path, content: got.content, ext });
+    }
+    return out;
+  }, [calls]);
+
+  if (previews.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-col gap-2">
+      {previews.map(({ key, path, content, ext }) => (
+        <WrittenFilePreviewCard key={key} path={path} content={content} ext={ext} onOpenFile={onOpenFile} />
+      ))}
+    </div>
+  );
+}
+
+function WrittenFilePreviewCard({
+  path,
+  content,
+  ext,
+  onOpenFile,
+}: {
+  path: string;
+  content: string;
+  ext: string;
+  onOpenFile?: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(content.split("\n").length <= 40);
+  const name = path.split(/[\\/]/).pop() || path;
+  const lang = _EXT_TO_LANG[ext] || ext;
+  const lineCount = content.split("\n").length;
+  return (
+    <div className="rounded-lg border border-[var(--cedar)]/30 bg-[var(--cedar)]/5 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono">
+        <button
+          onClick={() => setOpen((v) => !v)}
+          className="text-[var(--muted)] hover:text-[var(--text)]"
+          title={open ? "Collapse" : "Expand"}
+        >
+          {open ? "▾" : "▸"}
+        </button>
+        <span
+          onClick={onOpenFile ? () => onOpenFile(path) : undefined}
+          className={onOpenFile ? "text-[var(--cedar)] cursor-pointer hover:underline" : "text-[var(--cedar)]"}
+          title={onOpenFile ? `Open ${path}` : path}
+        >
+          {name}
+        </span>
+        <span className="text-[var(--muted)] uppercase tracking-wider text-[9.5px]">{lang}</span>
+        <span className="ml-auto text-[var(--muted)] text-[10px]">
+          {lineCount} line{lineCount === 1 ? "" : "s"}
+        </span>
+      </div>
+      {open && <CodeBlock className={`language-${lang}`}>{content}</CodeBlock>}
+    </div>
   );
 }
 
@@ -239,10 +440,16 @@ export default function MessageBubble({
           ) : (
             <>
               {message.tool_calls && message.tool_calls.length > 0 && (
-                <InlineToolStrip
-                  calls={message.tool_calls}
-                  onOpenFile={onFileOpen}
-                />
+                <>
+                  <InlineToolStrip
+                    calls={message.tool_calls}
+                    onOpenFile={onFileOpen}
+                  />
+                  <WrittenFilePreview
+                    calls={message.tool_calls}
+                    onOpenFile={onFileOpen}
+                  />
+                </>
               )}
               {segments.map((seg, segIdx) =>
                 seg.kind === "widget" ? (
@@ -250,7 +457,7 @@ export default function MessageBubble({
                 ) : !seg.value.trim() ? null : (
               <ReactMarkdown
               key={segIdx}
-              remarkPlugins={[remarkMath]}
+              remarkPlugins={[remarkMath, remarkFilePaths()]}
               rehypePlugins={[rehypeKatex]}
               components={{
                 p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
@@ -279,11 +486,31 @@ export default function MessageBubble({
                 ol: ({ children }) => <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>,
                 li: ({ children }) => <li className="text-[14px]">{children}</li>,
                 strong: ({ children }) => <strong className="font-semibold text-[var(--text)]">{children}</strong>,
-                a: ({ href, children }) => (
-                  <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--accent)] underline underline-offset-2 hover:text-[var(--cedar-lt)]">
-                    {children}
-                  </a>
-                ),
+                a: ({ href, children }) => {
+                  // arz-file scheme: clickable themed pill that opens the
+                  // referenced file in the Activity pane.
+                  if (typeof href === "string" && href.startsWith("#arz-file:")) {
+                    const path = href.slice("#arz-file:".length);
+                    return (
+                      <span
+                        onClick={onFileOpen ? () => onFileOpen(path) : undefined}
+                        title={onFileOpen ? `Open ${path}` : path}
+                        className={[
+                          "inline-flex items-center px-1 py-0.5 rounded border text-[12px] font-mono",
+                          "border-[var(--cedar)]/40 bg-[var(--cedar)]/10 text-[var(--cedar)]",
+                          onFileOpen ? "cursor-pointer hover:bg-[var(--cedar)]/20 hover:border-[var(--cedar)]" : "",
+                        ].join(" ")}
+                      >
+                        {children}
+                      </span>
+                    );
+                  }
+                  return (
+                    <a href={href} target="_blank" rel="noopener noreferrer" className="text-[var(--accent)] underline underline-offset-2 hover:text-[var(--cedar-lt)]">
+                      {children}
+                    </a>
+                  );
+                },
                 h1: ({ children }) => <h1 className="text-[16px] font-semibold mb-1 mt-2">{children}</h1>,
                 h2: ({ children }) => <h2 className="text-[15px] font-semibold mb-1 mt-2">{children}</h2>,
                 h3: ({ children }) => <h3 className="text-[14px] font-semibold mb-1 mt-1">{children}</h3>,
