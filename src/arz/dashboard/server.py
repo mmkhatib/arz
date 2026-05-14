@@ -281,7 +281,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.56", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.57", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -292,6 +292,10 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.state.token_auth_enabled = config.dashboard.token_auth
     app.state.token = load_token() if config.dashboard.token_auth else None
     app.state.pending_approvals = {}
+    # Parallel dict keyed by request_id holding metadata (session_id,
+    # tool name, tool input, created_at, title) so the Operations board
+    # can render Approve/Deny/Trust without opening the session.
+    app.state.pending_approval_meta: dict[str, dict] = {}
     app.state.yolo_sessions: set[str] = set()
     app.state.session_modes: dict[str, str] = {}
     app.state.cron_registry = CronRegistry(runner=lambda entry: _spawn_cron_run(app, entry))

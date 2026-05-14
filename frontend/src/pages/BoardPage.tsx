@@ -3,7 +3,7 @@
 //   1) Agent operations: 4-column board (Waiting on you / Running / Idle / Failed)
 //   2) Your action items: cedar-drafted to-dos w/ filter pills.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Check, X as XIcon, Trash2, Pause, Play, AlertTriangle } from "lucide-react";
 import {
@@ -32,11 +32,21 @@ function AgentOpCard({
   lane,
   stage,
   onOpen,
+  approval,
+  onApprove,
+  onDeny,
+  onTrust,
+  onStop,
 }: {
   session: SessionSummary;
   lane: Lane;
   stage: Stage | null;
   onOpen: () => void;
+  approval?: PendingApproval | null;
+  onApprove?: (a: PendingApproval) => void;
+  onDeny?: (a: PendingApproval) => void;
+  onTrust?: (a: PendingApproval) => void;
+  onStop?: (s: SessionSummary) => void;
 }) {
   const who = `${session.title?.slice(0, 50) || "untitled"}`;
   const fullModel = session.model || providerLabel(session.provider);
@@ -90,26 +100,89 @@ function AgentOpCard({
 
       {lane === "waiting" && (
         <>
-          {stage?.lastAssistantText && (
-            <div
-              style={{
-                fontSize: 11,
-                color: "var(--text2)",
-                marginTop: 6,
-                lineHeight: 1.4,
-                maxHeight: 36,
-                overflow: "hidden",
-                fontStyle: "italic",
-              }}
-            >
-              "{stage.lastAssistantText}…"
-            </div>
+          {approval ? (
+            <>
+              <div
+                style={{
+                  marginTop: 6,
+                  padding: "7px 9px",
+                  background: "var(--cedar-dim)",
+                  borderLeft: "2px solid var(--cedar-glow)",
+                  borderRadius: 3,
+                  fontSize: 11,
+                  color: "var(--text2)",
+                  fontFamily: "var(--fm)",
+                  lineHeight: 1.4,
+                }}
+              >
+                <div style={{ color: "var(--cedar-glow)", fontWeight: 500, marginBottom: 2 }}>
+                  Wants to run <span style={{ fontFamily: "var(--fm)" }}>{approval.tool_name || "tool"}</span>
+                </div>
+                {approval.tool_input && (
+                  <div
+                    title={approval.tool_input}
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      color: "var(--text3)",
+                    }}
+                  >
+                    {approval.tool_input.slice(0, 90)}
+                  </div>
+                )}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 10 }} onClick={(e) => e.stopPropagation()}>
+                <Btn
+                  size="sm"
+                  kind="solid"
+                  icon={<Check size={11} />}
+                  onClick={() => onApprove?.(approval)}
+                  style={{ flex: 1 }}
+                >
+                  Approve
+                </Btn>
+                <Btn
+                  size="sm"
+                  kind="outline"
+                  onClick={() => onTrust?.(approval)}
+                  title="Approve + auto-approve all remaining tools this session"
+                >
+                  Trust
+                </Btn>
+                <Btn
+                  size="sm"
+                  kind="ghost"
+                  icon={<XIcon size={11} />}
+                  onClick={() => onDeny?.(approval)}
+                  title="Deny"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              {stage?.lastAssistantText && (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--text2)",
+                    marginTop: 6,
+                    lineHeight: 1.4,
+                    maxHeight: 36,
+                    overflow: "hidden",
+                    fontStyle: "italic",
+                  }}
+                >
+                  "{stage.lastAssistantText}…"
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
+                <Btn size="sm" kind="solid" icon={<Check size={11} />} onClick={onOpen} style={{ flex: 1 }}>
+                  Open
+                </Btn>
+              </div>
+            </>
           )}
-          <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-            <Btn size="sm" kind="solid" icon={<Check size={11} />} onClick={onOpen} style={{ flex: 1 }}>
-              Open
-            </Btn>
-          </div>
           <div style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)", marginTop: 6 }}>
             waiting {fmtAge(stage?.ageSecs ?? 0)} · {session.message_count} msgs
             {stage?.elapsedMs != null && ` · ${(stage.elapsedMs / 1000).toFixed(1)}s last reply`}
@@ -147,11 +220,18 @@ function AgentOpCard({
               }}
             />
           </div>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 6 }}>
-            <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }} onClick={(e) => e.stopPropagation()}>
+            <span style={{ fontSize: 9.5, fontFamily: "var(--fm)", color: "var(--muted)", marginRight: "auto" }}>
               streaming · {session.message_count} msgs
             </span>
-            <Btn size="sm" kind="ghost" icon={<Pause size={10} />} onClick={onOpen} />
+            <Btn size="sm" kind="outline" onClick={onOpen}>Open</Btn>
+            <Btn
+              size="sm"
+              kind="ghost"
+              icon={<Pause size={10} />}
+              onClick={() => onStop?.(session)}
+              title="Stop this turn"
+            />
           </div>
         </>
       )}
@@ -242,11 +322,21 @@ type Stage = {
   ageSecs: number;
 };
 
+type PendingApproval = {
+  request_id: string;
+  session_id: string;
+  tool_name: string;
+  tool_input: string;
+  title: string;
+  created_at: number;
+};
+
 export default function BoardPage() {
   const navigate = useNavigate();
   const [items, setItems] = useState<SessionSummary[]>([]);
   const [stages, setStages] = useState<Record<string, Stage>>({});
   const [actionItems, setActionItems] = useState<ActionItem[]>([]);
+  const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [filter, setFilter] = useState<"all" | "open" | "done">("open");
   const [draft, setDraft] = useState("");
 
@@ -290,6 +380,9 @@ export default function BoardPage() {
     try {
       setActionItems(await api.listActionItems());
     } catch {}
+    try {
+      setApprovals(await api.listApprovals());
+    } catch {}
   };
 
   useEffect(() => {
@@ -298,16 +391,50 @@ export default function BoardPage() {
     return () => window.clearInterval(id);
   }, []);
 
+  // Pending-approval map by session id — drives the waiting lane override
+  // and lets each card know whether it has actionable buttons.
+  const approvalsBySession = useMemo(() => {
+    const out: Record<string, PendingApproval> = {};
+    for (const a of approvals) {
+      // First-come-first-served per session is fine — usually only one
+      // approval is open at a time.
+      if (!out[a.session_id]) out[a.session_id] = a;
+    }
+    return out;
+  }, [approvals]);
+
   const lanes: Record<Lane, SessionSummary[]> = { waiting: [], running: [], idle: [], failed: [] };
   for (const s of items.filter((s) => !s.archived)) {
     const st = stages[s.id];
     let lane: Lane;
-    if (s.streaming) lane = "running";
+    if (approvalsBySession[s.id]) lane = "waiting";
+    else if (s.streaming) lane = "running";
     else if (st?.errored) lane = "failed";
     else if (st?.lastRole === "assistant") lane = "waiting";
     else lane = "idle";
     lanes[lane].push(s);
   }
+
+  const onApprove = async (a: PendingApproval) => {
+    setApprovals((p) => p.filter((x) => x.request_id !== a.request_id));
+    try { await api.approveRequest(a.request_id); } catch {} finally { refresh(); }
+  };
+  const onDeny = async (a: PendingApproval) => {
+    setApprovals((p) => p.filter((x) => x.request_id !== a.request_id));
+    try { await api.rejectRequest(a.request_id); } catch {} finally { refresh(); }
+  };
+  const onTrust = async (a: PendingApproval) => {
+    // Approve THIS call, AND flip the session into trust mode so the
+    // remaining approvals in this turn fly through.
+    setApprovals((p) => p.filter((x) => x.request_id !== a.request_id));
+    try {
+      await api.setApprovalMode(a.session_id, "trust");
+      await api.approveRequest(a.request_id);
+    } catch {} finally { refresh(); }
+  };
+  const onStop = async (s: SessionSummary) => {
+    try { await api.stopChat(s.id); } catch {} finally { refresh(); }
+  };
 
   const submitDraft = async () => {
     const t = draft.trim(); if (!t) return; setDraft("");
@@ -440,6 +567,11 @@ export default function BoardPage() {
                       session={s}
                       lane={lane.id}
                       stage={stages[s.id] ?? null}
+                      approval={approvalsBySession[s.id] ?? null}
+                      onApprove={onApprove}
+                      onDeny={onDeny}
+                      onTrust={onTrust}
+                      onStop={onStop}
                       onOpen={() => navigate(`/?sid=${encodeURIComponent(s.id)}`)}
                     />
                   ))}

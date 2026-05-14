@@ -12,6 +12,40 @@ from arz.dashboard.token_auth import require_token
 router = APIRouter(dependencies=[Depends(require_token)])
 
 
+@router.get("/api/approvals")
+async def list_approvals(request: Request) -> list[dict]:
+    """Pending tool approvals across all sessions — surfaced on the
+    Operations board so the user can approve/deny without opening the
+    session.
+    """
+    meta: dict[str, dict] = getattr(request.app.state, "pending_approval_meta", {}) or {}
+    # Only include those whose future is still alive (defensive — should
+    # always agree with pending_approvals).
+    pending: dict[str, asyncio.Future] = request.app.state.pending_approvals
+    out: list[dict] = []
+    for rid, info in list(meta.items()):
+        if rid not in pending:
+            continue
+        out.append(
+            {
+                "request_id": rid,
+                "session_id": info.get("session_id") or "",
+                "tool_name": info.get("tool_name") or "",
+                "tool_input": (info.get("tool_input") or "")[:800],
+                "title": info.get("title") or "",
+                "created_at": info.get("created_at") or 0.0,
+            }
+        )
+    out.sort(key=lambda r: r["created_at"])
+    return out
+
+
+def _drop_meta(request: Request, request_id: str) -> None:
+    meta = getattr(request.app.state, "pending_approval_meta", None)
+    if isinstance(meta, dict):
+        meta.pop(request_id, None)
+
+
 @router.post("/api/approvals/{request_id}/approve", status_code=status.HTTP_204_NO_CONTENT)
 async def approve_tool(request_id: str, request: Request) -> None:
     pending: dict[str, asyncio.Future] = request.app.state.pending_approvals
@@ -21,6 +55,7 @@ async def approve_tool(request_id: str, request: Request) -> None:
     if not fut.done():
         fut.set_result(True)
     pending.pop(request_id, None)
+    _drop_meta(request, request_id)
 
 
 @router.post("/api/approvals/{request_id}/reject", status_code=status.HTTP_204_NO_CONTENT)
@@ -32,6 +67,7 @@ async def reject_tool(request_id: str, request: Request) -> None:
     if not fut.done():
         fut.set_result(False)
     pending.pop(request_id, None)
+    _drop_meta(request, request_id)
 
 
 @router.post("/api/sessions/{session_id}/yolo")

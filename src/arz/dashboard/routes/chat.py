@@ -151,6 +151,7 @@ async def _run_turn(
     pending_approvals: dict | None = None,
     yolo_sessions: set | None = None,
     session_modes: dict | None = None,
+    pending_approval_meta: dict | None = None,
 ) -> None:
     """Background task: drive the provider, persist the assistant turn,
     publish events to the StreamRegistry. NOT tied to any HTTP connection
@@ -235,6 +236,15 @@ async def _run_turn(
                         loop = asyncio.get_event_loop()
                         fut: asyncio.Future = loop.create_future()
                         pending_approvals[request_id] = fut
+                        if pending_approval_meta is not None:
+                            pending_approval_meta[request_id] = {
+                                "request_id": request_id,
+                                "session_id": session_id,
+                                "tool_name": tool_name,
+                                "tool_input": raw_input,
+                                "title": event.title or event.text or "",
+                                "created_at": _time.time(),
+                            }
                         await emit(
                             sse_permission_request(
                                 title=event.title or event.text or "",
@@ -248,6 +258,8 @@ async def _run_turn(
                             approved = False
                         finally:
                             pending_approvals.pop(request_id, None)
+                            if pending_approval_meta is not None:
+                                pending_approval_meta.pop(request_id, None)
                         if approved:
                             await provider.approve_tool(request_id)
                         else:
@@ -619,6 +631,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             request.app.state.pending_approvals,
             request.app.state.yolo_sessions,
             request.app.state.session_modes,
+            getattr(request.app.state, "pending_approval_meta", None),
         )
     )
 

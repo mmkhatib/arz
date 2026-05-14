@@ -886,6 +886,15 @@ export const api = {
       method: "POST",
     });
   },
+  listApprovals: () =>
+    request<{
+      request_id: string;
+      session_id: string;
+      tool_name: string;
+      tool_input: string;
+      title: string;
+      created_at: number;
+    }[]>("/approvals"),
 
   async toggleYolo(sessionId: string): Promise<{ yolo: boolean }> {
     const res = await fetch(`${BASE}/sessions/${sessionId}/yolo`, { method: "POST" });

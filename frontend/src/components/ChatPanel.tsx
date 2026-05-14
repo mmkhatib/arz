@@ -6,7 +6,6 @@ import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
-import ThemeDropdown from "./ThemeDropdown";
 import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
 import { useDialog } from "@/components/Dialog";
@@ -952,7 +951,8 @@ export default function ChatPanel({
         />
         <SessionTotals messages={messages} />
         <div className="ml-auto flex items-center gap-1">
-          <ThemeDropdown />
+          {/* Theme dropdown lives in the global TopBar now — keeping a
+              second one here is just clutter. */}
           <ExportMenu sessionId={sessionId} />
           {onToggleActivity && (
             <button
