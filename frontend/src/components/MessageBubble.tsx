@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { CedarMarkdown } from "./CedarMarkdown";
+import { highlight } from "@/utils/hljs";
 import type { MessageRecord } from "@/api/client";
 import MermaidBlock from "./MermaidBlock";
 import { formatTokens } from "@/utils/tokens";
@@ -290,33 +292,142 @@ function WrittenFilePreviewCard({
   ext: string;
   onOpenFile?: (path: string) => void;
 }) {
-  const [open, setOpen] = useState(content.split("\n").length <= 40);
+  const isMarkdown = ext === "md" || ext === "mdx" || ext === "markdown";
+  // Markdown gets a "Render | Code" toggle that mirrors the widget chrome
+  // (which already supports Source ↔ Preview). Everything else is code-only.
+  const [view, setView] = useState<"render" | "code">(isMarkdown ? "render" : "code");
+  const [collapsed, setCollapsed] = useState(false);
   const name = path.split(/[\\/]/).pop() || path;
   const lang = _EXT_TO_LANG[ext] || ext;
   const lineCount = content.split("\n").length;
+
   return (
-    <div className="rounded-lg border border-[var(--cedar)]/30 bg-[var(--cedar)]/5 overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] font-mono">
+    <div
+      style={{
+        margin: "0",
+        border: "1px solid var(--cedar-line)",
+        borderRadius: 10,
+        overflow: "hidden",
+        background: "var(--bg)",
+      }}
+    >
+      {/* Header — mirrors Widget.tsx chrome: cedar-dim bg, glow text, small caps */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "8px 10px",
+          background: "var(--cedar-dim)",
+          borderBottom: collapsed ? "none" : "1px solid var(--cedar-line)",
+          fontFamily: "var(--fm)",
+          fontSize: 11,
+          color: "var(--cedar-glow)",
+        }}
+      >
         <button
-          onClick={() => setOpen((v) => !v)}
-          className="text-[var(--muted)] hover:text-[var(--text)]"
-          title={open ? "Collapse" : "Expand"}
+          onClick={() => setCollapsed((v) => !v)}
+          title={collapsed ? "Expand" : "Collapse"}
+          style={{
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            color: "var(--cedar-glow)",
+            display: "flex",
+            alignItems: "center",
+            padding: 0,
+          }}
         >
-          {open ? "▾" : "▸"}
+          {collapsed ? "▸" : "▾"}
         </button>
         <span
           onClick={onOpenFile ? () => onOpenFile(path) : undefined}
-          className={onOpenFile ? "text-[var(--cedar)] cursor-pointer hover:underline" : "text-[var(--cedar)]"}
+          style={{
+            color: "var(--cedar-glow)",
+            cursor: onOpenFile ? "pointer" : "default",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            maxWidth: "60%",
+          }}
           title={onOpenFile ? `Open ${path}` : path}
         >
           {name}
         </span>
-        <span className="text-[var(--muted)] uppercase tracking-wider text-[9.5px]">{lang}</span>
-        <span className="ml-auto text-[var(--muted)] text-[10px]">
-          {lineCount} line{lineCount === 1 ? "" : "s"}
+        <span
+          style={{
+            fontSize: 9.5,
+            color: "var(--muted)",
+            textTransform: "uppercase",
+            letterSpacing: ".08em",
+          }}
+        >
+          {lang} · {lineCount} line{lineCount === 1 ? "" : "s"}
         </span>
+        <span style={{ flex: 1 }} />
+        {/* Markdown: Render / Code toggle. Code-only files don't get it. */}
+        {isMarkdown && !collapsed && (
+          <div
+            style={{
+              display: "inline-flex",
+              border: "1px solid var(--cedar-line)",
+              borderRadius: 5,
+              overflow: "hidden",
+              fontSize: 10,
+            }}
+          >
+            {(["render", "code"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => setView(v)}
+                style={{
+                  background: view === v ? "var(--cedar)" : "transparent",
+                  color: view === v ? "var(--bg)" : "var(--muted)",
+                  border: "none",
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                  fontFamily: "var(--fm)",
+                  textTransform: "uppercase",
+                  letterSpacing: ".06em",
+                }}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
-      {open && <CodeBlock className={`language-${lang}`}>{content}</CodeBlock>}
+
+      {!collapsed && (
+        <>
+          {isMarkdown && view === "render" ? (
+            <div style={{ padding: "12px 14px", maxHeight: 480, overflowY: "auto" }}>
+              <CedarMarkdown text={content} />
+            </div>
+          ) : (
+            <pre
+              style={{
+                margin: 0,
+                background: "var(--bg)",
+                padding: "10px 14px",
+                fontFamily: "var(--fm)",
+                fontSize: 12.5,
+                lineHeight: 1.55,
+                color: "var(--text)",
+                overflowX: "auto",
+                overflowY: "auto",
+                maxHeight: 480,
+                whiteSpace: "pre",
+              }}
+            >
+              <code
+                className={`hljs language-${lang}`}
+                dangerouslySetInnerHTML={{ __html: highlight(content, lang) }}
+              />
+            </pre>
+          )}
+        </>
+      )}
     </div>
   );
 }
