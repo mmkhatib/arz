@@ -1099,6 +1099,7 @@ export default function ChatPanel({
         draftKey={sessionId}
         queuedPreview={queuedMessage?.text ?? null}
         onCancelQueued={() => setQueued(null)}
+        sessionId={sessionId}
       />
     </div>
   );

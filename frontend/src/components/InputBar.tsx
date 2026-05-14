@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2 } from "lucide-react";
 
 // Per-provider accent — matches the chat badges + analytics legend.
 const PROVIDER_ACCENT: Record<string, string> = {
@@ -14,6 +14,7 @@ function providerAccent(p?: string | null): string {
   return (p && PROVIDER_ACCENT[p]) || "var(--cedar-glow)";
 }
 import type { UploadedFile } from "@/api/client";
+import { api } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
@@ -57,6 +58,9 @@ interface Props {
   /** Preview of the next message that will fire once the current turn ends. */
   queuedPreview?: string | null;
   onCancelQueued?: () => void;
+  /** Session id is needed so the "improve with AI" rewrite mirrors the
+   *  active session's provider/model. */
+  sessionId?: string | null;
 }
 
 export default function InputBar({
@@ -79,6 +83,7 @@ export default function InputBar({
   draftKey,
   queuedPreview = null,
   onCancelQueued,
+  sessionId = null,
 }: Props) {
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -213,7 +218,39 @@ export default function InputBar({
     if (wrapperRef.current) wrapperRef.current.style.height = "";
   };
 
+  const [improving, setImproving] = useState(false);
+  const [improveErr, setImproveErr] = useState<string | null>(null);
+
+  const handleImprove = async () => {
+    const draft = value.trim();
+    if (!draft || improving || disabled) return;
+    setImproving(true);
+    setImproveErr(null);
+    try {
+      const { improved } = await api.improvePrompt(draft, sessionId || undefined);
+      if (improved && improved !== draft) {
+        setValue(improved);
+        // Pop focus back into the textarea so the user can edit further.
+        textareaRef.current?.focus();
+      }
+    } catch (e) {
+      setImproveErr(e instanceof Error ? e.message : String(e));
+      // Auto-clear so the inline error doesn't linger.
+      window.setTimeout(() => setImproveErr(null), 4000);
+    } finally {
+      setImproving(false);
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // Ctrl/Cmd + Enter = improve with AI instead of send. The improved
+    // text replaces the draft so the user can still review before
+    // sending.
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      void handleImprove();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
@@ -626,6 +663,29 @@ export default function InputBar({
                   <Paperclip size={15} />
                 </button>
               </>
+            )}
+            {/* Improve-with-AI: rewrites the draft via a cheap one-shot.
+                Also triggered by Ctrl/Cmd+Enter. Hidden when there's
+                nothing to improve. */}
+            {hasInput && (
+              <button
+                type="button"
+                onClick={handleImprove}
+                disabled={improving || disabled}
+                className="w-8 h-8 rounded-lg text-[var(--muted)] hover:text-[var(--cedar)] hover:bg-[var(--surface)] disabled:opacity-50 flex items-center justify-center transition-all"
+                title={
+                  improveErr
+                    ? `Improve failed: ${improveErr}`
+                    : "Improve prompt with AI (Ctrl/Cmd+Enter)"
+                }
+                aria-label="Improve prompt with AI"
+              >
+                {improving ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Sparkles size={15} className={improveErr ? "text-red-400" : ""} />
+                )}
+              </button>
             )}
             {isRunning && onStop ? (
               hasInput ? (

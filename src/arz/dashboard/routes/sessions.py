@@ -631,6 +631,65 @@ async def generate_title(session_id: str, request: Request) -> dict:
     return {"title": session.title}
 
 
+@router.post("/api/prompts/improve")
+async def improve_prompt(request: Request) -> dict:
+    """Rewrite a user draft into a sharper version of itself via a cheap
+    one-shot LLM call. Used by the chat composer's "Improve with AI"
+    button so the user can refine fuzzy asks before sending.
+
+    Body: { text: str, session_id?: str }
+    Returns: { improved: str, model: str }
+    """
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    draft = (body.get("text") or "").strip()
+    session_id = (body.get("session_id") or "").strip()
+    if not draft:
+        raise HTTPException(status_code=422, detail="text required")
+    if len(draft) > 4000:
+        raise HTTPException(status_code=422, detail="text too long (max 4000 chars)")
+
+    # Pull the session's provider/model as the fallback so the rewrite
+    # mirrors whatever model the user is talking to.
+    cfg = request.app.state.config
+    fallback_provider = cfg.provider.name
+    fallback_model = cfg.provider.model or ""
+    if session_id:
+        mgr: SessionManager = _get_manager(request)
+        s = mgr.get(session_id)
+        if s is not None:
+            fallback_provider = s.provider or fallback_provider
+            fallback_model = s.model or fallback_model
+
+    provider_name, model_name = await _pick_cheap_model(
+        fallback_provider=fallback_provider, fallback_model=fallback_model
+    )
+
+    prompt = (
+        "Rewrite the following message to be a sharper, more effective prompt for an "
+        "autonomous coding assistant. Preserve the user's intent and any specific "
+        "names / paths / numbers exactly. Make it concrete, action-oriented, and tight. "
+        "Reply with ONLY the rewritten prompt — no commentary, no preface, no quotes, "
+        "no markdown fences.\n\nORIGINAL:\n" + draft
+    )
+
+    try:
+        improved = await _generate_title_via_provider(provider_name, model_name, prompt)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"improve failed: {e}") from e
+
+    improved = (improved or "").strip().strip('"').strip("'").strip("`").strip()
+    if not improved:
+        raise HTTPException(status_code=500, detail="model returned empty rewrite")
+    # Hard-cap so a runaway response doesn't drown the composer.
+    if len(improved) > 6000:
+        improved = improved[:6000]
+    return {"improved": improved, "model": f"{provider_name}:{model_name}"}
+
+
 async def _pick_cheap_model(*, fallback_provider: str, fallback_model: str) -> tuple[str, str]:
     """Pick the cheapest LLM available for a tiny task (title gen, etc.).
 

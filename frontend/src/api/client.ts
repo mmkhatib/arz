@@ -886,6 +886,11 @@ export const api = {
       method: "POST",
     });
   },
+  improvePrompt: (text: string, sessionId?: string) =>
+    request<{ improved: string; model: string }>("/prompts/improve", {
+      method: "POST",
+      body: JSON.stringify({ text, session_id: sessionId || undefined }),
+    }),
   listApprovals: () =>
     request<{
       request_id: string;
