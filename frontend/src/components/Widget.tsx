@@ -20,7 +20,7 @@
 // dashboard" output just works. Agents can include their own <script
 // src="…cdn…"> tags for Chart.js / D3 / Alpine / etc.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ExternalLink, Code, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 
 const BOOTSTRAP = `
@@ -67,6 +67,78 @@ const BOOTSTRAP = `
 </script>
 `;
 
+/* HtmlSandbox — the bare iframe + bootstrap + auto-resize.
+ *
+ * Exported so anything that needs to render HTML safely (Widget chrome
+ * in chat, HtmlView in the Activity panel, future preview cards) lands
+ * on one component. Two height modes:
+ *
+ *   - default: auto-grow from the iframe's postMessage'd height, clamped
+ *     to [60, maxHeight]. Use this inline in chat.
+ *   - fill=true: ignore postMessage height and fill the parent. Use this
+ *     in a panel that already has its own height (FileViewer body).
+ */
+export function HtmlSandbox({
+  html,
+  id,
+  maxHeight = 800,
+  fill = false,
+  reloadKey = 0,
+  title,
+}: {
+  html: string;
+  id?: string;
+  maxHeight?: number;
+  fill?: boolean;
+  reloadKey?: number;
+  title?: string;
+}) {
+  const sandboxId = useMemo(() => id || `w_${Math.random().toString(36).slice(2, 10)}`, [id]);
+  const [height, setHeight] = useState(120);
+
+  const srcdoc = useMemo(() => {
+    const boot = BOOTSTRAP.replace("__ID__", sandboxId);
+    return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${html}</body></html>`;
+  }, [html, sandboxId, reloadKey]);
+
+  useEffect(() => {
+    if (fill) return; // fill mode ignores postMessage heights
+    const onMessage = (e: MessageEvent) => {
+      const d = e.data;
+      if (!d || typeof d !== "object") return;
+      if (d.__arzwidget !== true) return;
+      if (d.id !== sandboxId) return;
+      const h = Math.max(60, Math.min(maxHeight, Number(d.h) || 0));
+      setHeight(h);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [sandboxId, maxHeight, fill]);
+
+  return (
+    <iframe
+      key={reloadKey}
+      title={title || "arz html"}
+      // allow-scripts only — NO allow-same-origin, so the iframe runs at
+      // a unique opaque origin and can't read parent cookies / LS.
+      sandbox="allow-scripts allow-popups allow-forms"
+      srcDoc={srcdoc}
+      style={
+        fill
+          ? { width: "100%", height: "100%", border: "none", display: "block", background: "#1c1a17" }
+          : {
+              width: "100%",
+              height,
+              border: "none",
+              display: "block",
+              background: "#1c1a17",
+              transition: "height .12s",
+            }
+      }
+    />
+  );
+}
+
 interface WidgetProps {
   title?: string;
   html: string;
@@ -76,8 +148,9 @@ interface WidgetProps {
 
 export default function Widget({ title, html, id, maxHeight = 800 }: WidgetProps) {
   const widgetId = useMemo(() => id || `w_${Math.random().toString(36).slice(2, 10)}`, [id]);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [height, setHeight] = useState(120);
+  // maxHeight forwards into the embedded HtmlSandbox so callers can clamp
+  // a runaway widget from blowing out the chat row.
+  const _maxH = maxHeight;
   const [showSource, setShowSource] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -86,19 +159,6 @@ export default function Widget({ title, html, id, maxHeight = 800 }: WidgetProps
     const boot = BOOTSTRAP.replace("__ID__", widgetId);
     return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${html}</body></html>`;
   }, [html, widgetId, reloadKey]);
-
-  useEffect(() => {
-    const onMessage = (e: MessageEvent) => {
-      const d = e.data;
-      if (!d || typeof d !== "object") return;
-      if (d.__arzwidget !== true) return;
-      if (d.id !== widgetId) return;
-      const h = Math.max(60, Math.min(maxHeight, Number(d.h) || 0));
-      setHeight(h);
-    };
-    window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, [widgetId, maxHeight]);
 
   const openInNewTab = () => {
     const blob = new Blob([srcdoc], { type: "text/html" });
@@ -162,24 +222,12 @@ export default function Widget({ title, html, id, maxHeight = 800 }: WidgetProps
         </IconBtn>
       </div>
       {!collapsed && !showSource && (
-        <iframe
-          ref={iframeRef}
-          key={reloadKey}
-          title={title || "arz widget"}
-          // allow-scripts only — NO allow-same-origin, so the iframe runs
-          // at a unique opaque origin and can't read parent cookies / LS.
-          // allow-popups so window.open works for "view full screen" style
-          // links the agent may add.
-          sandbox="allow-scripts allow-popups allow-forms"
-          srcDoc={srcdoc}
-          style={{
-            width: "100%",
-            height,
-            border: "none",
-            display: "block",
-            background: "#1c1a17",
-            transition: "height .12s",
-          }}
+        <HtmlSandbox
+          html={html}
+          id={widgetId}
+          maxHeight={_maxH}
+          reloadKey={reloadKey}
+          title={title}
         />
       )}
       {!collapsed && showSource && (

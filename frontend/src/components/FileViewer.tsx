@@ -8,6 +8,7 @@ import { X, Copy, ChevronRight, ChevronDown, RefreshCw, Maximize2, Minimize2 } f
 import { api } from '@/api/client'
 import { highlight, langForPath } from '@/utils/hljs'
 import { CedarMarkdown } from './CedarMarkdown'
+import { HtmlSandbox } from './Widget'
 
 /* ── File type detection ── */
 type FileType = 'image' | 'csv' | 'json' | 'html' | 'markdown' | 'code' | 'binary'
@@ -404,21 +405,17 @@ function CsvView({ content, path }: { content: string; path: string }) {
   )
 }
 
-/* ── HTML sandboxed viewer ── */
-//
-// Allow scripts so animations / Chart.js / D3 demos actually run, but
-// drop allow-same-origin so the iframe lives at a unique opaque origin
-// and cannot read parent cookies / localStorage. allow-popups so links
-// the user clicks open normally; allow-forms for interactive widgets.
+/* ── HTML sandboxed viewer ──
+ *
+ * Mounts the same HtmlSandbox the chat-side Widget uses, in "fill" mode
+ * so it stretches to the panel's height instead of growing from
+ * postMessage. One iframe / one sandbox config / one Tailwind preload
+ * for both surfaces.
+ */
 function HtmlView({ content }: { content: string }) {
   return (
-    <div className="h-full border border-[var(--border)] overflow-hidden bg-white">
-      <iframe
-        srcDoc={content}
-        sandbox="allow-scripts allow-popups allow-forms"
-        className="w-full h-full border-none"
-        title="HTML Preview"
-      />
+    <div className="h-full overflow-hidden">
+      <HtmlSandbox html={content} fill title="HTML Preview" />
     </div>
   )
 }
