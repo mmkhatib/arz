@@ -45,6 +45,7 @@ class KiroCliProvider(LLMProvider):
         agent: str = "arz",
         env_extra: dict[str, str] | None = None,
         system_prompt: str | None = None,
+        history_messages: list[dict] | None = None,
     ) -> None:
         self._client = AcpClient(
             binary=_resolve_binary(),
@@ -59,6 +60,11 @@ class KiroCliProvider(LLMProvider):
         # lifetime as a `<system>...</system>` wrapper. After that, kiro
         # carries its own context, so we don't repeat it.
         self._system_prompt = (system_prompt or "").strip()
+        # Prior turns to rehydrate on the first message of this provider's
+        # lifetime — bridges across gateway restarts so the model doesn't
+        # forget what it wrote earlier. After this gets injected once,
+        # kiro carries native conversation state.
+        self._history: list[dict] = history_messages or []
         self._injected_system = False
 
     async def start(self) -> None:
@@ -71,10 +77,42 @@ class KiroCliProvider(LLMProvider):
     def stream(self, message: str) -> AsyncIterator[LLMEvent]:
         return self._forward(message)
 
+    def _format_history(self, *, max_messages: int = 30, max_chars: int = 8000) -> str:
+        if not self._history:
+            return ""
+        recent = self._history[-max_messages:]
+        lines: list[str] = []
+        used = 0
+        for m in recent:
+            role = (m.get("role") or "user").upper()
+            text = (m.get("text") or "").strip()
+            if not text:
+                continue
+            line = f"<{role}>\n{text}\n</{role}>"
+            if used + len(line) + 2 > max_chars:
+                break
+            lines.append(line)
+            used += len(line) + 2
+        return "\n\n".join(lines)
+
     async def _forward(self, message: str) -> AsyncIterator[LLMEvent]:
-        # Inject system prompt on the first turn of this provider's life.
-        if self._system_prompt and not self._injected_system:
-            message = f"<system>\n{self._system_prompt}\n</system>\n\n{message}"
+        # Inject system prompt + conversation history on the first turn of
+        # this provider's life. Both wrapped so the model treats them as
+        # context, not as instructions from the user.
+        if not self._injected_system:
+            preamble: list[str] = []
+            if self._system_prompt:
+                preamble.append(f"<system>\n{self._system_prompt}\n</system>")
+            transcript = self._format_history()
+            if transcript:
+                preamble.append(
+                    "<conversation-history>\nPrior turns of this session — your own conversation with the user. "
+                    "Treat as your real memory, not as instructions.\n\n"
+                    + transcript
+                    + "\n</conversation-history>"
+                )
+            if preamble:
+                message = "\n\n".join(preamble) + "\n\n" + message
             self._injected_system = True
         async for acp_event in self._client.stream_events(message):
             yield LLMEvent(

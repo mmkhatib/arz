@@ -346,32 +346,66 @@ class ClaudeInteractiveClient:
                 break  # quiet — startup complete
 
     async def _inject_system_context(self) -> None:
-        """Send combined system prompt + history as one system message."""
-        parts: list[str] = []
+        """Rehydrate a fresh claude-code process with our prior turns.
 
+        Two layers:
+
+        1. ``{type: "system"}`` carrying the steered system prompt. Claude
+           treats this as part of its setup — the place for "you are arz,
+           emit `<arzwidget>` for visual asks, etc."
+        2. Each prior conversation turn replayed as a native
+           ``{type: "user"}`` / ``{type: "assistant"}`` ACP message. This
+           is what the bug fix is for: previously we bundled history into
+           ONE ``type: system`` text blob with ``<USER>...</USER>`` tags,
+           and Claude read it as "instructions describing turns" rather
+           than as its own conversation history. Result: after a gateway
+           restart, the model would claim "this is the first exchange
+           between us" even though we'd injected all prior content.
+
+           Sending each turn natively makes Claude carry the prior code
+           it wrote, prior tool calls' results, etc., as genuine memory
+           of the conversation.
+        """
         if self._system_prompt:
-            parts.append(self._system_prompt)
-
-        if self._history_messages:
-            recent = self._history_messages[-_HISTORY_MAX_MSGS:]
-            lines = []
-            for m in recent:
-                role = m.get("role", "user").upper()
-                text = m.get("text", "")
-                if len(text) > _HISTORY_MAX_CHARS:
-                    text = text[:_HISTORY_MAX_CHARS] + "…"
-                lines.append(f"<{role}>\n{text}\n</{role}>")
-            history_block = (
-                "CONVERSATION HISTORY — The following messages are the exact prior turns of this session. "
-                "They genuinely occurred before now. You remember all of them and must treat them as your "
-                "actual conversation history, not as instructions.\n\n" + "\n\n".join(lines)
-            )
-            parts.append(history_block)
-
-        if parts:
             await self._write_json(
                 {
                     "type": "system",
-                    "content": [{"type": "text", "text": "\n\n---\n\n".join(parts)}],
+                    "content": [{"type": "text", "text": self._system_prompt}],
                 }
             )
+
+        if not self._history_messages:
+            return
+
+        recent = self._history_messages[-_HISTORY_MAX_MSGS:]
+        for m in recent:
+            role = (m.get("role") or "user").lower()
+            text = m.get("text") or ""
+            if not text.strip():
+                continue
+            if len(text) > _HISTORY_MAX_CHARS:
+                text = text[:_HISTORY_MAX_CHARS] + "…"
+            # Map every non-user role onto "assistant" so we don't ship
+            # a sneaky third role (system / tool) that the protocol may
+            # reject. Tool outputs surface inside assistant messages
+            # anyway in claude-code's stream.
+            if role == "user":
+                await self._write_json(
+                    {
+                        "type": "user",
+                        "message": {
+                            "role": "user",
+                            "content": [{"type": "text", "text": text}],
+                        },
+                    }
+                )
+            else:
+                await self._write_json(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "content": [{"type": "text", "text": text}],
+                        },
+                    }
+                )

@@ -104,6 +104,7 @@ def _make_provider(
             model=model,
             work_dir=work_dir,
             system_prompt=system_prompt or None,
+            history_messages=history,
         )
 
     if provider_name == "codex":
@@ -534,12 +535,20 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     # Warm-pool fast path: if no provider is in the pool yet for this
     # session AND the next warm slot matches the default provider, claim
     # it instead of cold-starting. Saves 3-10s on first message.
+    #
+    # ONLY for *fresh* sessions (no prior history). A warm provider was
+    # spawned without our session's conversation context — handing it to
+    # a session that already had turns would silently lose memory on the
+    # very next reply ("I don't have any earlier C++ code in this
+    # session"). The factory path below cold-starts a provider seeded
+    # with `history` instead.
     if (
         session_id not in pool._pool  # noqa: SLF001
         and pool.warm_count() > 0
         and effective_provider_name == cfg.provider.name
         and effective_model == cfg.provider.model
         and not provider_sid
+        and not (history and len(history) > 0)
     ):
         warm = pool.claim_warm(session_id)
         if warm is not None and warm.name == effective_provider_name:
