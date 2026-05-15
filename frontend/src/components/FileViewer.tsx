@@ -48,11 +48,27 @@ function CodeView({
   const scrollRef = useRef<HTMLPreElement>(null)
   const gutterRef = useRef<HTMLDivElement>(null)
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const [copied, setCopied] = useState(false)
 
   const syncScroll = () => {
     if (scrollRef.current && gutterRef.current) {
       gutterRef.current.scrollTop = scrollRef.current.scrollTop
     }
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(content)
+    } catch {
+      const el = document.createElement('textarea')
+      el.value = content
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+    }
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
   }
 
   const commentable = !!(sessionId && path)
@@ -69,6 +85,24 @@ function CodeView({
         ref={surfaceRef}
         className="relative flex h-full font-mono text-[12px] leading-[1.6] bg-[var(--bg)] overflow-hidden"
       >
+        {/* Floating Copy button — top-right of the surface so it doesn't
+            cover the first column of code. Visible always so the user
+            doesn't have to hover-hunt for it. */}
+        <button
+          onClick={copy}
+          title="Copy code"
+          className="absolute top-2 right-3 z-10 px-2 py-0.5 rounded font-mono text-[10px] uppercase tracking-wider border"
+          style={{
+            background: 'var(--cedar-dim)',
+            borderColor: 'var(--cedar-line)',
+            color: copied ? 'var(--cedar-glow)' : 'var(--muted)',
+            transition: 'color .12s',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--cedar-glow)' }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = copied ? 'var(--cedar-glow)' : 'var(--muted)' }}
+        >
+          {copied ? 'Copied ✓' : 'Copy'}
+        </button>
         {/* Line numbers */}
         <div
           ref={gutterRef}

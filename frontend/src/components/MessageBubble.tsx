@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -154,16 +154,30 @@ function fmtElapsed(ms: number): string {
   return `${s}s`;
 }
 
-function CopyButton({ text }: { text: string }) {
+/* Copy-to-clipboard helper.
+ *
+ * Two modes: `text` (we already have the raw string) or `targetRef`
+ * (read textContent off the rendered DOM, used when the body is a tree
+ * of rehype-highlight spans rather than a string).
+ */
+function CopyButton({
+  text,
+  targetRef,
+}: {
+  text?: string;
+  targetRef?: React.RefObject<HTMLElement | null>;
+}) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
+    const payload = text ?? targetRef?.current?.textContent ?? "";
+    if (!payload) return;
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(payload);
     } catch {
       // fallback for non-HTTPS
       const el = document.createElement("textarea");
-      el.value = text;
+      el.value = payload;
       document.body.appendChild(el);
       el.select();
       document.execCommand("copy");
@@ -176,9 +190,24 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={copy}
-      className="absolute top-2 right-2 opacity-0 group-hover/code:opacity-100 transition-opacity px-2 py-0.5 rounded text-[11px] bg-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--surface)]"
+      title="Copy code"
+      style={{
+        background: "transparent",
+        border: "1px solid var(--cedar-line)",
+        borderRadius: 5,
+        padding: "2px 8px",
+        cursor: "pointer",
+        color: copied ? "var(--cedar-glow)" : "var(--muted)",
+        fontSize: 10,
+        fontFamily: "var(--fm)",
+        textTransform: "uppercase",
+        letterSpacing: ".06em",
+        transition: "color .12s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--cedar-glow)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = copied ? "var(--cedar-glow)" : "var(--muted)"; }}
     >
-      {copied ? "Copied!" : "Copy"}
+      {copied ? "Copied ✓" : "Copy"}
     </button>
   );
 }
@@ -370,28 +399,61 @@ function WrittenFilePreviewCard({
 
 function CodeBlock({ children, className }: { children?: React.ReactNode; className?: string }) {
   const lang = className?.match(/language-(\w+)/)?.[1] ?? "";
-  const code = String(children ?? "").replace(/\n$/, "");
+  const codeRef = useRef<HTMLElement | null>(null);
 
   if (lang === "mermaid") {
+    // Mermaid renders to SVG; preserve old path.
+    const code = typeof children === "string" ? children : "";
     return <MermaidBlock code={code} />;
   }
 
   return (
-    <div className="relative group/code my-2">
-      {lang && (
-        <div className="flex items-center justify-between bg-[var(--surface)] border border-[var(--border)] rounded-t-lg px-3 py-1 border-b-0">
-          <span className="text-[11px] text-[var(--muted)] font-mono">{lang}</span>
-        </div>
-      )}
-      <code
-        className={[
-          "block bg-[var(--bg)] border border-[var(--border)] px-3 py-2 text-[13px] font-mono overflow-x-auto whitespace-pre",
-          lang ? "rounded-b-lg" : "rounded-lg",
-        ].join(" ")}
+    <div
+      style={{
+        margin: "8px 0",
+        border: "1px solid var(--cedar-line)",
+        borderRadius: 10,
+        overflow: "hidden",
+        background: "var(--bg)",
+      }}
+    >
+      {/* Header chrome — matches Widget / WrittenFilePreviewCard so
+          inline ```fenced``` blocks read as part of the same family
+          of renderer cards. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "6px 10px",
+          background: "var(--cedar-dim)",
+          borderBottom: "1px solid var(--cedar-line)",
+          fontFamily: "var(--fm)",
+          fontSize: 10,
+          color: "var(--cedar-glow)",
+          textTransform: "uppercase",
+          letterSpacing: ".08em",
+        }}
       >
-        {code}
-      </code>
-      <CopyButton text={code} />
+        <span>{lang || "code"}</span>
+        <span style={{ flex: 1 }} />
+        <CopyButton targetRef={codeRef} />
+      </div>
+      <pre
+        style={{
+          margin: 0,
+          padding: "10px 14px",
+          background: "var(--bg)",
+          color: "var(--text)",
+          fontFamily: "var(--fm)",
+          fontSize: 12.5,
+          lineHeight: 1.55,
+          overflowX: "auto",
+          whiteSpace: "pre",
+        }}
+      >
+        <code ref={codeRef} className={className}>{children}</code>
+      </pre>
     </div>
   );
 }
