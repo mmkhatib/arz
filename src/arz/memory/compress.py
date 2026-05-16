@@ -30,8 +30,11 @@ log = structlog.get_logger(__name__)
 _COMPRESSION_THRESHOLD_CHARS = 32_000
 
 # How many head + tail messages we keep verbatim around the compressed
-# middle. Mirrors MeshClaw's _HEAD_TAIL_MESSAGES = 10.
-_HEAD_TAIL_MESSAGES = 10
+# middle. MeshClaw blueprint specifies 5 — tightened from our initial 10
+# so the compressed middle absorbs more turns and the resulting prefix
+# stays smaller. Adjust if you find the head context isn't enough to
+# reconstruct what the thread was about.
+_HEAD_TAIL_MESSAGES = 5
 
 # Maximum chars per individual message body when feeding the summariser.
 _PER_MESSAGE_CAP = 1500

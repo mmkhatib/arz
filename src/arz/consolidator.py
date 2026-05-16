@@ -722,6 +722,30 @@ class Consolidator:
             if k.strip():
                 sem.contradict(k.strip())
 
+        # Episodic memory — vector-retrievable conversation fragments.
+        # The LLM emits items it thinks are worth recalling later when a
+        # semantically-similar question lands.
+        episodic_added = 0
+        try:
+            from arz.memory import episodic as ep
+
+            for item in payload.get("episodic") or []:
+                if not isinstance(item, dict):
+                    continue
+                text = (item.get("text") or "").strip()
+                if not text:
+                    continue
+                try:
+                    importance = float(item.get("importance") or 0.5)
+                except (ValueError, TypeError):
+                    importance = 0.5
+                tags_raw = item.get("tags") or []
+                tags = [str(t) for t in tags_raw if isinstance(t, str)]
+                if ep.add(text, importance=importance, tags=tags):
+                    episodic_added += 1
+        except Exception:
+            log.exception("episodic upsert failed")
+
         # History entry only on the idle / full path. Threshold path
         # holds off so we don't spam the daily log with mid-session
         # snapshots.
@@ -757,6 +781,7 @@ class Consolidator:
                 "projects": len(projs),
                 "lessons": lessons_added,
                 "semantic": semantic_added,
+                "episodic": episodic_added,
                 "forgotten": len(forget_keys),
                 "summarised": bool(summary),
                 "history_written": bool(force_history and summary),

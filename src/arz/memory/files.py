@@ -15,6 +15,21 @@ from datetime import date
 from pathlib import Path
 
 _DIR = Path.home() / ".arz" / "memory"
+
+
+def _resolve_dir() -> Path:
+    """Workspace-aware base dir. Defaults to legacy ~/.arz/memory; named
+    workspaces land under ~/.arz/workspace/<name>/memory/. Falls back to
+    the legacy default if the workspace shim isn't importable (e.g.
+    early-startup paths)."""
+    try:
+        from arz.memory.workspace import memory_dir as _ws_dir
+
+        return _ws_dir()
+    except Exception:
+        return _DIR
+
+
 _PREF_CAP = 1000
 _PROJ_CAP = 2000
 _MEM_CAP = 2000
@@ -64,11 +79,14 @@ def _ensure_defaults() -> None:
 class MemoryFiles:
     def __init__(self) -> None:
         _ensure_defaults()
-        self._dir = _DIR
 
     @property
     def base_dir(self) -> Path:
-        return self._dir
+        # Re-resolve every read so a runtime workspace switch lands
+        # without rebuilding the singleton.
+        d = _resolve_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
 
     def read(self, name: str) -> str:
         p = self._safe_path(name)
@@ -82,13 +100,13 @@ class MemoryFiles:
         p.write_text(content, encoding="utf-8")
 
     def list_history(self) -> list[str]:
-        hd = self._dir / "history"
+        hd = self.base_dir / "history"
         if not hd.exists():
             return []
         return sorted(p.name for p in hd.glob("*.md"))
 
     def append_history(self, entry: str) -> Path:
-        hd = self._dir / "history"
+        hd = self.base_dir / "history"
         hd.mkdir(parents=True, exist_ok=True)
         today = hd / f"{date.today().isoformat()}.md"
         prev = today.read_text(encoding="utf-8") if today.exists() else ""
@@ -118,13 +136,13 @@ class MemoryFiles:
 
     def _safe_path(self, name: str) -> Path:
         if name in ("preferences.md", "projects.md", "memory.md"):
-            return self._dir / name
+            return self.base_dir / name
         if (
             name.startswith("history/")
             and name.endswith(".md")
             and "/" not in name[len("history/") :]
         ):
-            return self._dir / name
+            return self.base_dir / name
         raise ValueError(f"refusing to access memory file {name!r}")
 
 

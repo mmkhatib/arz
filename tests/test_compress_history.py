@@ -44,16 +44,18 @@ async def test_long_history_compresses_middle():
         return summary_text
 
     out = await compress_history(msgs, runner=fake_runner)
-    # head + 1 synthetic + tail = 21
-    assert len(out) == 10 + 1 + 10
-    # Synthetic message in the middle
-    synth = out[10]
+    # head + 1 synthetic + tail (Phase 4 tightened head_tail 10 → 5).
+    from arz.memory.compress import _HEAD_TAIL_MESSAGES as HT
+
+    assert len(out) == HT + 1 + HT
+    # Synthetic sits between head and tail.
+    synth = out[HT]
     assert synth["role"] == "system"
     assert "COMPRESSED MIDDLE" in synth["text"]
     assert summary_text in synth["text"]
     # Head + tail kept exact
-    assert out[:10] == msgs[:10]
-    assert out[-10:] == msgs[-10:]
+    assert out[:HT] == msgs[:HT]
+    assert out[-HT:] == msgs[-HT:]
     # Runner called exactly once with the segment
     assert len(calls) == 1
 

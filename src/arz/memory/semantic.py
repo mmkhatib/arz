@@ -41,15 +41,16 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _DB_PATH = Path.home() / ".arz" / "memory.db"
-_DEFAULT_CONFIDENCE = 0.7
+_DEFAULT_CONFIDENCE = 0.8
 _REINFORCE_STEP = 0.1
 _CONTRADICTION_STEP = 0.3
 
-# Min confidence required to write. Raised from 0.0 to keep "low-quality
-# guesses" out of the long-term store; the 0.7 default is fine for most
-# inline `<semantic>` writes, while consolidator-generated facts should
-# pass an explicit confidence in the JSON.
-_MIN_WRITE_CONFIDENCE = 0.7
+# Min confidence required to write. MeshClaw blueprint specifies 0.8 —
+# tightened from our initial 0.7 so noisier LLM extractions don't bleed
+# into the long-term store. Inline `<semantic>` writes still default to
+# 0.7 via _DEFAULT_CONFIDENCE; explicit-confidence writes from the
+# consolidator must pass ≥ 0.8 to land.
+_MIN_WRITE_CONFIDENCE = 0.8
 
 # Conflict-resolution: when a key already exists, only allow an update if
 # the incoming confidence is ≥ the stored value, OR the existing row is
@@ -162,14 +163,22 @@ def _connect() -> sqlite3.Connection:
         """CREATE TABLE IF NOT EXISTS semantic_memory (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL,
-            confidence REAL NOT NULL DEFAULT 0.7,
+            confidence REAL NOT NULL DEFAULT 0.8,
             source TEXT,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL,
-            hit_count INTEGER NOT NULL DEFAULT 0
+            hit_count INTEGER NOT NULL DEFAULT 0,
+            is_deleted INTEGER NOT NULL DEFAULT 0
         )"""
     )
+    # Soft-delete migration for stores created before is_deleted was added.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(semantic_memory)").fetchall()}
+    if "is_deleted" not in cols:
+        conn.execute("ALTER TABLE semantic_memory ADD COLUMN is_deleted INTEGER NOT NULL DEFAULT 0")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_conf ON semantic_memory(confidence DESC)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semantic_alive ON semantic_memory(is_deleted, confidence DESC)"
+    )
     # Audit log for every write rejection. Lets us see attack patterns
     # over time (one row per blocked write) without lighting up the
     # gateway logs with noise.
@@ -344,19 +353,28 @@ def upsert(
 
 
 def contradict(key: str) -> None:
-    """Mark a fact as contradicted — drops confidence sharply, removes
-    when it falls to zero. Cheaper than a full delete so the consolidator
-    can express "I'm less sure of this now"."""
+    """Drop confidence sharply; soft-delete (is_deleted=1) at zero so the
+    row stays auditable but no longer surfaces in reads.
+
+    Soft-delete instead of hard-delete because the audit log + consolidator
+    state can reference the key — and a future consolidator pass might
+    legitimately re-confirm it (resurrection should keep history).
+    """
     key = (key or "").strip().lower()
     if not key:
         return
     with _connect() as conn:
-        row = conn.execute("SELECT confidence FROM semantic_memory WHERE key=?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT confidence FROM semantic_memory WHERE key=? AND is_deleted = 0", (key,)
+        ).fetchone()
         if row is None:
             return
         new_conf = max(0.0, float(row[0]) - _CONTRADICTION_STEP)
         if new_conf <= 0.0:
-            conn.execute("DELETE FROM semantic_memory WHERE key=?", (key,))
+            conn.execute(
+                "UPDATE semantic_memory SET is_deleted=1, confidence=0, updated_at=? WHERE key=?",
+                (time.time(), key),
+            )
         else:
             conn.execute(
                 "UPDATE semantic_memory SET confidence=?, updated_at=? WHERE key=?",
@@ -365,12 +383,29 @@ def contradict(key: str) -> None:
 
 
 def delete(key: str) -> bool:
+    """Soft-delete: flips ``is_deleted = 1``. The row stays for audit
+    purposes; reads filter it out. Returns True if a live row was hit."""
     key = (key or "").strip().lower()
     if not key:
         return False
     with _connect() as conn:
-        cur = conn.execute("DELETE FROM semantic_memory WHERE key=?", (key,))
+        cur = conn.execute(
+            "UPDATE semantic_memory SET is_deleted=1, updated_at=? WHERE key=? AND is_deleted = 0",
+            (time.time(), key),
+        )
         return cur.rowcount > 0
+
+
+def purge_deleted(*, older_than_days: int = 90) -> int:
+    """Hard-remove tombstones older than N days. Cheap maintenance call
+    that the consolidator can fire on its idle pass."""
+    cutoff = time.time() - older_than_days * 86400
+    with _connect() as conn:
+        cur = conn.execute(
+            "DELETE FROM semantic_memory WHERE is_deleted = 1 AND updated_at < ?",
+            (cutoff,),
+        )
+        return cur.rowcount
 
 
 def get(key: str) -> Fact | None:
@@ -380,7 +415,7 @@ def get(key: str) -> Fact | None:
     with _connect() as conn:
         row = conn.execute(
             "SELECT key, value, confidence, source, created_at, updated_at, hit_count "
-            "FROM semantic_memory WHERE key=?",
+            "FROM semantic_memory WHERE key=? AND is_deleted = 0",
             (key,),
         ).fetchone()
     return _row_to_fact(row) if row else None
@@ -391,7 +426,8 @@ def top(n: int = 10, min_confidence: float = 0.4) -> list[Fact]:
     with _connect() as conn:
         rows = conn.execute(
             "SELECT key, value, confidence, source, created_at, updated_at, hit_count "
-            "FROM semantic_memory WHERE confidence >= ? ORDER BY confidence DESC, updated_at DESC LIMIT ?",
+            "FROM semantic_memory WHERE is_deleted = 0 AND confidence >= ? "
+            "ORDER BY confidence DESC, updated_at DESC LIMIT ?",
             (float(min_confidence), int(n)),
         ).fetchall()
     return [_row_to_fact(r) for r in rows]
@@ -403,23 +439,16 @@ def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
     Bumps hit_count for each fact surfaced so confidence reflects "this
     actually got used", not just "we wrote it down once".
     """
-    facts = top(n=20, min_confidence=0.4)
+    facts = top(n=40, min_confidence=0.4)
     if not facts:
         return ""
-    # Cheap relevance filter when query present: keep facts whose key OR
-    # value shares any 4+ char token with the query. Without query, take
-    # them in confidence order.
+    # Hybrid score (MeshClaw blueprint): 0.6 * cosine + 0.4 * keyword_overlap.
+    # Without a vector embedder we fall back to keyword-only ranking so the
+    # hash-embedder default still produces sensible results. Vector-on
+    # callers get the full hybrid blend.
     if query.strip():
-        q_tokens = {t for t in _tokens(query) if len(t) >= 4}
-        if q_tokens:
-            scored = []
-            for f in facts:
-                hit = len(q_tokens & (_tokens(f.key) | _tokens(f.value)))
-                # Always keep high-confidence facts even without a query hit.
-                if hit > 0 or f.confidence >= 0.85:
-                    scored.append((hit, f))
-            scored.sort(key=lambda p: (p[0], p[1].confidence), reverse=True)
-            facts = [f for _, f in scored]
+        scored = _hybrid_score(query, facts)
+        facts = [f for _, f in scored]
     out: list[str] = []
     used = 0
     surfaced_keys: list[str] = []
@@ -464,6 +493,64 @@ _TOKEN_RE = __import__("re").compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 
 def _tokens(s: str) -> set[str]:
     return {t.lower() for t in _TOKEN_RE.findall(s or "")}
+
+
+def _keyword_score(query_tokens: set[str], fact: Fact) -> float:
+    """Token-overlap score, weighted so a key match beats a value match.
+
+    Mirrors the MeshClaw blueprint's `(key_overlap * 3 + value_overlap) / 10`.
+    Returns a float in [0, 1].
+    """
+    if not query_tokens:
+        return 0.0
+    key_hits = len(query_tokens & _tokens(fact.key)) * 3
+    val_hits = len(query_tokens & _tokens(fact.value))
+    raw = (key_hits + val_hits) / 10.0
+    return min(1.0, raw)
+
+
+def _cosine_score(query: str, fact: Fact) -> float:
+    """Vector cosine similarity via the shared VectorStore embedder, when
+    one is wired. Falls back to 0 when not — caller should treat absence
+    as "keyword-only ranking", not as "irrelevant".
+    """
+    try:
+        from arz.memory.context import _vector_store
+
+        store = _vector_store(None)
+        if store is None or not hasattr(store, "_embedder"):
+            return 0.0
+        emb = store._embedder  # noqa: SLF001
+        if not hasattr(emb, "embed"):
+            return 0.0
+        q_vec = emb.embed(query)
+        f_vec = emb.embed(f"{fact.key} {fact.value}")
+        # Cosine similarity. Both vectors expected unit-norm-ish; we
+        # don't normalise here because the hash embedder already does.
+        dot = sum(a * b for a, b in zip(q_vec, f_vec, strict=False))
+        return max(0.0, min(1.0, dot))
+    except Exception:
+        return 0.0
+
+
+def _hybrid_score(query: str, facts: list[Fact]) -> list[tuple[float, Fact]]:
+    """Score every fact against the query with the 0.6/0.4 hybrid blend.
+
+    High-confidence facts (≥ 0.95) skip the relevance gate so canonical
+    things ("repo.default_branch") always make it into the prefix even
+    when the user is asking about something unrelated.
+    """
+    q_tokens = {t for t in _tokens(query) if len(t) >= 3}
+    out: list[tuple[float, Fact]] = []
+    for f in facts:
+        kw = _keyword_score(q_tokens, f)
+        cos = _cosine_score(query, f)
+        score = 0.6 * cos + 0.4 * kw
+        # Force-include the high-confidence rocks regardless of score.
+        if score > 0 or f.confidence >= 0.95:
+            out.append((score, f))
+    out.sort(key=lambda p: (p[0], p[1].confidence), reverse=True)
+    return out
 
 
 def recent_events(limit: int = 100) -> list[dict]:

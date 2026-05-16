@@ -104,7 +104,21 @@ def build_prefix(
     except Exception:
         log.exception("skills index render failed")
 
-    # 5. Top-K relevance hits (FTS + vector). Cheap when index is warm.
+    # 5. Episodic memory — vector-retrieved past conversation fragments
+    # against the user message. Length-aware threshold (0.55 short / 0.42
+    # long) keeps long entries from getting filtered out by embedding
+    # dilution. Cheap when the embedder is warm.
+    if user_message and user_message.strip():
+        try:
+            from arz.memory.episodic import render_for_prompt as episodic_render
+
+            block = episodic_render(user_message, k=5, cap_chars=3000)
+            if block:
+                parts.append(_cite("episodic-memory", "~/.arz/memory.db", block))
+        except Exception:
+            log.exception("episodic render failed")
+
+    # 6. Top-K relevance hits (FTS + vector). Cheap when index is warm.
     # Auto-fires against the user message — no `<recall>` tag needed.
     if enable_recall:
         try:

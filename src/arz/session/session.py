@@ -25,6 +25,13 @@ class Message:
     # whichever entry is currently displayed.
     versions: list[str] | None = None
     version_index: int = 0
+    # Provenance (MeshClaw blueprint §2.1) — captures WHERE this turn came
+    # from so downstream memory operations can cite "you asked this in
+    # #engineering on 2026-05-13" without rebuilding the lineage. Optional
+    # because most non-Slack surfaces don't have a meaningful thread / user.
+    source_user: str | None = None
+    source_thread: str | None = None
+    source_surface: str | None = None  # "dashboard" | "slack" | "cli" | etc.
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -43,6 +50,12 @@ class Message:
         if self.versions:
             d["versions"] = self.versions
             d["version_index"] = self.version_index
+        if self.source_user:
+            d["source_user"] = self.source_user
+        if self.source_thread:
+            d["source_thread"] = self.source_thread
+        if self.source_surface:
+            d["source_surface"] = self.source_surface
         return d
 
     @classmethod
@@ -57,6 +70,9 @@ class Message:
             tool_calls=d.get("tool_calls"),
             versions=d.get("versions"),
             version_index=d.get("version_index", 0),
+            source_user=d.get("source_user"),
+            source_thread=d.get("source_thread"),
+            source_surface=d.get("source_surface"),
         )
 
 

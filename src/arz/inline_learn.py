@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # Tags we recognise. Body can include newlines. Attributes are simple
 # key="value" pairs separated by whitespace.
 _TAG_RE = re.compile(
-    r"<(?P<tag>learn|memory|note|recall|todo|semantic|forget)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
+    r"<(?P<tag>learn|memory|note|recall|todo|semantic|forget|episodic)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
     r"(?P<body>.*?)"
     r"</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
@@ -41,7 +41,7 @@ _VALID_LEARN_CATEGORIES = {"preference", "tool", "knowledge"}
 
 @dataclass
 class Extracted:
-    kind: Literal["learn", "memory", "note", "recall", "todo", "semantic", "forget"]
+    kind: Literal["learn", "memory", "note", "recall", "todo", "semantic", "forget", "episodic"]
     body: str
     attrs: dict[str, str]
 
@@ -106,6 +106,7 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
         "todo": 0,
         "semantic": 0,
         "forget": 0,
+        "episodic": 0,
         "skipped": 0,
     }
     if not extractions:
@@ -189,6 +190,23 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
                     # Rejected write already lands in the audit log
                     # (memory_events) — bump the skipped counter so the
                     # turn report shows the agent tried.
+                    counts["skipped"] += 1
+            elif ex.kind == "episodic":
+                # <episodic importance="0.7" tags="auth,refactor">…fragment…</episodic>
+                # Stored alongside its embedding for vector recall on
+                # future turns when the user message is semantically
+                # similar.
+                from arz.memory import episodic
+
+                try:
+                    importance = float(ex.attrs.get("importance") or 0.5)
+                except ValueError:
+                    importance = 0.5
+                tags_raw = (ex.attrs.get("tags") or "").strip()
+                tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+                if episodic.add(ex.body, importance=importance, tags=tags):
+                    counts["episodic"] += 1
+                else:
                     counts["skipped"] += 1
             elif ex.kind == "forget":
                 # <forget key="prod.db.host">contradicted at 14:32</forget>

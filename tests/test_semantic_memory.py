@@ -24,7 +24,9 @@ def test_upsert_creates_fact(isolated_semantic):
     f = sem.upsert("prod.db.host", "db-1.internal:5432", source="s1")
     assert f.key == "prod.db.host"
     assert f.value == "db-1.internal:5432"
-    assert 0.65 < f.confidence < 0.75
+    # Phase 4: default confidence raised 0.7 → 0.8 to match the
+    # blueprint's _MIN_WRITE_CONFIDENCE.
+    assert f.confidence == pytest.approx(0.8, abs=0.01)
     assert f.source == "s1"
 
 
@@ -53,15 +55,16 @@ def test_contradict_drops_confidence(isolated_semantic):
     sem.contradict("prod.host")
     got = sem.get("prod.host")
     assert got is not None
-    assert got.confidence == pytest.approx(0.4, abs=0.01)
+    # 0.8 default - 0.3 contradiction = 0.5
+    assert got.confidence == pytest.approx(0.5, abs=0.01)
 
 
 def test_contradict_deletes_at_zero(isolated_semantic):
     sem = isolated_semantic
-    sem.upsert("prod.host", "db-1")
-    sem.contradict("prod.host")
-    sem.contradict("prod.host")
-    sem.contradict("prod.host")
+    sem.upsert("prod.host", "db-1")  # 0.8
+    sem.contradict("prod.host")  # 0.5
+    sem.contradict("prod.host")  # 0.2
+    sem.contradict("prod.host")  # 0 → soft-delete
     assert sem.get("prod.host") is None
 
 
@@ -89,9 +92,10 @@ def test_top_orders_by_confidence(isolated_semantic):
 
 def test_top_filters_by_min_confidence(isolated_semantic):
     sem = isolated_semantic
-    sem.upsert("project.low", "x")
-    sem.contradict("project.low")  # 0.4
-    sem.upsert("project.high", "y")  # 0.7
+    sem.upsert("project.low", "x")  # 0.8
+    sem.contradict("project.low")  # 0.5
+    sem.contradict("project.low")  # 0.2
+    sem.upsert("project.high", "y")  # 0.8
     top = sem.top(n=10, min_confidence=0.5)
     assert [f.key for f in top] == ["project.high"]
 
@@ -144,7 +148,7 @@ def test_stats_counts_facts(isolated_semantic):
     sem.upsert("project.b", "2")
     s = sem.stats()
     assert s["count"] == 2
-    assert s["avg_confidence"] == pytest.approx(0.7, abs=0.01)
+    assert s["avg_confidence"] == pytest.approx(0.8, abs=0.01)
 
 
 def test_render_bumps_hit_count(isolated_semantic):
@@ -266,9 +270,11 @@ def test_stale_overwrite_rejected_when_fresh(isolated_semantic):
     from arz.memory.semantic import WriteRejected
 
     sem = isolated_semantic
-    sem.upsert("project.x", "v1", confidence=0.9)
+    sem.upsert("project.x", "v1", confidence=0.95)
+    # Phase 4: incoming 0.85 is above min-write (0.8) but below stored
+    # 0.95, so the stale-overwrite gate fires.
     with pytest.raises(WriteRejected) as excinfo:
-        sem.upsert("project.x", "v2", confidence=0.7)
+        sem.upsert("project.x", "v2", confidence=0.85)
     assert excinfo.value.code == "stale_overwrite"
 
 
