@@ -300,15 +300,27 @@ def restore(
 def eval_cmd(
     scenarios: Annotated[str, typer.Option(help="Comma-separated scenario IDs or 'all'")] = "all",
     config: Annotated[Path | None, typer.Option("--config", "-c")] = None,
+    cross_provider: Annotated[
+        bool,
+        typer.Option(
+            "--cross-provider",
+            help="Run every scenario against every installed provider (claude-code, kiro-cli, codex, gemini, ollama).",
+        ),
+    ] = False,
 ) -> None:
-    """Run the memory eval harness against the configured provider."""
+    """Run the memory eval harness against the configured provider.
+
+    Use ``--cross-provider`` to fan out across every installed CLI on the
+    box. Memory-pipeline scenarios (memory-write-recall,
+    memory-restart-recall, memory-forget) are designed for that mode.
+    """
     from arz.eval import run_eval
 
     cfg = load_config(config)
     chosen = (
         None if scenarios.strip().lower() == "all" else [s.strip() for s in scenarios.split(",")]
     )
-    asyncio.run(run_eval(cfg, scenarios=chosen))
+    asyncio.run(run_eval(cfg, scenarios=chosen, cross_provider=cross_provider))
 
 
 if __name__ == "__main__":
