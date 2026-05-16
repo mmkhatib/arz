@@ -521,10 +521,11 @@ def _cosine_score(query: str, fact: Fact) -> float:
         if store is None or not hasattr(store, "_embedder"):
             return 0.0
         emb = store._embedder  # noqa: SLF001
-        if not hasattr(emb, "embed"):
+        fn = getattr(emb, "encode", None) or getattr(emb, "embed", None)
+        if fn is None:
             return 0.0
-        q_vec = emb.embed(query)
-        f_vec = emb.embed(f"{fact.key} {fact.value}")
+        q_vec = fn(query)
+        f_vec = fn(f"{fact.key} {fact.value}")
         # Cosine similarity. Both vectors expected unit-norm-ish; we
         # don't normalise here because the hash embedder already does.
         dot = sum(a * b for a, b in zip(q_vec, f_vec, strict=False))

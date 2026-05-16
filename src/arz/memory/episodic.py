@@ -100,10 +100,18 @@ def _embed(text: str) -> list[float] | None:
     emb = _embedder()
     if emb is None:
         return None
+    # Embedder protocol method is `encode`. Older code paths use `embed`;
+    # try both so a future swap doesn't silently break.
+    fn = getattr(emb, "encode", None) or getattr(emb, "embed", None)
+    if fn is None:
+        return None
     try:
-        return list(emb.embed(text))
-    except Exception:
-        log.warning("episodic embed failed")
+        return list(fn(text))
+    except Exception as e:
+        log.warning(
+            "episodic embed failed",
+            extra={"err": str(e), "embedder": type(emb).__name__},
+        )
         return None
 
 
