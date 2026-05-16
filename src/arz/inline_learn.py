@@ -64,7 +64,9 @@ def parse(text: str) -> tuple[str, list[Extracted]]:
         kind = m.group("tag").lower()
         body = (m.group("body") or "").strip()
         attrs = _attrs(m.group("attrs"))
-        if body:
+        # `<recall query="…"/>` is the attr-only shorthand for a search.
+        # Other tags require body content to mean anything.
+        if body or (kind == "recall" and attrs.get("query")):
             extracted.append(Extracted(kind=kind, body=body, attrs=attrs))  # type: ignore[arg-type]
         return ""
 

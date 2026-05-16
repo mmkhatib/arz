@@ -185,166 +185,216 @@ async def _run_turn(
     saved_assistant = False
     final_status = "complete"
     final_error: str | None = None
+
+    # Same-turn recall loop. When the model emits `<recall>q</recall>` mid-
+    # reply we drain the queue, run the search, and feed `<recall_result>`
+    # back as a continuation message in the SAME assistant bubble. The cap
+    # prevents runaway loops; 3 is enough for "search → reason → search
+    # again → answer" without letting a confused model thrash.
+    _RECALL_CONTINUATION_CAP = 3
+    recall_iterations = 0
+    segment_start = 0  # offset into full_reply for per-segment tag apply
+    current_message = augmented_message
+    final_event = None  # the last EVENT_COMPLETE, for usage/stop_reason
     try:
-        async for event in provider.stream(augmented_message):
-            if event.kind == EVENT_TEXT_CHUNK and event.text:
-                state.full_reply += event.text
-                await emit(sse_chunk(event.text))
+        while True:
+            inner_complete = False
+            async for event in provider.stream(current_message):
+                if event.kind == EVENT_TEXT_CHUNK and event.text:
+                    state.full_reply += event.text
+                    await emit(sse_chunk(event.text))
 
-            elif event.kind == EVENT_TOOL_RESULT:
-                await emit(
-                    sse_tool_result(
-                        tool_call_id=event.tool_call_id or "",
-                        content=event.tool_output or "",
-                    )
-                )
-
-            elif event.kind == EVENT_TOOL_CALL:
-                tool_name = event.text or ""
-                tool_input_str = str(event.tool_input or "")
-                if tool_name:
-                    state.turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
-                await emit(
-                    sse_tool_call(
-                        tool_name=tool_name,
-                        tool_input=tool_input_str,
-                        request_id=event.request_id or "",
-                    )
-                )
-
-            elif event.kind == EVENT_PERMISSION_REQUEST:
-                request_id = str(event.request_id or "")
-                if request_id:
-                    mode = (session_modes or {}).get(session_id, "normal")
-                    tool_name = str(event.text or "")
-                    hooks = get_hook_manager()
-                    raw_input = str(event.tool_input or "")
-                    if tool_name == "Bash":
-                        rule = hooks.evaluate_command(raw_input)
-                        if rule and rule.severity == "block":
-                            await provider.reject_tool(request_id)
-                            await emit(sse_chunk(f"\n⚠️ blocked: {rule.reason}\n"))
-                            continue
-                    if (
-                        mode in ("trust", "yolo")
-                        or (yolo_sessions is not None and session_id in yolo_sessions)
-                        or mode == "trust_reads"
-                        and tool_name in READ_ONLY_TOOLS
-                        or hooks.auto_approves(tool_name)
-                    ):
-                        await provider.approve_tool(request_id)
-                    elif pending_approvals is not None:
-                        loop = asyncio.get_event_loop()
-                        fut: asyncio.Future = loop.create_future()
-                        pending_approvals[request_id] = fut
-                        if pending_approval_meta is not None:
-                            pending_approval_meta[request_id] = {
-                                "request_id": request_id,
-                                "session_id": session_id,
-                                "tool_name": tool_name,
-                                "tool_input": raw_input,
-                                "title": event.title or event.text or "",
-                                "created_at": _time.time(),
-                            }
-                        await emit(
-                            sse_permission_request(
-                                title=event.title or event.text or "",
-                                tool_input=str(event.tool_input or ""),
-                                request_id=request_id,
-                            )
+                elif event.kind == EVENT_TOOL_RESULT:
+                    await emit(
+                        sse_tool_result(
+                            tool_call_id=event.tool_call_id or "",
+                            content=event.tool_output or "",
                         )
-                        try:
-                            approved = await asyncio.wait_for(fut, timeout=7200.0)
-                        except TimeoutError:
-                            approved = False
-                        finally:
-                            pending_approvals.pop(request_id, None)
-                            if pending_approval_meta is not None:
-                                pending_approval_meta.pop(request_id, None)
-                        if approved:
-                            await provider.approve_tool(request_id)
-                        else:
-                            await provider.reject_tool(request_id)
-
-            elif event.kind == EVENT_COMPLETE:
-                usage_dict = event.usage.to_dict() if event.usage else None
-                elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
-                if session and state.full_reply:
-                    # Inline self-learning — strip <learn>/<memory>/<note>
-                    # tags and persist them. Cleaned text is what we save
-                    # and what the user sees; the raw stream already went
-                    # to subscribers but tags are inert in markdown so the
-                    # display impact is minimal.
-                    cleaned, extracted = inline_learn.parse(state.full_reply)
-                    if extracted:
-                        try:
-                            counts = inline_learn.apply(extracted, session_id=session_id)
-                            log.info(
-                                "inline-learn extracted",
-                                extra={"session_id": session_id, **counts},
-                            )
-                        except Exception:
-                            log.exception("inline-learn apply failed")
-                    else:
-                        # Fallback: model didn't emit any tags. Run a cheap
-                        # post-turn extraction pass against the raw reply
-                        # to catch durable preferences / corrections the
-                        # model decided to write to its own native store
-                        # (Claude Code's project memory) or to none at all.
-                        try:
-                            from arz.config.loader import load_config as _lc
-                            from arz.post_turn_extract import maybe_extract
-
-                            # Find the user message that triggered this
-                            # turn — last user msg in session history.
-                            user_for_extract = ""
-                            if session and session.messages:
-                                for m in reversed(session.messages):
-                                    if m.role == "user":
-                                        user_for_extract = m.text
-                                        break
-                            if user_for_extract:
-                                # Use the session's actual provider/model
-                                # rather than the global config — global
-                                # may be misconfigured (e.g. provider=
-                                # claude-code with a codex model).
-                                sess_provider = (
-                                    getattr(session, "provider", None) if session else None
-                                )
-                                sess_model = getattr(session, "model", None) if session else None
-                                asyncio.create_task(
-                                    maybe_extract(
-                                        user_for_extract,
-                                        cleaned or state.full_reply,
-                                        config=_lc(),
-                                        provider_name=sess_provider,
-                                        model=sess_model,
-                                    )
-                                )
-                        except Exception:
-                            log.exception("post-turn extraction schedule failed")
-                    msg = session.add_message("assistant", cleaned or state.full_reply)
-                    if usage_dict:
-                        msg.usage = usage_dict
-                    msg.model = provider.current_model
-                    msg.elapsed_ms = elapsed_ms
-                    if state.turn_tool_calls:
-                        msg.tool_calls = state.turn_tool_calls
-                    if state.archive_versions:
-                        # Regenerate path: keep the prior assistant text(s)
-                        # accessible via ◀▶ in the UI.
-                        msg.versions = list(state.archive_versions) + [cleaned or state.full_reply]
-                        msg.version_index = len(msg.versions) - 1
-                    mgr.save(session)
-                    saved_assistant = True
-                await emit(
-                    sse_complete(
-                        event.stop_reason or "end_turn",
-                        context_pct=event.context_usage_pct or 0.0,
-                        usage=usage_dict,
                     )
-                )
+
+                elif event.kind == EVENT_TOOL_CALL:
+                    tool_name = event.text or ""
+                    tool_input_str = str(event.tool_input or "")
+                    if tool_name:
+                        state.turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
+                    await emit(
+                        sse_tool_call(
+                            tool_name=tool_name,
+                            tool_input=tool_input_str,
+                            request_id=event.request_id or "",
+                        )
+                    )
+
+                elif event.kind == EVENT_PERMISSION_REQUEST:
+                    request_id = str(event.request_id or "")
+                    if request_id:
+                        mode = (session_modes or {}).get(session_id, "normal")
+                        tool_name = str(event.text or "")
+                        hooks = get_hook_manager()
+                        raw_input = str(event.tool_input or "")
+                        if tool_name == "Bash":
+                            rule = hooks.evaluate_command(raw_input)
+                            if rule and rule.severity == "block":
+                                await provider.reject_tool(request_id)
+                                await emit(sse_chunk(f"\n⚠️ blocked: {rule.reason}\n"))
+                                continue
+                        if (
+                            mode in ("trust", "yolo")
+                            or (yolo_sessions is not None and session_id in yolo_sessions)
+                            or mode == "trust_reads"
+                            and tool_name in READ_ONLY_TOOLS
+                            or hooks.auto_approves(tool_name)
+                        ):
+                            await provider.approve_tool(request_id)
+                        elif pending_approvals is not None:
+                            loop = asyncio.get_event_loop()
+                            fut: asyncio.Future = loop.create_future()
+                            pending_approvals[request_id] = fut
+                            if pending_approval_meta is not None:
+                                pending_approval_meta[request_id] = {
+                                    "request_id": request_id,
+                                    "session_id": session_id,
+                                    "tool_name": tool_name,
+                                    "tool_input": raw_input,
+                                    "title": event.title or event.text or "",
+                                    "created_at": _time.time(),
+                                }
+                            await emit(
+                                sse_permission_request(
+                                    title=event.title or event.text or "",
+                                    tool_input=str(event.tool_input or ""),
+                                    request_id=request_id,
+                                )
+                            )
+                            try:
+                                approved = await asyncio.wait_for(fut, timeout=7200.0)
+                            except TimeoutError:
+                                approved = False
+                            finally:
+                                pending_approvals.pop(request_id, None)
+                                if pending_approval_meta is not None:
+                                    pending_approval_meta.pop(request_id, None)
+                            if approved:
+                                await provider.approve_tool(request_id)
+                            else:
+                                await provider.reject_tool(request_id)
+
+                elif event.kind == EVENT_COMPLETE:
+                    final_event = event
+                    inner_complete = True
+                    break
+
+            # ── End of inner stream. Decide: continue with recall or finish. ──
+            if not inner_complete:
+                # Stream ended without EVENT_COMPLETE (cancellation, crash).
+                # Let the outer except/finally handle persistence.
                 break
+
+            # Apply inline tags on JUST the new segment so prior segments'
+            # tags don't re-apply. <recall> tags queue into _pending_recalls
+            # via inline_learn.apply, which we drain right after.
+            new_segment = state.full_reply[segment_start:]
+            seg_extracted: list = []
+            if new_segment:
+                _, seg_extracted = inline_learn.parse(new_segment)
+                if seg_extracted:
+                    try:
+                        inline_learn.apply(seg_extracted, session_id=session_id)
+                    except Exception:
+                        log.exception("inline-learn apply (segment) failed")
+            segment_start = len(state.full_reply)
+
+            pending_recalls = (
+                inline_learn.drain_recalls(session_id)
+                if recall_iterations < _RECALL_CONTINUATION_CAP
+                else []
+            )
+            if pending_recalls:
+                try:
+                    from arz.config.loader import load_config as _lc
+                    from arz.memory.context import _recall_block  # type: ignore[attr-defined]
+
+                    _cfg = _lc()
+                    _k = int(getattr(_cfg.dashboard, "recall_k", 8) or 8)
+                    blocks: list[str] = []
+                    for q in pending_recalls:
+                        blk = _recall_block(q, recall_k=_k, config=_cfg)
+                        if blk:
+                            blocks.append(f'<recall_result query="{q}">\n{blk}\n</recall_result>')
+                    if blocks:
+                        # Subtle UI marker so user sees the model is searching.
+                        await emit(sse_chunk(f"\n\n_[recall: {', '.join(pending_recalls)}]_\n\n"))
+                        # Re-enter stream with results + nudge to keep reasoning.
+                        current_message = (
+                            "\n\n".join(blocks)
+                            + "\n\nContinue your reply with this context. "
+                            + "Do not repeat what you already wrote."
+                        )
+                        recall_iterations += 1
+                        continue  # outer while: stream again
+                except Exception:
+                    log.exception("recall continuation failed; finalising")
+
+            # ── No more recalls → finalise. Use the saved EVENT_COMPLETE. ──
+            event = final_event
+            usage_dict = event.usage.to_dict() if event.usage else None
+            elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
+            if session and state.full_reply:
+                # Re-parse + persist full reply (already-applied per-segment
+                # tags are idempotent in practice — semantic.upsert reinforces,
+                # learn writes a no-op duplicate). Cleaned text is what
+                # we save and what the user sees.
+                cleaned, extracted = inline_learn.parse(state.full_reply)
+                if not extracted:
+                    # Fallback: model didn't emit any tags. Run a cheap
+                    # post-turn extraction pass against the raw reply
+                    # to catch durable preferences / corrections the
+                    # model decided to write to its own native store
+                    # (Claude Code's project memory) or to none at all.
+                    try:
+                        from arz.config.loader import load_config as _lc
+                        from arz.post_turn_extract import maybe_extract
+
+                        user_for_extract = ""
+                        if session and session.messages:
+                            for m in reversed(session.messages):
+                                if m.role == "user":
+                                    user_for_extract = m.text
+                                    break
+                        if user_for_extract:
+                            sess_provider = getattr(session, "provider", None) if session else None
+                            sess_model = getattr(session, "model", None) if session else None
+                            asyncio.create_task(
+                                maybe_extract(
+                                    user_for_extract,
+                                    cleaned or state.full_reply,
+                                    config=_lc(),
+                                    provider_name=sess_provider,
+                                    model=sess_model,
+                                )
+                            )
+                    except Exception:
+                        log.exception("post-turn extraction schedule failed")
+                msg = session.add_message("assistant", cleaned or state.full_reply)
+                if usage_dict:
+                    msg.usage = usage_dict
+                msg.model = provider.current_model
+                msg.elapsed_ms = elapsed_ms
+                if state.turn_tool_calls:
+                    msg.tool_calls = state.turn_tool_calls
+                if state.archive_versions:
+                    msg.versions = list(state.archive_versions) + [cleaned or state.full_reply]
+                    msg.version_index = len(msg.versions) - 1
+                mgr.save(session)
+                saved_assistant = True
+            await emit(
+                sse_complete(
+                    event.stop_reason or "end_turn",
+                    context_pct=event.context_usage_pct or 0.0,
+                    usage=usage_dict,
+                )
+            )
+            break  # outer while
 
     except asyncio.CancelledError:
         final_status = "cancelled"

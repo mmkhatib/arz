@@ -174,6 +174,16 @@ def _widget_hint(density: str) -> str:
         "Tailwind + any CDN script tag works. Do NOT write .html files unless the user "
         "explicitly says 'write', 'save', or 'create a file'. Do NOT say "
         '"open it in a browser" — the browser is already here.\n'
+        "\n"
+        "RECALL — same-turn memory search. If you need older context (past "
+        "decisions, prior files touched, earlier user preferences, lessons from "
+        "previous projects), emit `<recall>specific search query</recall>` "
+        "anywhere in your reply. The server pauses you, runs FTS5 + vector "
+        "search over ~/.arz/memory.db + lessons + skills, and re-enters your "
+        'stream with `<recall_result query="…">…hits…</recall_result>` blocks '
+        "appended. Keep reasoning. You can emit up to 3 recall queries per "
+        "turn — use them freely when uncertain. Don't guess if memory can "
+        "answer.\n"
         "</arz-runtime>"
     )
 
