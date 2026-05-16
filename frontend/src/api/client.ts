@@ -19,6 +19,10 @@ export interface SessionSummary {
   autonudge_idle_s?: number;
   autonudge_iterations?: number;
   autonudge_max_iterations?: number;
+  /** Persistent goal — injected as `<goal>` block every turn until cleared. */
+  goal?: string | null;
+  goal_status?: "active" | "done";
+  goal_set_at?: number;
   pinned?: boolean;
   archived?: boolean;
 }
@@ -354,6 +358,28 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  /** Set or update the persistent goal injected into every turn's prefix. */
+  setGoal: async (sessionId: string, goal: string): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/goal`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ goal }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  /** Mark the active goal as done. Stops injecting it; keeps the text for audit. */
+  markGoalDone: async (sessionId: string): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/goal/done`, { method: "POST" });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+
+  /** Clear the goal entirely. */
+  clearGoal: async (sessionId: string): Promise<void> => {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/goal`, { method: "DELETE" });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   },
 

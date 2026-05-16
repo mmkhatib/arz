@@ -6,7 +6,7 @@ import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
-import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon } from "lucide-react";
+import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon, Target, Check, X as XIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
 import { useDialog } from "@/components/Dialog";
 
@@ -617,18 +617,25 @@ function MoreMenu({
   sessionId,
   autonudgeGoal,
   autonudgeIdleS,
+  goal,
+  goalStatus,
   onForked,
   onAutonudgeChange,
+  onGoalChange,
 }: {
   sessionId: string;
   autonudgeGoal: string | null;
   autonudgeIdleS: number;
+  goal: string | null;
+  goalStatus: "active" | "done";
   onForked: (id: string) => void;
   onAutonudgeChange: (goal: string | null, idle_s: number) => void;
+  onGoalChange: (goal: string | null, status: "active" | "done") => void;
 }) {
   const dialog = useDialog();
   const [open, setOpen] = useState(false);
   const isAutoOn = !!(autonudgeGoal && autonudgeIdleS > 0);
+  const goalActive = !!(goal && goalStatus === "active");
 
   useEffect(() => {
     if (!open) return;
@@ -680,6 +687,41 @@ function MoreMenu({
     onAutonudgeChange(goal, idle_s);
   };
 
+  const editGoal = async () => {
+    setOpen(false);
+    const next = await dialog.prompt({
+      title: goalActive ? "Edit goal" : "Set goal",
+      body: "Persistent objective. Injected into every turn so the model keeps it in mind across restarts.",
+      defaultValue: goal ?? "",
+      placeholder: "Ship the auth refactor and document the API.",
+      okLabel: goalActive ? "Update" : "Set",
+      eyebrow: "goal",
+    });
+    if (next === null) return;
+    const trimmed = next.trim();
+    if (!trimmed) {
+      await api.clearGoal(sessionId);
+      onGoalChange(null, "active");
+      return;
+    }
+    await api.setGoal(sessionId, trimmed);
+    onGoalChange(trimmed, "active");
+  };
+
+  const completeGoal = async () => {
+    setOpen(false);
+    if (!goalActive) return;
+    await api.markGoalDone(sessionId);
+    onGoalChange(goal, "done");
+  };
+
+  const clearGoal = async () => {
+    setOpen(false);
+    if (!goal) return;
+    await api.clearGoal(sessionId);
+    onGoalChange(null, "active");
+  };
+
   return (
     <div className="relative" data-more-menu>
       <button
@@ -712,6 +754,35 @@ function MoreMenu({
               ? `AutoNudge ON · disable (${autonudgeIdleS}s)`
               : "AutoNudge — set goal"}
           </button>
+          <div className="my-1 border-t border-[var(--border)]" />
+          <button
+            onClick={editGoal}
+            className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)]"
+          >
+            <Target
+              size={12}
+              className={goalActive ? "text-emerald-400" : "text-[var(--muted)]"}
+            />
+            {goalActive ? "Edit goal" : "Set persistent goal"}
+          </button>
+          {goalActive && (
+            <button
+              onClick={completeGoal}
+              className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--s2)]"
+            >
+              <Check size={12} className="text-emerald-400" />
+              Mark goal done
+            </button>
+          )}
+          {goal && (
+            <button
+              onClick={clearGoal}
+              className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[12px] text-[var(--muted)] hover:bg-[var(--s2)]"
+            >
+              <XIcon size={12} />
+              Clear goal
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -819,6 +890,8 @@ export default function ChatPanel({
   const [compareTarget, setCompareTarget] = useState<{ prompt: string; baseline: string; baselineModel: string | null } | null>(null);
   const [autonudgeGoal, setAutonudgeGoal] = useState<string | null>(null);
   const [autonudgeIdleS, setAutonudgeIdleS] = useState<number>(0);
+  const [goal, setGoal] = useState<string | null>(null);
+  const [goalStatus, setGoalStatus] = useState<"active" | "done">("active");
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
@@ -841,6 +914,8 @@ export default function ChatPanel({
         if (s.approval_mode) setApprovalMode(s.approval_mode);
         setAutonudgeGoal(s.autonudge_goal ?? null);
         setAutonudgeIdleS(s.autonudge_idle_s ?? 0);
+        setGoal(s.goal ?? null);
+        setGoalStatus((s.goal_status as "active" | "done") ?? "active");
         // If a turn is currently running for this session (e.g. the user
         // navigated away and came back), attach to its detached stream and
         // start showing live updates again.
@@ -1264,14 +1339,62 @@ export default function ChatPanel({
             sessionId={sessionId}
             autonudgeGoal={autonudgeGoal}
             autonudgeIdleS={autonudgeIdleS}
+            goal={goal}
+            goalStatus={goalStatus}
             onForked={(id) => onSessionForked?.(id)}
-            onAutonudgeChange={(goal, idle_s) => {
-              setAutonudgeGoal(goal);
+            onAutonudgeChange={(g, idle_s) => {
+              setAutonudgeGoal(g);
               setAutonudgeIdleS(idle_s);
+            }}
+            onGoalChange={(g, status) => {
+              setGoal(g);
+              setGoalStatus(status);
             }}
           />
         </div>
       </div>
+
+      {/* Goal pill — persistent across restarts; visible reminder of what
+          the model is keeping in mind every turn. */}
+      {goal && (
+        <div
+          className={[
+            "mx-6 mt-3 mb-1 flex items-center gap-2 px-3 py-1.5 rounded-md border text-[12px]",
+            goalStatus === "active"
+              ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200"
+              : "border-[var(--border)] bg-[var(--s2)] text-[var(--muted)]",
+          ].join(" ")}
+        >
+          <Target size={12} className="shrink-0" />
+          <span className="font-medium uppercase tracking-wider text-[10px] opacity-70">
+            {goalStatus === "active" ? "goal" : "goal · done"}
+          </span>
+          <span className="truncate flex-1">{goal}</span>
+          {goalStatus === "active" && (
+            <button
+              onClick={async () => {
+                await api.markGoalDone(sessionId);
+                setGoalStatus("done");
+              }}
+              title="Mark goal done"
+              className="shrink-0 px-1.5 py-0.5 rounded hover:bg-emerald-500/10"
+            >
+              <Check size={11} />
+            </button>
+          )}
+          <button
+            onClick={async () => {
+              await api.clearGoal(sessionId);
+              setGoal(null);
+              setGoalStatus("active");
+            }}
+            title="Clear goal"
+            className="shrink-0 px-1.5 py-0.5 rounded hover:bg-[var(--s3)]"
+          >
+            <XIcon size={11} />
+          </button>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-6">

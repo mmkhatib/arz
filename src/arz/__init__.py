@@ -1,4 +1,4 @@
 """Arz — personal AI agent runtime."""
 
-__version__ = "0.7.72"
+__version__ = "0.7.73"
 __all__ = ["__version__"]

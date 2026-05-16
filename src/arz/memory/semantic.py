@@ -533,19 +533,63 @@ def _cosine_score(query: str, fact: Fact) -> float:
         return 0.0
 
 
+_DAY_SECONDS = 86400.0
+
+
+def _recency_factor(updated_at: float, *, now: float | None = None) -> float:
+    """Tiered recency multiplier so freshly-touched facts win ties.
+
+    Tiers (mirrors history-decay tiers used for compression so a fact
+    "ages out" of prominence at the same rate the verbatim transcript
+    does):
+      <7d → 1.0, <30d → 0.85, <90d → 0.7, else → 0.55.
+    """
+    if updated_at <= 0:
+        return 0.7
+    age_days = ((now or time.time()) - updated_at) / _DAY_SECONDS
+    if age_days < 7:
+        return 1.0
+    if age_days < 30:
+        return 0.85
+    if age_days < 90:
+        return 0.7
+    return 0.55
+
+
+def _frequency_factor(hit_count: int) -> float:
+    """Saturating frequency boost. Rarely-hit facts stay at 1.0; facts
+    surfaced often climb toward ~1.5. Saturates so a runaway lookup
+    can't dominate the ranking.
+
+    Formula: 1 + log10(1 + hit_count) * 0.3.
+    hit_count=0 → 1.0, =10 → 1.31, =100 → 1.60.
+    """
+    import math
+
+    if hit_count <= 0:
+        return 1.0
+    return min(1.6, 1.0 + math.log10(1.0 + hit_count) * 0.3)
+
+
 def _hybrid_score(query: str, facts: list[Fact]) -> list[tuple[float, Fact]]:
-    """Score every fact against the query with the 0.6/0.4 hybrid blend.
+    """Score every fact against the query with the 0.6/0.4 hybrid blend,
+    then multiply by recency + frequency factors so old, never-hit facts
+    sink and recent / proven-useful facts rise.
 
     High-confidence facts (≥ 0.95) skip the relevance gate so canonical
     things ("repo.default_branch") always make it into the prefix even
     when the user is asking about something unrelated.
     """
     q_tokens = {t for t in _tokens(query) if len(t) >= 3}
+    now = time.time()
     out: list[tuple[float, Fact]] = []
     for f in facts:
         kw = _keyword_score(q_tokens, f)
         cos = _cosine_score(query, f)
-        score = 0.6 * cos + 0.4 * kw
+        base = 0.6 * cos + 0.4 * kw
+        rec = _recency_factor(f.updated_at, now=now)
+        freq = _frequency_factor(f.hit_count)
+        score = base * rec * freq
         # Force-include the high-confidence rocks regardless of score.
         if score > 0 or f.confidence >= 0.95:
             out.append((score, f))

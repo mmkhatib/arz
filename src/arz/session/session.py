@@ -102,6 +102,13 @@ class Session:
     autonudge_idle_s: int = 0  # 0 = disabled
     autonudge_max_iterations: int = 20  # safety cap
     autonudge_iterations: int = 0  # how many nudges have fired so far
+    # Persistent goal — when set, injected as `<goal>` block into every
+    # turn's memory prefix so the model keeps it in mind across restarts.
+    # Separate from autonudge_goal (which only matters when background
+    # nudges are enabled). status: "active" | "done".
+    goal: str | None = None
+    goal_status: str = "active"
+    goal_set_at: float = 0.0
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
@@ -145,6 +152,9 @@ class Session:
             "autonudge_idle_s": self.autonudge_idle_s,
             "autonudge_max_iterations": self.autonudge_max_iterations,
             "autonudge_iterations": self.autonudge_iterations,
+            "goal": self.goal,
+            "goal_status": self.goal_status,
+            "goal_set_at": self.goal_set_at,
             "pinned": self.pinned,
             "archived": self.archived,
             "last_consolidated_index": self.last_consolidated_index,
@@ -173,6 +183,9 @@ class Session:
             autonudge_idle_s=int(d.get("autonudge_idle_s") or 0),
             autonudge_max_iterations=int(d.get("autonudge_max_iterations") or 20),
             autonudge_iterations=int(d.get("autonudge_iterations") or 0),
+            goal=d.get("goal"),
+            goal_status=d.get("goal_status") or "active",
+            goal_set_at=float(d.get("goal_set_at") or 0.0),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
             last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),

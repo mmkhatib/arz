@@ -535,6 +535,17 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     except Exception:
         log.exception("recall drain failed")
 
+    # Refresh the intent tracker from the latest message tail so
+    # build_prefix can inject a `<intent>` block + boost retrieval.
+    try:
+        from arz.memory import intent as _intent
+
+        tail_msgs = [{"role": m.role, "text": m.text} for m in (session.messages or [])][-6:]
+        tail_msgs.append({"role": "user", "text": original_message})
+        _intent.update_from_messages(session_id, tail_msgs)
+    except Exception:
+        log.exception("intent update failed")
+
     # Single source of truth for memory context — same shape on every
     # provider, every surface (chat, subagent, heartbeat, taskrunner).
     try:
@@ -543,13 +554,34 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         prefix = build_prefix(
             message,
             config=cfg,
-            recall_k=int(getattr(cfg.dashboard, "recall_k", 5) or 5),
+            recall_k=int(getattr(cfg.dashboard, "recall_k", 8) or 8),
             enable_recall=bool(getattr(cfg.dashboard, "auto_recall", True)),
+            session_id=session_id,
         )
         if prefix:
             message = f"{prefix}\n\n{message}"
     except Exception:
         log.exception("Memory context build failed; continuing without it")
+
+    # Persistent goal — when the user has set one on the session, prepend
+    # a `<goal>` block so the model keeps it in mind on every turn until
+    # cleared or marked done. Cheap (~100 chars) and very high-leverage
+    # for long-running objectives.
+    try:
+        goal = getattr(session, "goal", None) if session else None
+        goal_status = getattr(session, "goal_status", "active") if session else "active"
+        if goal and goal_status == "active":
+            goal_block = (
+                "<goal>\n"
+                f"User's active goal: {goal}\n"
+                "Keep this in mind every turn. Make tangible progress toward it "
+                "in your reply. If you complete it, say so explicitly. If you're "
+                "blocked, name what you need from the user.\n"
+                "</goal>"
+            )
+            message = f"{goal_block}\n\n{message}"
+    except Exception:
+        log.exception("goal injection failed")
 
     # Inject any completed subagent results that landed since the last turn.
     try:

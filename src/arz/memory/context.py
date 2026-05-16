@@ -39,6 +39,7 @@ def build_prefix(
     enable_recall: bool = True,
     enable_lessons: bool = True,
     enable_memory_files: bool = True,
+    session_id: str | None = None,
 ) -> str:
     """Return the memory prefix to prepend to *user_message* before sending
     it to a provider. Empty string if nothing useful to inject.
@@ -57,6 +58,26 @@ def build_prefix(
         density = getattr(getattr(config, "dashboard", None), "widget_density", "more")
         if density in {"more", "less"}:
             parts.append(_widget_hint(density))
+
+    # 0a. Session intent — short phrase the tracker derived from recent
+    # turns. Lets the model see what the user is "working on" so terse
+    # messages ("yes", "keep going") still get topical retrieval.
+    intent_query_boost = ""
+    if session_id:
+        try:
+            from arz.memory.intent import render_for_prompt as intent_render
+
+            block = intent_render(session_id)
+            if block:
+                parts.append(block)
+                # Reuse the same keywords to broaden retrieval below.
+                from arz.memory.intent import get_intent
+
+                _it = get_intent(session_id)
+                if _it and _it.keywords:
+                    intent_query_boost = " " + " ".join(_it.keywords)
+        except Exception:
+            log.exception("intent render failed")
 
     # 1. Always-on preferences/projects/memory_notes (with source citations)
     if enable_memory_files:
@@ -120,9 +141,12 @@ def build_prefix(
 
     # 6. Top-K relevance hits (FTS + vector). Cheap when index is warm.
     # Auto-fires against the user message — no `<recall>` tag needed.
+    # Intent keywords broaden the query so memories matching the
+    # session's running focus also surface on terse messages.
     if enable_recall:
         try:
-            block = _recall_block(user_message, recall_k=recall_k, config=config)
+            query = (user_message or "") + intent_query_boost
+            block = _recall_block(query, recall_k=recall_k, config=config)
             if block:
                 parts.append(_cite("recall", "FTS5 + vector", block))
         except Exception:

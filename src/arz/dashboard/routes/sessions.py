@@ -47,6 +47,9 @@ def _session_to_dict(session: object) -> dict:
         "autonudge_idle_s": session.autonudge_idle_s,
         "autonudge_iterations": session.autonudge_iterations,
         "autonudge_max_iterations": session.autonudge_max_iterations,
+        "goal": getattr(session, "goal", None),
+        "goal_status": getattr(session, "goal_status", "active"),
+        "goal_set_at": getattr(session, "goal_set_at", 0.0),
         "pinned": getattr(session, "pinned", False),
         "archived": getattr(session, "archived", False),
     }
@@ -115,6 +118,66 @@ async def set_autonudge(session_id: str, request: Request) -> None:
             raise HTTPException(status_code=422, detail="max_iterations must be int")
     if body.get("reset_iterations"):
         session.autonudge_iterations = 0
+    mgr.save(session)
+
+
+@router.put("/api/sessions/{session_id}/goal", status_code=status.HTTP_204_NO_CONTENT)
+async def set_session_goal(session_id: str, request: Request) -> None:
+    """Set or update the persistent goal for a session.
+
+    Body: ``{"goal": "ship the auth refactor"}``. Setting an empty
+    string clears the goal. The goal is injected as a `<goal>` block
+    into every turn's memory prefix until cleared or marked done.
+    """
+    import time as _time
+
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    goal = (body.get("goal") or "").strip()
+    from arz.session.session import Session
+
+    assert isinstance(session, Session)
+    if goal:
+        session.goal = goal
+        session.goal_status = "active"
+        session.goal_set_at = _time.time()
+    else:
+        session.goal = None
+        session.goal_status = "active"
+        session.goal_set_at = 0.0
+    mgr.save(session)
+
+
+@router.post("/api/sessions/{session_id}/goal/done", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_session_goal_done(session_id: str, request: Request) -> None:
+    """Mark the current goal as done. Keeps the text so it's still
+    visible in the audit trail; stops injecting it into the prefix."""
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    from arz.session.session import Session
+
+    assert isinstance(session, Session)
+    session.goal_status = "done"
+    mgr.save(session)
+
+
+@router.delete("/api/sessions/{session_id}/goal", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_session_goal(session_id: str, request: Request) -> None:
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    from arz.session.session import Session
+
+    assert isinstance(session, Session)
+    session.goal = None
+    session.goal_status = "active"
+    session.goal_set_at = 0.0
     mgr.save(session)
 
 
