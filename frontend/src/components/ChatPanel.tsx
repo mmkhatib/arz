@@ -780,6 +780,9 @@ export default function ChatPanel({
   focusSignal,
   onSessionForked,
 }: Props) {
+  const [localFocusBump, setLocalFocusBump] = useState(0);
+  const bumpFocusSignal = () => setLocalFocusBump((n) => n + 1);
+  const effectiveFocusSignal = (focusSignal ?? 0) + localFocusBump;
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
   const [streaming, setStreaming] = useState(false);
@@ -1282,6 +1285,14 @@ export default function ChatPanel({
             agent={sessionAgent}
             agents={agents}
             onAgentChange={handleAgentChange}
+            onPickSuggestion={(text) => {
+              // Seed the composer draft + nudge focus. InputBar reads
+              // arz:draft:<sessionId> on focusSignal change.
+              try {
+                if (sessionId) localStorage.setItem(`arz:draft:${sessionId}`, text);
+              } catch { /* localStorage full / quota */ }
+              bumpFocusSignal();
+            }}
           />
         )}
 
@@ -1383,7 +1394,7 @@ export default function ChatPanel({
         agent={sessionAgent}
         agents={agents}
         onAgentChange={handleAgentChange}
-        focusSignal={focusSignal}
+        focusSignal={effectiveFocusSignal}
         draftKey={sessionId}
         queuedPreview={queuedMessage?.text ?? null}
         onCancelQueued={() => setQueued(null)}

@@ -45,6 +45,103 @@ _DEFAULT_CONFIDENCE = 0.7
 _REINFORCE_STEP = 0.1
 _CONTRADICTION_STEP = 0.3
 
+# Min confidence required to write. Raised from 0.0 to keep "low-quality
+# guesses" out of the long-term store; the 0.7 default is fine for most
+# inline `<semantic>` writes, while consolidator-generated facts should
+# pass an explicit confidence in the JSON.
+_MIN_WRITE_CONFIDENCE = 0.7
+
+# Conflict-resolution: when a key already exists, only allow an update if
+# the incoming confidence is ≥ the stored value, OR the existing row is
+# older than this many days (a stale fact gets overwritten by anything
+# fresher even if confidence is lower).
+_STALE_OVERWRITE_AGE_DAYS = 7
+_STALE_OVERWRITE_AGE_S = _STALE_OVERWRITE_AGE_DAYS * 86400
+
+# Allow-list of canonical key prefixes. Anything outside this set is
+# rejected with `code="allowlist_reject"` so a chatty LLM can't pollute
+# the store with `random.thoughts.42 = "I think therefore I am"`.
+_ALLOWED_PREFIXES: tuple[str, ...] = (
+    "pref.",
+    "preference.",
+    "project.",
+    "user.",
+    "lesson.",
+    "team.",
+    "repo.",
+    "prod.",
+    "dev.",
+    "stage.",
+    "infra.",
+    "service.",
+    "config.",
+    "tool.",
+    "deploy.",
+    "owner.",
+    "deadline.",
+)
+
+# Block-list of reserved prefixes. Mirrors MeshClaw's "no system./prompt./
+# instruction." rule — blocks the most obvious prompt-injection landing
+# pads. `code="reserved_key"` in the audit log.
+_BLOCKED_PREFIXES: tuple[str, ...] = (
+    "system.",
+    "prompt.",
+    "instruction.",
+    "override.",
+    "ignore.",
+    "_internal.",
+)
+
+# Jailbreak / prompt-injection patterns. If the value matches any of
+# these, the write is rejected with `code="injection_blocked"` and an
+# audit row is logged. The same patterns are scrubbed at READ time as
+# defense in depth — a fact written before the regex was added still
+# can't escape into a future prompt unredacted.
+import re as _re
+
+_INJECTION_PATTERNS = [
+    _re.compile(r"(?i)\bignore (?:previous|all|above) (?:instructions|prompt)"),
+    _re.compile(r"(?i)\bdisregard (?:the )?(?:above|prior|previous|earlier)"),
+    _re.compile(r"(?i)\byou are now\b"),
+    _re.compile(r"(?i)\bnew (?:role|persona|instruction)s?\b"),
+    _re.compile(
+        r"(?i)<\s*/?\s*(?:system|preferences|projects|lessons|memory|recent-context|arz-runtime)\s*>"
+    ),
+    _re.compile(r"(?i)\bbreak character\b"),
+    _re.compile(r"(?i)\bact as (?:if you were|a different)"),
+]
+
+# Credential / exfiltration patterns scrubbed at every read and write
+# boundary. Mirrors arz/skills.py redaction list — defense in depth so
+# tool-output that gets summarised into semantic memory can't smuggle
+# tokens back out via the prompt prefix.
+_REDACT_PATTERNS = [
+    (_re.compile(r"(?i)sk-[A-Za-z0-9_-]{20,}"), "[REDACTED-KEY]"),
+    (_re.compile(r"(?i)ghp_[A-Za-z0-9]{20,}"), "[REDACTED-GH-PAT]"),
+    (_re.compile(r"(?i)bearer\s+[A-Za-z0-9._-]{20,}"), "Bearer [REDACTED]"),
+    (
+        _re.compile(r"(?i)(api[_-]?key|access[_-]?token|password|secret)(\s*[:=]\s*)[^\s\"'`,;)]+"),
+        lambda m: f"{m.group(1)}{m.group(2)}[REDACTED]",
+    ),
+]
+
+# Valid-key shape: starts lowercase, dotted segments, no trailing dot,
+# 1-100 chars. Mirrors the MeshClaw regex.
+_KEY_SHAPE = _re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z0-9][a-z0-9_]*)*$")
+
+
+class WriteRejected(Exception):
+    """Raised by ``upsert`` when a write is blocked by guardrails. The
+    audit log already has the row; the exception just lets callers
+    differentiate from generic ``ValueError`` shapes."""
+
+    def __init__(self, code: str, key: str, reason: str) -> None:
+        self.code = code
+        self.key = key
+        self.reason = reason
+        super().__init__(f"[{code}] {key}: {reason}")
+
 
 @dataclass
 class Fact:
@@ -73,7 +170,64 @@ def _connect() -> sqlite3.Connection:
         )"""
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_semantic_conf ON semantic_memory(confidence DESC)")
+    # Audit log for every write rejection. Lets us see attack patterns
+    # over time (one row per blocked write) without lighting up the
+    # gateway logs with noise.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS memory_events (
+            ts REAL NOT NULL,
+            code TEXT NOT NULL,
+            key TEXT,
+            reason TEXT,
+            source TEXT
+        )"""
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_ts ON memory_events(ts DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_events_code ON memory_events(code)")
     return conn
+
+
+def _audit(code: str, key: str, reason: str, source: str = "") -> None:
+    try:
+        with _connect() as conn:
+            conn.execute(
+                "INSERT INTO memory_events(ts, code, key, reason, source) VALUES (?, ?, ?, ?, ?)",
+                (time.time(), code, key, reason, source),
+            )
+    except Exception:
+        log.warning("semantic audit write failed", code=code, key=key)
+
+
+def redact(text: str) -> str:
+    """Scrub credential / exfiltration patterns. Idempotent — safe at
+    both write and read boundaries."""
+    out = text or ""
+    for pat, repl in _REDACT_PATTERNS:
+        out = pat.sub(repl, out)
+    return out
+
+
+def _looks_injected(value: str) -> tuple[bool, str]:
+    for pat in _INJECTION_PATTERNS:
+        m = pat.search(value or "")
+        if m:
+            return True, m.group(0)[:60]
+    return False, ""
+
+
+def _validate_key(key: str) -> tuple[bool, str]:
+    """Returns (ok, reason). Reason is empty when ok."""
+    if not key:
+        return False, "empty"
+    if len(key) > 100:
+        return False, "too long"
+    if not _KEY_SHAPE.match(key):
+        return False, "shape mismatch (must be lowercase dotted)"
+    if any(key.startswith(p) for p in _BLOCKED_PREFIXES):
+        return False, "reserved prefix"
+    if not any(key.startswith(p) for p in _ALLOWED_PREFIXES):
+        return False, "prefix not on allow-list"
+    return True, ""
 
 
 def upsert(
@@ -82,48 +236,105 @@ def upsert(
     *,
     source: str = "",
     confidence_delta: float = _REINFORCE_STEP,
+    confidence: float | None = None,
 ) -> Fact:
-    """Insert a new fact or reinforce an existing one.
+    """Insert a new fact or reinforce an existing one — guard-railed.
 
-    On insert: confidence starts at ``_DEFAULT_CONFIDENCE`` (0.7).
-    On reinforce: confidence grows by ``confidence_delta``, capped at 1.0.
+    Rejection codes (logged to ``memory_events``):
+      - ``shape_reject``        bad key shape
+      - ``reserved_key``        key uses a blocked prefix
+      - ``allowlist_reject``    key not on allow-list
+      - ``low_confidence``      explicit confidence < 0.7 on first write
+      - ``injection_blocked``   value matched a jailbreak pattern
+      - ``stale_overwrite``     incoming confidence < stored AND row fresh
+      - ``empty``               key or value missing
+
+    On accept the value is redacted before persistence so credentials
+    never reach disk in cleartext. ``confidence`` overrides the default
+    starting confidence; ``confidence_delta`` is used on reinforce.
     """
     key = (key or "").strip().lower()
     value = (value or "").strip()
     if not key or not value:
-        raise ValueError("key and value required")
+        _audit("empty", key, "key or value missing", source)
+        raise WriteRejected("empty", key, "key or value missing")
+
+    ok, reason = _validate_key(key)
+    if not ok:
+        code = (
+            "reserved_key"
+            if "reserved" in reason
+            else ("allowlist_reject" if "allow-list" in reason else "shape_reject")
+        )
+        _audit(code, key, reason, source)
+        raise WriteRejected(code, key, reason)
+
+    injected, snippet = _looks_injected(value)
+    if injected:
+        _audit("injection_blocked", key, f"matched: {snippet!r}", source)
+        raise WriteRejected("injection_blocked", key, f"matched: {snippet!r}")
+
+    # Redact at write boundary so secrets never reach the row.
+    safe_value = redact(value)
+
     now = time.time()
     with _connect() as conn:
         row = conn.execute(
-            "SELECT value, confidence, source, created_at, hit_count FROM semantic_memory WHERE key=?",
+            "SELECT value, confidence, source, created_at, hit_count, updated_at "
+            "FROM semantic_memory WHERE key=?",
             (key,),
         ).fetchone()
         if row is None:
+            initial = float(confidence) if confidence is not None else _DEFAULT_CONFIDENCE
+            if initial < _MIN_WRITE_CONFIDENCE:
+                _audit("low_confidence", key, f"initial={initial:.2f}", source)
+                raise WriteRejected("low_confidence", key, f"initial={initial:.2f}")
             conn.execute(
                 "INSERT INTO semantic_memory(key, value, confidence, source, created_at, updated_at, hit_count) "
                 "VALUES (?, ?, ?, ?, ?, ?, 0)",
-                (key, value, _DEFAULT_CONFIDENCE, source, now, now),
+                (key, safe_value, initial, source, now, now),
             )
             return Fact(
                 key=key,
-                value=value,
-                confidence=_DEFAULT_CONFIDENCE,
+                value=safe_value,
+                confidence=initial,
                 source=source,
                 created_at=now,
                 updated_at=now,
                 hit_count=0,
             )
-        prev_value, prev_conf, prev_src, created_at, hit = row
-        new_conf = min(1.0, float(prev_conf) + confidence_delta)
-        # If the value actually changed, treat that as a softer reinforce
-        # — the user updated the fact — and keep confidence growing.
+
+        prev_value, prev_conf, prev_src, created_at, hit, prev_updated = row
+        prev_conf_f = float(prev_conf)
+        prev_updated_f = float(prev_updated)
+        # Conflict-resolution: incoming must be ≥ stored confidence OR
+        # the stored row must be older than _STALE_OVERWRITE_AGE_DAYS.
+        # Reinforces (no explicit confidence) always pass — that's the
+        # "I saw this fact again" signal.
+        if confidence is not None:
+            if confidence < prev_conf_f and (now - prev_updated_f) < _STALE_OVERWRITE_AGE_S:
+                _audit(
+                    "stale_overwrite",
+                    key,
+                    f"incoming={confidence:.2f} < stored={prev_conf_f:.2f}",
+                    source,
+                )
+                raise WriteRejected(
+                    "stale_overwrite",
+                    key,
+                    f"incoming={confidence:.2f} < stored={prev_conf_f:.2f}",
+                )
+            new_conf = float(confidence)
+        else:
+            new_conf = min(1.0, prev_conf_f + confidence_delta)
+
         conn.execute(
             "UPDATE semantic_memory SET value=?, confidence=?, source=?, updated_at=? WHERE key=?",
-            (value, new_conf, source or prev_src, now, key),
+            (safe_value, new_conf, source or prev_src, now, key),
         )
         return Fact(
             key=key,
-            value=value,
+            value=safe_value,
             confidence=new_conf,
             source=source or prev_src,
             created_at=float(created_at),
@@ -213,7 +424,10 @@ def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
     used = 0
     surfaced_keys: list[str] = []
     for f in facts:
-        line = f"- **{f.key}** ({int(f.confidence * 100)}% confidence) — {f.value}"
+        # Defense in depth: redact again at read boundary in case a
+        # secret was written before the regex landed.
+        safe = redact(f.value)
+        line = f"- **{f.key}** ({int(f.confidence * 100)}% confidence) — {safe}"
         if used + len(line) + 1 > cap_chars:
             break
         out.append(line)
@@ -250,6 +464,29 @@ _TOKEN_RE = __import__("re").compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 
 def _tokens(s: str) -> set[str]:
     return {t.lower() for t in _TOKEN_RE.findall(s or "")}
+
+
+def recent_events(limit: int = 100) -> list[dict]:
+    """Tail of the audit log — drives the dashboard's "rejected memory
+    writes" panel so the user can spot attack patterns."""
+    try:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT ts, code, key, reason, source FROM memory_events ORDER BY ts DESC LIMIT ?",
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [
+            {
+                "ts": r[0],
+                "code": r[1],
+                "key": r[2] or "",
+                "reason": r[3] or "",
+                "source": r[4] or "",
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
 
 
 def stats() -> dict:

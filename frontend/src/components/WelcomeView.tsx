@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Bot } from "lucide-react";
+import { Check, Bot, Sparkles, RefreshCw } from "lucide-react";
+import { api } from "@/api/client";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
 import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
@@ -16,9 +17,26 @@ interface Props {
   agent?: string | null;
   agents?: AgentOpt[];
   onAgentChange?: (agent: string | null) => void;
+  /** Click a suggestion → seeds the composer with this text. */
+  onPickSuggestion?: (text: string) => void;
 }
 
-export default function WelcomeView({ model, onModelChange, provider, workDir, onWorkDirChange, agent, agents = [], onAgentChange }: Props) {
+export default function WelcomeView({ model, onModelChange, provider, workDir, onWorkDirChange, agent, agents = [], onAgentChange, onPickSuggestion }: Props) {
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    api.listSuggestions().then((r) => { if (!cancelled) setSuggestions(r.suggestions); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  const refreshSuggestions = async () => {
+    setRefreshing(true);
+    try {
+      const r = await api.refreshSuggestions();
+      setSuggestions(r.suggestions);
+    } catch { /* keep prior */ }
+    setRefreshing(false);
+  };
   const [modelOpen, setModelOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
   const [dirDraft, setDirDraft] = useState(workDir);
@@ -191,6 +209,35 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
           </p>
         </div>
       </div>
+
+      {/* Suggestion pills — populated from background memory consolidator. */}
+      {onPickSuggestion && suggestions.length > 0 && (
+        <div className="flex flex-col items-center gap-2 w-full max-w-[640px] mt-2">
+          <div className="flex items-center gap-2 text-[10px] text-[var(--muted)] uppercase tracking-wider">
+            <Sparkles size={11} className="text-[var(--cedar)]" />
+            <span>Suggestions</span>
+            <button
+              onClick={refreshSuggestions}
+              disabled={refreshing}
+              className="text-[var(--muted)] hover:text-[var(--cedar)] disabled:opacity-40 transition-colors"
+              title="Regenerate suggestions"
+            >
+              <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} />
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-2 justify-center">
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => onPickSuggestion(s)}
+                className="px-3 py-1.5 rounded-full border border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)] text-[12px] hover:bg-[var(--cedar)] hover:text-white transition-colors"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

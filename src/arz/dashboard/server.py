@@ -44,6 +44,7 @@ from arz.dashboard.routes.sessions import router as sessions_router
 from arz.dashboard.routes.settings import router as settings_router
 from arz.dashboard.routes.skills import router as skills_router
 from arz.dashboard.routes.subagents import router as subagents_router
+from arz.dashboard.routes.suggestions import router as suggestions_router
 from arz.dashboard.routes.taskrunner import router as taskrunner_router
 from arz.dashboard.routes.tools import router as tools_router
 from arz.dashboard.search import SessionSearchIndex
@@ -275,6 +276,14 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.idle_sweep_task = asyncio.create_task(_idle_sweep_loop())
     log.info("Consolidator idle-sweep task started")
+    # Suggestions periodic refresh — every 30 min in the background.
+    try:
+        from arz.suggestions import start_periodic_refresh
+
+        await start_periodic_refresh()
+        log.info("Suggestions refresh task started")
+    except Exception:
+        log.warning("Could not start suggestions refresh", exc_info=True)
     yield
     log.info("Arz gateway shutting down")
     sweep = getattr(app.state, "idle_sweep_task", None)
@@ -284,6 +293,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await sweep
         except (asyncio.CancelledError, Exception):
             pass
+    try:
+        from arz.suggestions import stop_periodic_refresh
+
+        await stop_periodic_refresh()
+    except Exception:
+        pass
     await app.state.surface_manager.shutdown()
     app.state.cron_registry.shutdown()
     if getattr(app.state, "heartbeat_service", None) is not None:
@@ -304,7 +319,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.68", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.69", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -465,6 +480,12 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
 
     init_consolidator(app.state.session_manager, runner=_run_subagent)
 
+    # Suggestions: cached "what should I ask next?" pills on dashboard
+    # new-session views. Reuses the same cheap subagent runner.
+    from arz.suggestions import init_suggestions
+
+    init_suggestions(_run_subagent, app.state.session_manager)
+
     # AutoNudge: keeps idle sessions moving toward a stated goal. Posts
     # back to our own /api/chat endpoint so it reuses all the regular
     # streaming / tool / approval plumbing.
@@ -548,6 +569,7 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     app.include_router(consolidator_router)
     app.include_router(action_items_router)
     app.include_router(skills_router)
+    app.include_router(suggestions_router)
     app.include_router(folders_router)
     app.include_router(projects_router)
 

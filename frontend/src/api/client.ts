@@ -886,6 +886,15 @@ export const api = {
       method: "POST",
     });
   },
+  listSuggestions: () =>
+    request<{ suggestions: string[]; count: number; generated_at: number; last_error: string }>(
+      "/suggestions",
+    ),
+  refreshSuggestions: () =>
+    request<{ suggestions: string[]; count: number; generated_at: number; last_error: string }>(
+      "/suggestions/refresh",
+      { method: "POST" },
+    ),
   improvePrompt: (text: string, sessionId?: string) =>
     request<{ improved: string; model: string }>("/prompts/improve", {
       method: "POST",

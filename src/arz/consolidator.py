@@ -702,11 +702,20 @@ class Consolidator:
         for f in semantic_facts:
             k = (f.get("key") or "").strip()
             v = (f.get("value") or "").strip()
+            conf = f.get("confidence")
             if not k or not v:
                 continue
             try:
-                sem.upsert(k, v, source=session.id)
+                sem.upsert(
+                    k,
+                    v,
+                    source=session.id,
+                    confidence=float(conf) if isinstance(conf, (int, float)) else None,
+                )
                 semantic_added += 1
+            except sem.WriteRejected:
+                # Rejection already audited in memory_events.
+                pass
             except Exception:
                 pass
         for k in forget_keys:

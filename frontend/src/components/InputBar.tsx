@@ -149,6 +149,16 @@ export default function InputBar({
 
   useEffect(() => {
     if (!disabled && !isRunning) textareaRef.current?.focus();
+    // Re-read draft on focus bump too — lets parent components (e.g.
+    // suggestion-pill click) seed the composer by writing to
+    // localStorage and bumping focusSignal.
+    if (_draftStorageKey) {
+      try {
+        const fresh = localStorage.getItem(_draftStorageKey) ?? "";
+        if (fresh && fresh !== value) setValue(fresh);
+      } catch { /* ignore */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, isRunning, focusSignal]);
 
   useEffect(() => {

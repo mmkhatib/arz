@@ -185,7 +185,10 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
                 try:
                     semantic.upsert(key, ex.body, source=session_id or "")
                     counts["semantic"] += 1
-                except ValueError:
+                except (semantic.WriteRejected, ValueError):
+                    # Rejected write already lands in the audit log
+                    # (memory_events) — bump the skipped counter so the
+                    # turn report shows the agent tried.
                     counts["skipped"] += 1
             elif ex.kind == "forget":
                 # <forget key="prod.db.host">contradicted at 14:32</forget>
