@@ -259,8 +259,31 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if getattr(app.state, "heartbeat_service", None) is not None:
         app.state.heartbeat_service.start()
         log.info("Heartbeat started")
+
+    # Idle-sweep task — every 5 min, consolidate sessions that have been
+    # quiet for ≥3h with unconsolidated turns. Cheap when nothing's idle.
+    async def _idle_sweep_loop() -> None:
+        from arz.consolidator import _IDLE_POLL_SECONDS, get_consolidator
+
+        await asyncio.sleep(_IDLE_POLL_SECONDS)
+        while True:
+            try:
+                await get_consolidator().idle_sweep()
+            except Exception:
+                log.exception("idle sweep iteration failed")
+            await asyncio.sleep(_IDLE_POLL_SECONDS)
+
+    app.state.idle_sweep_task = asyncio.create_task(_idle_sweep_loop())
+    log.info("Consolidator idle-sweep task started")
     yield
     log.info("Arz gateway shutting down")
+    sweep = getattr(app.state, "idle_sweep_task", None)
+    if sweep:
+        sweep.cancel()
+        try:
+            await sweep
+        except (asyncio.CancelledError, Exception):
+            pass
     await app.state.surface_manager.shutdown()
     app.state.cron_registry.shutdown()
     if getattr(app.state, "heartbeat_service", None) is not None:
@@ -281,7 +304,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.66", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.67", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)

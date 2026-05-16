@@ -89,6 +89,16 @@ class Session:
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
+    # Index into self.messages marking the last consolidated turn. Used by
+    # the consolidation triggers (30-msg threshold, idle sweep) to know
+    # which slice still needs an LLM pass. Survives gateway restart so
+    # we don't redo work or skip pending turns. -1 means "never".
+    last_consolidated_index: int = -1
+    # Wall-clock timestamp (epoch s) of the last consolidation attempt
+    # for this session — even when no new messages crossed the trigger.
+    # The idle sweep needs this so it doesn't refire on the same idle
+    # state every tick.
+    last_consolidation_ts: float = 0.0
 
     def add_message(self, role: Literal["user", "assistant", "system"], text: str) -> Message:
         msg = Message(role=role, text=text)
@@ -121,6 +131,8 @@ class Session:
             "autonudge_iterations": self.autonudge_iterations,
             "pinned": self.pinned,
             "archived": self.archived,
+            "last_consolidated_index": self.last_consolidated_index,
+            "last_consolidation_ts": self.last_consolidation_ts,
         }
 
     @classmethod
@@ -147,4 +159,6 @@ class Session:
             autonudge_iterations=int(d.get("autonudge_iterations") or 0),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
+            last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),
+            last_consolidation_ts=float(d.get("last_consolidation_ts") or 0.0),
         )

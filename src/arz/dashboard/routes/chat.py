@@ -379,6 +379,16 @@ async def _run_turn(
                 log.exception("Failed to persist partial reply on stream end")
         await registry.finish(session_id, status=final_status, error=final_error)
         registry.discard(session_id, after_seconds=120.0)
+        # 30-msg threshold trigger — fire-and-forget. The consolidator
+        # bumps last_consolidated_index itself so re-entering on the next
+        # turn won't double-fire. If no runner is wired or threshold
+        # isn't crossed, this is a no-op.
+        try:
+            from arz.consolidator import get_consolidator
+
+            asyncio.create_task(get_consolidator().maybe_trigger(session))
+        except Exception:
+            pass
 
 
 async def _sse_subscribe(session_id: str) -> AsyncIterator[str]:

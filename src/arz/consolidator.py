@@ -37,6 +37,24 @@ _RECENT_WINDOW_HOURS = 24  # only consolidate sessions touched in the last 24h
 _MIN_NEW_MESSAGES = 4  # skip sessions with too little to learn from
 _MAX_TRANSCRIPT_CHARS = 12000  # cap per-session transcript sent to LLM
 
+# Per-session triggers (mirror MeshClaw 2.4.x HistoryManager):
+#
+#   - threshold: as soon as a session crosses _CONSOLIDATION_THRESHOLD
+#     unconsolidated messages, fire a partial pass that updates
+#     preferences / projects / lessons (NO history entry yet — that's
+#     reserved for the idle path so the daily log stays a "session
+#     summary" not a "running stream").
+#   - idle sweep: every _IDLE_POLL_SECONDS, look for sessions that have
+#     been quiet for _IDLE_THRESHOLD_SECONDS AND still have unconsolidated
+#     turns. Fire a FULL pass (prefs/projects/lessons + history_entry).
+#
+# Both paths persist last_consolidated_index on the session so a gateway
+# restart picks up exactly where we left off — never double-pays for a
+# turn, never silently drops one.
+_CONSOLIDATION_THRESHOLD = 30
+_IDLE_THRESHOLD_SECONDS = 3 * 60 * 60
+_IDLE_POLL_SECONDS = 5 * 60
+
 # Runner: takes a single user prompt, returns assistant text. The gateway
 # wires this up at startup using the same single-turn runner that subagents
 # and heartbeat use.
@@ -219,6 +237,104 @@ def _scrub(text: str) -> str:
     return _INJECTION_TAG_RE.sub("[arz-block]", text).strip()
 
 
+def _format_transcript_slice(session, *, start: int = 0) -> str:
+    """Like ``_format_transcript`` but only the slice from ``start`` onward.
+
+    Used by the per-session triggers so an LLM pass after a 30-msg
+    threshold only sees the new 30 messages — not the entire history
+    we've already consolidated.
+    """
+    out: list[str] = []
+    used = 0
+    msgs = list(session.messages[start:])
+    for i, m in enumerate(reversed(msgs)):
+        scrubbed = _scrub(m.text or "")[:1500]
+        if not scrubbed:
+            continue
+        block = (
+            f"--- BEGIN MESSAGE {start + len(msgs) - 1 - i} role={m.role} ---\n"
+            f"{scrubbed}\n--- END MESSAGE {start + len(msgs) - 1 - i} ---"
+        )
+        if used + len(block) + 1 > _MAX_TRANSCRIPT_CHARS:
+            break
+        out.append(block)
+        used += len(block) + 1
+    return "\n\n".join(reversed(out))
+
+
+# Tiers for history-file decay. Mirrors MeshClaw 2.4.x:
+#   - days 0–14   : verbatim (already on disk, no transform)
+#   - days 15–60  : collapse to first heading + entry count
+#   - days 61–180 : single-line "{date}: N entries"
+#   - days >365   : delete
+_DECAY_VERBATIM_DAYS = 14
+_DECAY_HEAD_DAYS = 60
+_DECAY_ONELINE_DAYS = 180
+_DECAY_PRUNE_DAYS = 365
+
+
+def decay_history() -> dict:
+    """Walk the history directory and apply the tiered decay.
+
+    Idempotent — a file already in oneliner shape stays in oneliner
+    shape. The summarise / collapse path uses a simple "first entry
+    only" rule rather than another LLM call so this runs in <100 ms
+    even on multi-year archives.
+    """
+    from arz.memory.files import get_memory_files
+
+    base = get_memory_files().base_dir / "history"
+    if not base.exists():
+        return {"verbatim": 0, "collapsed": 0, "onelined": 0, "pruned": 0}
+    today = date.today()
+    report = {"verbatim": 0, "collapsed": 0, "onelined": 0, "pruned": 0}
+    for p in sorted(base.glob("*.md")):
+        try:
+            stem = p.stem
+            day = date.fromisoformat(stem)
+        except ValueError:
+            continue
+        age = (today - day).days
+        if age <= _DECAY_VERBATIM_DAYS:
+            report["verbatim"] += 1
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if age > _DECAY_PRUNE_DAYS:
+            try:
+                p.unlink()
+                report["pruned"] += 1
+            except OSError:
+                pass
+            continue
+        if age > _DECAY_ONELINE_DAYS:
+            count = max(1, text.count("\n### "))
+            new = f"### {stem}\n\n{count} session{'s' if count != 1 else ''} this day.\n"
+            if new != text:
+                p.write_text(new, encoding="utf-8")
+            report["onelined"] += 1
+            continue
+        # 15–60d: keep just the first entry + count
+        sections = text.split("\n### ")
+        if len(sections) <= 2:
+            report["collapsed"] += 1
+            continue
+        head = sections[0]
+        first_entry = "\n### " + sections[1]
+        extras = len(sections) - 2
+        collapsed = (
+            head
+            + first_entry.rstrip()
+            + f"\n\n_(+{extras} more session{'s' if extras != 1 else ''} this day, collapsed)_\n"
+        )
+        if collapsed != text:
+            p.write_text(collapsed, encoding="utf-8")
+        report["collapsed"] += 1
+    return report
+
+
 def _format_transcript(session) -> str:
     """Render the last N messages of a session as a transcript for the LLM.
 
@@ -379,6 +495,170 @@ class Consolidator:
             proposed=proposed, similarity_threshold=threshold
         )
         return {"action": action, "name": saved.name, "version": saved.version}
+
+    async def maybe_trigger(self, session) -> dict | None:
+        """30-msg threshold trigger.
+
+        Called from the chat hot path after each turn is persisted. If
+        the session has accumulated ``_CONSOLIDATION_THRESHOLD`` (30)
+        unconsolidated messages since the last pass, fire a partial
+        consolidation in the background — prefs / projects / lessons,
+        NO history entry yet (we reserve that for the idle sweep so
+        the daily log stays a "session summary" not a running tail).
+
+        Returns the per-session report dict, or ``None`` if nothing
+        to do.
+        """
+        if self._runner is None or not session or not session.messages:
+            return None
+        last_idx = getattr(session, "last_consolidated_index", -1)
+        delta = len(session.messages) - 1 - last_idx
+        if delta < _CONSOLIDATION_THRESHOLD:
+            return None
+        try:
+            return await self.consolidate_session(session, force_history=False)
+        except Exception as e:
+            log.warning("threshold consolidation failed", session_id=session.id, error=str(e))
+            return None
+
+    async def idle_sweep(self) -> dict:
+        """Idle-sweep trigger — once every _IDLE_POLL_SECONDS.
+
+        Walks the session manager; for each session with delta > 0 AND
+        idle for ≥ _IDLE_THRESHOLD_SECONDS, runs a FULL pass that ALSO
+        appends a history entry. Sessions that haven't reached the
+        30-msg threshold still get consolidated here once they go
+        quiet — small chats matter too.
+        """
+        if self._runner is None:
+            return {"ok": False, "error": "runner not configured"}
+        now = time.time()
+        report: dict = {"ok": True, "consolidated": 0, "sessions": []}
+        for s in list(self._mgr._sessions.values()):  # noqa: SLF001
+            last_idx = getattr(s, "last_consolidated_index", -1)
+            delta = len(s.messages) - 1 - last_idx
+            if delta <= 0:
+                continue
+            idle_for = now - (s.updated_at.timestamp() if s.updated_at else 0)
+            if idle_for < _IDLE_THRESHOLD_SECONDS:
+                continue
+            try:
+                row = await self.consolidate_session(s, force_history=True)
+                report["consolidated"] += 1
+                report["sessions"].append(row)
+            except Exception as e:
+                log.warning("idle consolidation failed", session_id=s.id, error=str(e))
+        # Daily decay sweep on the back of an idle pass — cheap, only
+        # runs once per call cycle.
+        try:
+            decay_history()
+        except Exception:
+            log.exception("history decay failed")
+        return report
+
+    async def consolidate_session(self, session, *, force_history: bool) -> dict:
+        """Consolidate a single session — idempotent across restarts.
+
+        Reads ``session.last_consolidated_index``, builds a transcript
+        from the unconsolidated tail, runs the LLM, persists outputs,
+        bumps the index. Calling this on the same session twice in a
+        row with no new turns is a no-op.
+        """
+        if self._runner is None:
+            return {"ok": False, "error": "runner not configured", "session_id": session.id}
+        from arz.lessons import get_lesson_store
+        from arz.memory.files import get_memory_files
+
+        memory_dir = get_memory_files().base_dir
+        pref_path = memory_dir / "preferences.md"
+        proj_path = memory_dir / "projects.md"
+        history_dir = memory_dir / "history"
+        history_dir.mkdir(parents=True, exist_ok=True)
+        history_path = history_dir / f"{date.today().isoformat()}.md"
+
+        last_idx = getattr(session, "last_consolidated_index", -1)
+        row: dict = {
+            "session_id": session.id,
+            "title": session.title,
+            "from_index": last_idx + 1,
+            "to_index": len(session.messages) - 1,
+            "ok": False,
+        }
+        transcript = _format_transcript_slice(session, start=last_idx + 1)
+        if not transcript:
+            row["error"] = "empty transcript"
+            return row
+        try:
+            raw = await self._runner(self._agent, _build_prompt(transcript))
+            payload = _safe_loads(raw or "")
+        except Exception as e:
+            row["error"] = f"{type(e).__name__}: {e}"
+            return row
+
+        prefs = [p for p in (payload.get("preferences") or []) if isinstance(p, str)]
+        projs = [p for p in (payload.get("projects") or []) if isinstance(p, str)]
+        lessons = [l for l in (payload.get("lessons") or []) if isinstance(l, dict)]
+        summary = payload.get("summary") or ""
+
+        try:
+            _append_unique_lines(pref_path, prefs, max_chars=4000)
+            _append_unique_lines(proj_path, projs, max_chars=8000)
+        except Exception as e:
+            log.warning("preferences/projects append failed", error=str(e))
+
+        store = get_lesson_store()
+        lessons_added = 0
+        for l in lessons:
+            cat = (l.get("category") or "knowledge").strip()
+            text = (l.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                store.add(cat, text, pinned=False)
+                lessons_added += 1
+            except Exception:
+                pass
+
+        # History entry only on the idle / full path. Threshold path
+        # holds off so we don't spam the daily log with mid-session
+        # snapshots.
+        if force_history and summary:
+            try:
+                sep = "\n\n---\n\n" if history_path.exists() else ""
+                prev = history_path.read_text(encoding="utf-8") if history_path.exists() else ""
+                title = session.title.replace("\n", " ")[:80]
+                entry = f"### {title} ({session.id[:8]})\n\n{summary.strip()}\n"
+                history_path.write_text(prev + sep + entry, encoding="utf-8")
+            except Exception as e:
+                log.warning("history append failed", error=str(e))
+
+        # Skill extraction (Hermes) is opt-in and gated inside the helper.
+        try:
+            skill_outcome = await self._try_extract_skill(session, transcript)
+        except Exception:
+            skill_outcome = None
+
+        # Bump the offset + ts. Persist on the session so a gateway
+        # restart doesn't redo this slice.
+        session.last_consolidated_index = len(session.messages) - 1
+        session.last_consolidation_ts = time.time()
+        try:
+            self._mgr.save(session)
+        except Exception:
+            log.exception("session save after consolidation failed", session_id=session.id)
+
+        row.update(
+            {
+                "ok": True,
+                "preferences": len(prefs),
+                "projects": len(projs),
+                "lessons": lessons_added,
+                "summarised": bool(summary),
+                "history_written": bool(force_history and summary),
+                "skill": skill_outcome,
+            }
+        )
+        return row
 
     async def consolidate_all(self, *, force: bool = False) -> dict:
         """Run a consolidation pass over recent sessions. Returns a report."""
