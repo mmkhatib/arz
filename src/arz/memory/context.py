@@ -58,14 +58,15 @@ def build_prefix(
         if density in {"more", "less"}:
             parts.append(_widget_hint(density))
 
-    # 1. Always-on preferences/projects/memory_notes
+    # 1. Always-on preferences/projects/memory_notes (with source citations)
     if enable_memory_files:
         try:
             from arz.memory.files import get_memory_files
 
-            block = get_memory_files().render_for_prompt()
+            files = get_memory_files()
+            block = files.render_for_prompt()
             if block:
-                parts.append(block)
+                parts.append(_cite("memory-files", str(files.base_dir), block))
         except Exception:
             log.exception("memory files render failed")
 
@@ -76,22 +77,77 @@ def build_prefix(
 
             block = get_lesson_store().render_for_prompt(user_message)
             if block:
-                parts.append(block)
+                parts.append(_cite("lessons", "~/.arz/lessons.jsonl", block))
         except Exception:
             log.exception("lessons render failed")
 
-    # 3. Top-K relevance hits (FTS + vector). Cheap when index is warm.
+    # 3. Semantic memory — high-confidence key/value facts. Filtered against
+    # the user message when present so long-tail facts only surface when
+    # relevant. Hits bump hit_count so the dashboard can see what's actually
+    # carrying its weight.
+    try:
+        from arz.memory.semantic import render_for_prompt as semantic_render
+
+        block = semantic_render(query=user_message, cap_chars=1500)
+        if block:
+            parts.append(_cite("semantic-memory", "~/.arz/memory.db", block))
+    except Exception:
+        log.exception("semantic memory render failed")
+
+    # 4. Skills index — curated + auto-saved procedures. Short header-only
+    # listing so the model knows what's available without inlining 50 KB
+    # of bodies. It can `<recall>` a skill body by title if needed.
+    try:
+        block = _skills_index_block()
+        if block:
+            parts.append(_cite("skills", "~/.arz/skills/", block))
+    except Exception:
+        log.exception("skills index render failed")
+
+    # 5. Top-K relevance hits (FTS + vector). Cheap when index is warm.
+    # Auto-fires against the user message — no `<recall>` tag needed.
     if enable_recall:
         try:
             block = _recall_block(user_message, recall_k=recall_k, config=config)
             if block:
-                parts.append(block)
+                parts.append(_cite("recall", "FTS5 + vector", block))
         except Exception:
             log.exception("recall failed")
 
     if not parts:
         return ""
     return "\n\n".join(parts)
+
+
+def _cite(label: str, source: str, body: str) -> str:
+    """Prepend a `_[source: …]_` line above each block.
+
+    Mirrors MeshClaw's citation style so the model can refer back ("per
+    your preferences.md") and the user can audit where claims came from.
+    """
+    return f"_[source: {source}]_\n{body}"
+
+
+def _skills_index_block() -> str:
+    """One-line-per-skill index: title + namespace + tags. Body is loaded
+    lazily via `<recall>` if the agent decides it needs the full text."""
+    try:
+        from arz.skills import get_skill_store
+
+        skills = get_skill_store().list()
+    except Exception:
+        return ""
+    if not skills:
+        return ""
+    lines: list[str] = []
+    # Curated first (more trusted), auto after.
+    skills.sort(key=lambda s: (0 if s.namespace == "curated" else 1, -s.tool_calls))
+    for s in skills[:30]:
+        tag_str = (" — " + ", ".join(f"#{t}" for t in s.tags[:3])) if s.tags else ""
+        lines.append(f"- [{s.namespace}] {s.title}{tag_str}")
+    if not lines:
+        return ""
+    return "<skills>\n" + "\n".join(lines) + "\n</skills>"
 
 
 def _widget_hint(density: str) -> str:

@@ -515,6 +515,20 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     history: list[dict] | None = None
     if session and session.messages:
         history = [{"role": m.role, "text": m.text} for m in session.messages]
+        # Compress the middle when the raw transcript would blow past the
+        # underlying model's context window. Falls through to verbatim
+        # when the runner is missing or the history is small enough.
+        try:
+            from arz.consolidator import get_consolidator
+            from arz.memory.compress import compress_history
+
+            # The consolidator already holds a wired runner pointed at the
+            # cheap subagent path. Reusing it keeps "background LLM call"
+            # behaviour identical between compression + consolidation.
+            runner = getattr(get_consolidator(), "_runner", None)
+            history = await compress_history(history, runner=runner)
+        except Exception:
+            log.exception("history compression failed; using verbatim transcript")
     session_map: SessionMap = request.app.state.session_map
     session_work_dir = getattr(session, "work_dir", None)
 

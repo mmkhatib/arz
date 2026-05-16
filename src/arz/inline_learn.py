@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 # Tags we recognise. Body can include newlines. Attributes are simple
 # key="value" pairs separated by whitespace.
 _TAG_RE = re.compile(
-    r"<(?P<tag>learn|memory|note|recall|todo)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
+    r"<(?P<tag>learn|memory|note|recall|todo|semantic|forget)(?P<attrs>(?:\s+[a-z_]+=\"[^\"]*\")*)\s*>"
     r"(?P<body>.*?)"
     r"</(?P=tag)>",
     re.IGNORECASE | re.DOTALL,
@@ -41,7 +41,7 @@ _VALID_LEARN_CATEGORIES = {"preference", "tool", "knowledge"}
 
 @dataclass
 class Extracted:
-    kind: Literal["learn", "memory", "note", "recall", "todo"]
+    kind: Literal["learn", "memory", "note", "recall", "todo", "semantic", "forget"]
     body: str
     attrs: dict[str, str]
 
@@ -98,7 +98,16 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
     ``session_id`` is required for ``<recall>`` extractions so the queued
     query can be pulled on the next turn.
     """
-    counts = {"learn": 0, "memory": 0, "note": 0, "recall": 0, "todo": 0, "skipped": 0}
+    counts = {
+        "learn": 0,
+        "memory": 0,
+        "note": 0,
+        "recall": 0,
+        "todo": 0,
+        "semantic": 0,
+        "forget": 0,
+        "skipped": 0,
+    }
     if not extractions:
         return counts
     from arz.lessons import get_lesson_store
@@ -163,6 +172,32 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
                     counts["todo"] += 1
                 else:
                     counts["skipped"] += 1
+            elif ex.kind == "semantic":
+                # <semantic key="prod.db.host">db-1.internal:5432</semantic>
+                # Confidence rises on each reaffirm; consolidator does the
+                # same upsert from session transcripts.
+                from arz.memory import semantic
+
+                key = (ex.attrs.get("key") or "").strip()
+                if not key:
+                    counts["skipped"] += 1
+                    continue
+                try:
+                    semantic.upsert(key, ex.body, source=session_id or "")
+                    counts["semantic"] += 1
+                except ValueError:
+                    counts["skipped"] += 1
+            elif ex.kind == "forget":
+                # <forget key="prod.db.host">contradicted at 14:32</forget>
+                # Drops confidence; row deletes when it crosses zero.
+                from arz.memory import semantic
+
+                key = (ex.attrs.get("key") or "").strip()
+                if not key:
+                    counts["skipped"] += 1
+                    continue
+                semantic.contradict(key)
+                counts["forget"] += 1
             else:
                 counts["skipped"] += 1
         except Exception:

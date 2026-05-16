@@ -86,6 +86,17 @@ it's additive.
   user-facing follow-ups, NOT for in-turn scratch work. Optional
   `priority="low|normal|high"`; default is `normal`. Use `high` only when
   the user explicitly flags urgency or the follow-up unblocks something.
+- `<semantic key="prod.db.host">db-1.internal:5432</semantic>` — store a
+  structured key/value FACT in semantic memory. Use canonical lowercase
+  dotted keys (`prod.db.host`, `team.lead`, `repo.default_branch`). Each
+  reaffirm bumps confidence. The fact resurfaces in `<semantic-memory>`
+  block on future turns when relevant. Use for things the agent should
+  reliably know (versions, hostnames, paths, names, IDs) — NOT for
+  preferences (use `<learn category="preference">`) or for narrative
+  history (use the consolidator's auto-summarisation).
+- `<forget key="prod.db.host">no longer accurate</forget>` — drop
+  confidence in a stored fact. When confidence hits 0 the row is
+  deleted. Use when the user corrects you or the underlying fact changed.
 
 ### Interactive widgets — visual answers
 
