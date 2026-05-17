@@ -119,26 +119,23 @@ def test_scan_skips_own_children(monkeypatch):
     assert rows == []
 
 
-def test_scan_skips_when_parent_is_live_arz(monkeypatch):
-    """If ppid points to a live arz gateway, the child is legit."""
+def test_scan_skips_when_parent_is_alive(monkeypatch):
+    """Any live parent (not just arz) means the child isn't an orphan.
+
+    We dropped the "looks-like-arz" check because subagents are spawned
+    through Python subprocess wrappers whose cmdline doesn't match
+    "arz gateway" but who are still legitimate children.
+    """
     import subprocess
 
     from arz import reaper
 
-    # ps result: child claude with ppid 9999.
-    # First subprocess call (the ps -A scan) → return our fake row.
-    # Second subprocess call (the per-pid ps lookup inside
-    # _looks_like_arz_parent) → return a string that looks like arz.
-    calls = [
-        _fake_ps("  5030  9999 claude --foo\n"),
-        _fake_ps("python /Users/o/arz/cli.py gateway"),
-    ]
-
-    def fake_run(*a, **kw):
-        return calls.pop(0)
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    # _pid_alive(9999) should be True for the test — patch to short-circuit.
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *a, **kw: _fake_ps("  5030  9999 claude --foo\n"),
+    )
+    # ppid=9999 alive → skip regardless of cmdline.
     monkeypatch.setattr(reaper, "_pid_alive", lambda pid: True)
     rows = reaper.scan_orphan_clis(dry_run=True)
     assert rows == [], f"expected empty, got {rows}"

@@ -270,8 +270,21 @@ def _strip_json(text: str) -> str:
 
 
 def _safe_loads(raw: str) -> dict:
-    """json.loads with a couple of best-effort repairs for common LLM tics."""
+    """json.loads with a couple of best-effort repairs for common LLM tics.
+
+    When the model returns plain prose ("Hey!" / "Avocado toast.") with
+    no JSON-looking content at all, we raise quietly — that's the model
+    declining to consolidate, not a malformed reply worth a warning.
+    """
     candidate = _strip_json(raw)
+    # No JSON shape at all → silent skip. Common when the cheap model
+    # responds conversationally instead of following the JSON format.
+    if "{" not in candidate or "}" not in candidate:
+        log.debug(
+            "consolidator: no JSON in reply; skipping",
+            head=candidate[:120],
+        )
+        raise json.JSONDecodeError("no JSON object in reply", candidate, 0)
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
@@ -284,6 +297,8 @@ def _safe_loads(raw: str) -> dict:
     try:
         return json.loads(repaired)
     except json.JSONDecodeError as e:
+        # Real failure: model tried JSON but produced something
+        # malformed. Worth surfacing so we can tighten the prompt.
         log.warning(
             "consolidator: json parse failed",
             err=str(e),

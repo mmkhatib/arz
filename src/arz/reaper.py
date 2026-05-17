@@ -309,7 +309,13 @@ def scan_orphan_clis(dry_run: bool = False) -> list[dict]:
         # Skip if parent is alive AND looks like a live gateway
         # (python/uvicorn process owning this CLI). The simple check:
         # ppid != 1 (init) and ppid alive and is python.
-        if ppid > 1 and _pid_alive(ppid) and _looks_like_arz_parent(ppid):
+        # Skip if the parent is alive at all. Real orphans have ppid=1
+        # (init reparenting after the spawner died) or ppid pointing
+        # at a now-dead pid. We previously also required the parent
+        # to look like "arz gateway", but that killed legitimate
+        # short-lived subagents whose immediate parent was a Python
+        # subprocess wrapper, not the gateway itself.
+        if ppid > 1 and _pid_alive(ppid):
             continue
         # Orphan. Kill it.
         killed = False
@@ -338,34 +344,6 @@ def scan_orphan_clis(dry_run: bool = False) -> list[dict]:
             }
         )
     return rows
-
-
-def _looks_like_arz_parent(pid: int) -> bool:
-    """True if PID's command line looks like a live gateway process.
-
-    Used by ``scan_orphan_clis`` to avoid killing the children of a
-    legitimate concurrent arz instance running on the same machine.
-    """
-    import subprocess
-    import sys
-
-    try:
-        if sys.platform == "linux":
-            cmdline = Path(f"/proc/{pid}/cmdline").read_text(errors="replace")
-        else:
-            out = subprocess.run(
-                ["ps", "-p", str(pid), "-o", "command="],
-                capture_output=True,
-                text=True,
-                timeout=2,
-            )
-            cmdline = out.stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    low = cmdline.lower()
-    # Live gateway: "arz gateway" / "python ... arz/cli.py gateway"
-    # / "uvicorn ... arz.dashboard". Plain "python" alone isn't enough.
-    return ("arz gateway" in low) or ("arz/cli" in low) or ("arz.dashboard" in low)
 
 
 def _cmd_matches(pid: int, token: str) -> bool:
