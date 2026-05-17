@@ -144,6 +144,21 @@ def _make_provider(
 READ_ONLY_TOOLS = {"Read", "Glob", "Grep", "WebSearch", "WebFetch"}
 
 
+def _final_assistant_text(cleaned: str, extracted: list, raw: str) -> str:
+    """Pick the text we actually save to the session.
+
+    The old fallback was `cleaned or raw` — but when the model's reply
+    was ONLY inline tags (e.g. a lone `<recall>` or `<learn>`), cleaned
+    is "" and we'd revert to the raw text, persisting the tag literal
+    into the visible bubble. That's exactly the case we want cleaned to
+    win in. So: trust cleaned when we actually extracted something,
+    falling back to a tiny placeholder so the bubble isn't blank.
+    """
+    if extracted:
+        return cleaned or "_(memory updated — no visible reply)_"
+    return cleaned or raw
+
+
 async def _run_turn(
     provider: LLMProvider,
     session_id: str,
@@ -321,17 +336,38 @@ async def _run_turn(
                         blk = _recall_block(q, recall_k=_k, config=_cfg)
                         if blk:
                             blocks.append(f'<recall_result query="{q}">\n{blk}\n</recall_result>')
-                    if blocks:
-                        # Subtle UI marker so user sees the model is searching.
-                        await emit(sse_chunk(f"\n\n_[recall: {', '.join(pending_recalls)}]_\n\n"))
-                        # Re-enter stream with results + nudge to keep reasoning.
-                        current_message = (
-                            "\n\n".join(blocks)
-                            + "\n\nContinue your reply with this context. "
-                            + "Do not repeat what you already wrote."
-                        )
-                        recall_iterations += 1
-                        continue  # outer while: stream again
+                        else:
+                            # Empty hit set — STILL feed it back so the model
+                            # knows the search ran and can either retry with a
+                            # different query or answer from prior context.
+                            # Without this it would just sit on the `<recall>`
+                            # tag with no continuation.
+                            blocks.append(
+                                f'<recall_result query="{q}">\n'
+                                "no matches in memory.db (FTS5 + vector). "
+                                "Try a broader query or answer from what's in "
+                                "the conversation above.\n"
+                                "</recall_result>"
+                            )
+                    # Subtle UI marker so user sees the model is searching.
+                    await emit(sse_chunk(f"\n\n_[recall: {', '.join(pending_recalls)}]_\n\n"))
+                    # Re-enter stream with results + nudge to keep reasoning.
+                    current_message = (
+                        "\n\n".join(blocks)
+                        + "\n\nContinue your reply with this context. "
+                        + "Do not repeat what you already wrote."
+                    )
+                    recall_iterations += 1
+                    log.info(
+                        "recall continuation fired",
+                        extra={
+                            "session_id": session_id,
+                            "iteration": recall_iterations,
+                            "queries": pending_recalls,
+                            "hit_blocks": sum(1 for b in blocks if "no matches" not in b),
+                        },
+                    )
+                    continue  # outer while: stream again
                 except Exception:
                     log.exception("recall continuation failed; finalising")
 
@@ -367,7 +403,7 @@ async def _run_turn(
                             asyncio.create_task(
                                 maybe_extract(
                                     user_for_extract,
-                                    cleaned or state.full_reply,
+                                    _final_assistant_text(cleaned, extracted, state.full_reply),
                                     config=_lc(),
                                     provider_name=sess_provider,
                                     model=sess_model,
@@ -375,7 +411,9 @@ async def _run_turn(
                             )
                     except Exception:
                         log.exception("post-turn extraction schedule failed")
-                msg = session.add_message("assistant", cleaned or state.full_reply)
+                msg = session.add_message(
+                    "assistant", _final_assistant_text(cleaned, extracted, state.full_reply)
+                )
                 if usage_dict:
                     msg.usage = usage_dict
                 msg.model = provider.current_model
@@ -383,7 +421,9 @@ async def _run_turn(
                 if state.turn_tool_calls:
                     msg.tool_calls = state.turn_tool_calls
                 if state.archive_versions:
-                    msg.versions = list(state.archive_versions) + [cleaned or state.full_reply]
+                    msg.versions = list(state.archive_versions) + [
+                        _final_assistant_text(cleaned, extracted, state.full_reply)
+                    ]
                     msg.version_index = len(msg.versions) - 1
                 mgr.save(session)
                 saved_assistant = True
@@ -416,13 +456,17 @@ async def _run_turn(
                         inline_learn.apply(extracted, session_id=session_id)
                     except Exception:
                         log.exception("inline-learn apply (finally path) failed")
-                msg = session.add_message("assistant", cleaned or state.full_reply)
+                msg = session.add_message(
+                    "assistant", _final_assistant_text(cleaned, extracted, state.full_reply)
+                )
                 msg.model = provider.current_model
                 msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
                 if state.turn_tool_calls:
                     msg.tool_calls = state.turn_tool_calls
                 if state.archive_versions:
-                    msg.versions = list(state.archive_versions) + [cleaned or state.full_reply]
+                    msg.versions = list(state.archive_versions) + [
+                        _final_assistant_text(cleaned, extracted, state.full_reply)
+                    ]
                     msg.version_index = len(msg.versions) - 1
                 mgr.save(session)
             except Exception:
