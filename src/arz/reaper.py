@@ -25,6 +25,27 @@ log = logging.getLogger(__name__)
 _MANIFEST = Path.home() / ".arz" / "owned_pids.json"
 _DEFAULT_INTERVAL = 300.0  # 5 min
 
+# Basenames of CLI binaries this gateway spawns. The startup scan
+# kills any matching process whose parent PID isn't a live arz
+# gateway — covers the `Ctrl+C 15 times → 15 orphans` case where
+# the manifest never got the chance to record them.
+#
+# IMPORTANT: matched by argv[0] BASENAME (or strict prefix), not
+# substring — otherwise the user's own Kiro Desktop app (which runs
+# `kiro_cli_desktop`) would get killed.
+_CLI_BASENAMES: frozenset[str] = frozenset(
+    {
+        "claude",  # claude-code provider uses `claude`
+        "kiro-cli",
+        "codex",
+        "gemini",
+        # Plain `ollama` only counts when followed by a "run" subcommand
+        # (handled separately in scan loop). `ollama serve` is shared
+        # infrastructure and must never be killed by us.
+        "ollama",
+    }
+)
+
 
 @dataclass
 class _Entry:
@@ -59,7 +80,24 @@ class OrphanReaper:
             self._save()
 
     async def start(self) -> None:
-        """Reap orphans from any prior run, then begin the sweep loop."""
+        """Reap orphans from any prior run, then begin the sweep loop.
+
+        Runs both passes:
+          1. Manifest-based reap (PIDs we recorded last run).
+          2. Aggressive scan (any process matching known CLI tokens
+             whose parent isn't a live arz instance).
+        """
+        # 2. Aggressive scan first — covers Ctrl+C-orphaned procs whose
+        # manifest entries we never got to write. Catches the
+        # "15 stuck instances" case directly.
+        try:
+            rows = scan_orphan_clis(dry_run=False)
+            killed = sum(1 for r in rows if r["killed"])
+            if killed:
+                log.warning("Startup orphan scan killed %d stray CLI(s)", killed)
+        except Exception:
+            log.exception("Startup orphan scan failed")
+
         prior = self._load_prior()
         for entry in prior:
             if entry.pid in self._owned:
@@ -100,6 +138,16 @@ class OrphanReaper:
             try:
                 await asyncio.sleep(self._interval)
                 self._sweep_dead()
+                # Periodic aggressive scan. Catches orphans spawned
+                # by a sibling gateway that crashed mid-run between
+                # our last startup and now.
+                try:
+                    rows = scan_orphan_clis(dry_run=False)
+                    killed = sum(1 for r in rows if r["killed"])
+                    if killed:
+                        log.warning("Periodic orphan scan killed %d stray CLI(s)", killed)
+                except Exception:
+                    log.exception("Periodic orphan scan failed")
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -183,6 +231,141 @@ def _pid_alive(pid: int) -> bool:
         # Catch-all defensive: e.g. Windows shouldn't reach here after the
         # branch above, but if it ever does, don't crash the gateway start.
         return True
+
+
+def scan_orphan_clis(dry_run: bool = False) -> list[dict]:
+    """Aggressive sweep — scan every process on the box for known CLI
+    tokens and reap those whose parent is dead or isn't this gateway.
+
+    Returns a list of ``{"pid", "ppid", "cmd", "killed"}`` rows so the
+    caller can log or surface to the UI. Designed to run on gateway
+    startup AND be available via ``arz reap`` for one-shot cleanup.
+
+    Skips processes whose parent matches our own PID — that's a live
+    gateway's child, not an orphan.
+    """
+    import sys
+
+    if sys.platform == "win32":
+        # Windows: skip for now. The manifest-based reaper still works
+        # there; aggressive scan can be added later via wmic.
+        return []
+
+    import subprocess
+
+    our_pid = os.getpid()
+    try:
+        out = subprocess.run(
+            ["ps", "-A", "-o", "pid=,ppid=,command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (subprocess.SubprocessError, OSError) as e:
+        log.warning("orphan scan failed to run ps: %s", e)
+        return []
+
+    rows: list[dict] = []
+    for line in out.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # `ps` output: "PID PPID COMMAND..."
+        parts = line.split(None, 2)
+        if len(parts) < 3:
+            continue
+        try:
+            pid = int(parts[0])
+            ppid = int(parts[1])
+        except ValueError:
+            continue
+        cmd = parts[2]
+        # Match by argv[0] basename so we only catch the actual CLI
+        # binaries we spawn — not e.g. `kiro_cli_desktop` (user's
+        # Kiro Desktop app) or any binary that incidentally contains
+        # "claude" in its path.
+        try:
+            argv0 = cmd.split()[0] if cmd.split() else ""
+        except Exception:
+            continue
+        basename = argv0.rsplit("/", 1)[-1]
+        token_hit = None
+        if basename in _CLI_BASENAMES:
+            # Special case ollama — only `ollama run …` is ours.
+            # Skip `ollama serve` / `ollama pull` / etc.
+            if basename == "ollama":
+                rest = cmd.split(None, 1)[1] if len(cmd.split(None, 1)) > 1 else ""
+                if not rest.startswith("run "):
+                    continue
+                token_hit = "ollama run"
+            else:
+                token_hit = basename
+        if not token_hit:
+            continue
+        # Skip if parent is ourselves — that's a live child of THIS
+        # gateway, not an orphan.
+        if ppid == our_pid:
+            continue
+        # Skip if parent is alive AND looks like a live gateway
+        # (python/uvicorn process owning this CLI). The simple check:
+        # ppid != 1 (init) and ppid alive and is python.
+        if ppid > 1 and _pid_alive(ppid) and _looks_like_arz_parent(ppid):
+            continue
+        # Orphan. Kill it.
+        killed = False
+        if not dry_run:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed = True
+                log.warning(
+                    "Reaped orphan CLI pid=%d ppid=%d token=%s cmd=%s",
+                    pid,
+                    ppid,
+                    token_hit,
+                    cmd[:200],
+                )
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                log.warning("No permission to kill orphan pid=%d (%s)", pid, token_hit)
+        rows.append(
+            {
+                "pid": pid,
+                "ppid": ppid,
+                "cmd": cmd[:200],
+                "token": token_hit,
+                "killed": killed,
+            }
+        )
+    return rows
+
+
+def _looks_like_arz_parent(pid: int) -> bool:
+    """True if PID's command line looks like a live gateway process.
+
+    Used by ``scan_orphan_clis`` to avoid killing the children of a
+    legitimate concurrent arz instance running on the same machine.
+    """
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "linux":
+            cmdline = Path(f"/proc/{pid}/cmdline").read_text(errors="replace")
+        else:
+            out = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            cmdline = out.stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    low = cmdline.lower()
+    # Live gateway: "arz gateway" / "python ... arz/cli.py gateway"
+    # / "uvicorn ... arz.dashboard". Plain "python" alone isn't enough.
+    return ("arz gateway" in low) or ("arz/cli" in low) or ("arz.dashboard" in low)
 
 
 def _cmd_matches(pid: int, token: str) -> bool:

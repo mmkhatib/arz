@@ -306,9 +306,20 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.heartbeat_service.stop()
     await app.state.provider_pool.shutdown_all()
     try:
-        from arz.reaper import get_reaper
+        from arz.reaper import get_reaper, scan_orphan_clis
 
         await get_reaper().stop()
+        # Final sweep — catches any provider whose .shutdown() left the
+        # child process alive (claude-code occasionally does this when
+        # the ACP socket dies mid-stream). Best-effort; logs warnings
+        # but never raises.
+        try:
+            rows = scan_orphan_clis(dry_run=False)
+            killed = sum(1 for r in rows if r["killed"])
+            if killed:
+                log.info("Shutdown sweep killed %d residual CLI(s)", killed)
+        except Exception:
+            pass
     except Exception:
         pass
     try:
@@ -320,7 +331,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.77", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.78", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)

@@ -180,6 +180,23 @@ def gateway(
     _apply_lvl(cfg.log_level)
 
     typer.echo(f"Arz gateway starting at http://{cfg.dashboard.host}:{cfg.dashboard.port}")
+
+    # atexit hook — last-resort cleanup if FastAPI lifespan teardown
+    # doesn't run (hard SIGINT, OS termination). Best-effort, can't
+    # await async shutdown here so we go straight to the synchronous
+    # process scan.
+    import atexit
+
+    def _final_sweep() -> None:
+        try:
+            from arz.reaper import scan_orphan_clis
+
+            scan_orphan_clis(dry_run=False)
+        except Exception:
+            pass
+
+    atexit.register(_final_sweep)
+
     uvicorn.run(
         web_app,
         host=cfg.dashboard.host,
@@ -192,6 +209,38 @@ def gateway(
 def version() -> None:
     """Print the installed Arz version."""
     typer.echo(f"arz {__version__}")
+
+
+@app.command()
+def reap(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="List orphans without killing them")
+    ] = False,
+) -> None:
+    """Find + kill orphaned LLM CLI processes left over from prior runs.
+
+    Scans every process on the machine for known CLI command tokens
+    (claude-code, kiro-cli, codex, gemini, `ollama run`) whose parent
+    is dead or isn't a live arz gateway. Useful after a hard crash or
+    Ctrl+C'ing the gateway without a clean shutdown.
+    """
+    from arz.reaper import scan_orphan_clis
+
+    rows = scan_orphan_clis(dry_run=dry_run)
+    if not rows:
+        typer.echo("No orphaned CLI processes found.")
+        return
+    typer.echo(f"{'PID':>7}  {'PPID':>7}  {'KILLED':>6}  TOKEN          COMMAND")
+    for r in rows:
+        typer.echo(
+            f"{r['pid']:>7}  {r['ppid']:>7}  {('yes' if r['killed'] else 'dry'):>6}  "
+            f"{r['token']:<14} {r['cmd']}"
+        )
+    killed = sum(1 for r in rows if r["killed"])
+    if dry_run:
+        typer.echo(f"\nFound {len(rows)} orphan(s). Re-run without --dry-run to kill.")
+    else:
+        typer.echo(f"\nKilled {killed} of {len(rows)} orphan(s).")
 
 
 @app.command()
