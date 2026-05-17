@@ -23,6 +23,9 @@ export interface SessionSummary {
   goal?: string | null;
   goal_status?: "active" | "done";
   goal_set_at?: number;
+  goal_iterations?: number;
+  goal_max_iterations?: number;
+  goal_last_reason?: string;
   pinned?: boolean;
   archived?: boolean;
 }

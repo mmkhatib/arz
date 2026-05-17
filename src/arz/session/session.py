@@ -109,6 +109,13 @@ class Session:
     goal: str | None = None
     goal_status: str = "active"
     goal_set_at: float = 0.0
+    # Auto-iteration: after every assistant turn an evaluator decides if
+    # the goal is met; if not, the chat route fires a synthetic follow-up
+    # turn. Iterations + last reason are persisted so the UI pill can
+    # show progress + so a gateway restart can resume mid-loop.
+    goal_iterations: int = 0
+    goal_max_iterations: int = 20
+    goal_last_reason: str = ""
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
@@ -155,6 +162,9 @@ class Session:
             "goal": self.goal,
             "goal_status": self.goal_status,
             "goal_set_at": self.goal_set_at,
+            "goal_iterations": self.goal_iterations,
+            "goal_max_iterations": self.goal_max_iterations,
+            "goal_last_reason": self.goal_last_reason,
             "pinned": self.pinned,
             "archived": self.archived,
             "last_consolidated_index": self.last_consolidated_index,
@@ -186,6 +196,9 @@ class Session:
             goal=d.get("goal"),
             goal_status=d.get("goal_status") or "active",
             goal_set_at=float(d.get("goal_set_at") or 0.0),
+            goal_iterations=int(d.get("goal_iterations") or 0),
+            goal_max_iterations=int(d.get("goal_max_iterations") or 20),
+            goal_last_reason=str(d.get("goal_last_reason") or ""),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
             last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),

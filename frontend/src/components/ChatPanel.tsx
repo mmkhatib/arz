@@ -893,6 +893,9 @@ export default function ChatPanel({
   const [autonudgeIdleS, setAutonudgeIdleS] = useState<number>(0);
   const [goal, setGoal] = useState<string | null>(null);
   const [goalStatus, setGoalStatus] = useState<"active" | "done">("active");
+  const [goalIterations, setGoalIterations] = useState<number>(0);
+  const [goalMaxIterations, setGoalMaxIterations] = useState<number>(20);
+  const [goalLastReason, setGoalLastReason] = useState<string>("");
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<(() => void) | null>(null);
@@ -917,6 +920,9 @@ export default function ChatPanel({
         setAutonudgeIdleS(s.autonudge_idle_s ?? 0);
         setGoal(s.goal ?? null);
         setGoalStatus((s.goal_status as "active" | "done") ?? "active");
+        setGoalIterations(s.goal_iterations ?? 0);
+        setGoalMaxIterations(s.goal_max_iterations ?? 20);
+        setGoalLastReason(s.goal_last_reason ?? "");
         // If a turn is currently running for this session (e.g. the user
         // navigated away and came back), attach to its detached stream and
         // start showing live updates again.
@@ -1360,40 +1366,60 @@ export default function ChatPanel({
       {goal && (
         <div
           className={[
-            "mx-6 mt-3 mb-1 flex items-center gap-2 px-3 py-1.5 rounded-md border text-[12px]",
+            "mx-6 mt-3 mb-1 flex flex-col gap-1 px-3 py-1.5 rounded-md border text-[12px]",
             goalStatus === "active"
               ? "border-emerald-500/40 bg-emerald-500/5 text-emerald-200"
               : "border-[var(--border)] bg-[var(--s2)] text-[var(--muted)]",
           ].join(" ")}
         >
-          <Target size={12} className="shrink-0" />
-          <span className="font-medium uppercase tracking-wider text-[10px] opacity-70">
-            {goalStatus === "active" ? "goal" : "goal · done"}
-          </span>
-          <span className="truncate flex-1">{goal}</span>
-          {goalStatus === "active" && (
+          <div className="flex items-center gap-2">
+            <Target size={12} className="shrink-0" />
+            <span className="font-medium uppercase tracking-wider text-[10px] opacity-70">
+              {goalStatus === "active" ? "goal" : "goal · done"}
+            </span>
+            {goalStatus === "active" && goalIterations > 0 && (
+              <span
+                className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/15"
+                title="Auto-iterations fired since this goal was set"
+              >
+                ◎ {goalIterations}/{goalMaxIterations}
+              </span>
+            )}
+            <span className="truncate flex-1">{goal}</span>
+            {goalStatus === "active" && (
+              <button
+                onClick={async () => {
+                  await api.markGoalDone(sessionId);
+                  setGoalStatus("done");
+                }}
+                title="Mark goal done"
+                className="shrink-0 px-1.5 py-0.5 rounded hover:bg-emerald-500/10"
+              >
+                <Check size={11} />
+              </button>
+            )}
             <button
               onClick={async () => {
-                await api.markGoalDone(sessionId);
-                setGoalStatus("done");
+                await api.clearGoal(sessionId);
+                setGoal(null);
+                setGoalStatus("active");
+                setGoalIterations(0);
+                setGoalLastReason("");
               }}
-              title="Mark goal done"
-              className="shrink-0 px-1.5 py-0.5 rounded hover:bg-emerald-500/10"
+              title="Clear goal"
+              className="shrink-0 px-1.5 py-0.5 rounded hover:bg-[var(--s3)]"
             >
-              <Check size={11} />
+              <XIcon size={11} />
             </button>
+          </div>
+          {goalLastReason && (
+            <div
+              className="text-[11px] opacity-70 pl-5 truncate"
+              title={goalLastReason}
+            >
+              evaluator: {goalLastReason}
+            </div>
           )}
-          <button
-            onClick={async () => {
-              await api.clearGoal(sessionId);
-              setGoal(null);
-              setGoalStatus("active");
-            }}
-            title="Clear goal"
-            className="shrink-0 px-1.5 py-0.5 rounded hover:bg-[var(--s3)]"
-          >
-            <XIcon size={11} />
-          </button>
         </div>
       )}
 

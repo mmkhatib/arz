@@ -340,7 +340,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.79", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.80", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -512,15 +512,20 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     # streaming / tool / approval plumbing.
     import httpx as _httpx
 
-    async def _autonudge_runner(session_id: str, message: str) -> None:
+    async def _autonudge_runner(
+        session_id: str, message: str, extra_body: dict | None = None
+    ) -> None:
         port = config.dashboard.port
         headers = {"Content-Type": "application/json"}
         if app.state.token_auth_enabled and app.state.token:
             headers["Authorization"] = f"Bearer {app.state.token}"
+        body: dict = {"message": message}
+        if extra_body:
+            body.update(extra_body)
         async with _httpx.AsyncClient(timeout=300.0) as client:
             resp = await client.post(
                 f"http://127.0.0.1:{port}/api/chat/{session_id}",
-                json={"message": message},
+                json=body,
                 headers=headers,
             )
             # Drain so the server treats the response as consumed; we don't
@@ -534,6 +539,12 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
     from arz.autonudge import init_autonudge
 
     app.state.autonudge = init_autonudge(app.state.session_manager, runner=_autonudge_runner)
+    # Same runner is reused by the /goal auto-iteration loop so a goal
+    # turn POSTs back through /api/chat just like an autonudge does.
+    app.state.chat_runner = _autonudge_runner
+    # Cheap-subagent runner — for the goal evaluator + future helpers.
+    # Same `_run_subagent` the consolidator already uses.
+    app.state.subagent_runner = _run_subagent
 
     # Mirror every router event into the audit log.
     def _audit_handler(event):

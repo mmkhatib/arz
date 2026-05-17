@@ -50,6 +50,9 @@ def _session_to_dict(session: object) -> dict:
         "goal": getattr(session, "goal", None),
         "goal_status": getattr(session, "goal_status", "active"),
         "goal_set_at": getattr(session, "goal_set_at", 0.0),
+        "goal_iterations": getattr(session, "goal_iterations", 0),
+        "goal_max_iterations": getattr(session, "goal_max_iterations", 20),
+        "goal_last_reason": getattr(session, "goal_last_reason", ""),
         "pinned": getattr(session, "pinned", False),
         "archived": getattr(session, "archived", False),
     }

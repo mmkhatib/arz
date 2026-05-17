@@ -159,6 +159,109 @@ def _final_assistant_text(cleaned: str, extracted: list, raw: str) -> str:
     return cleaned or raw
 
 
+async def _goal_followup(
+    *,
+    session,
+    mgr,
+    subagent_runner,
+    chat_runner,
+) -> None:
+    """Evaluate the goal after the just-finished assistant turn; if not
+    met, fire one auto-follow-up via the chat runner. Bounded by
+    ``session.goal_max_iterations``; respects user-cleared / met state.
+    """
+    from arz import goal as _goal
+
+    try:
+        # Build a short history tail for the evaluator.
+        history = [{"role": m.role, "text": m.text} for m in (session.messages or [])][-8:]
+        decision = await _goal.evaluate(
+            goal=session.goal or "",
+            history=history,
+            runner=subagent_runner,
+            n_turns=6,
+        )
+    except Exception:
+        log.exception("goal evaluator crashed", extra={"session_id": session.id})
+        return
+
+    # Refresh from disk in case the user cleared the goal mid-eval.
+    fresh = mgr.get(session.id)
+    if fresh is None:
+        return
+    if (not (fresh.goal or "").strip()) or fresh.goal_status != "active":
+        return
+
+    fresh.goal_last_reason = decision.reason
+    if decision.met:
+        fresh.goal_status = "done"
+        mgr.save(fresh)
+        try:
+            from arz.dashboard.stream_registry import get_stream_registry
+
+            reg = get_stream_registry()
+            # Best-effort UI ping; if no active subscriber, silently drop.
+            state = reg._states.get(fresh.id)  # noqa: SLF001
+            if state is not None:
+                from arz.dashboard.sse import sse_chunk
+
+                for q in list(state.subscribers):
+                    try:
+                        q.put_nowait(sse_chunk(f"\n\n_[goal: done — {decision.reason}]_\n\n"))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        log.info(
+            "goal achieved",
+            extra={
+                "session_id": fresh.id,
+                "iterations": fresh.goal_iterations,
+                "reason": decision.reason,
+            },
+        )
+        return
+
+    # Not met — fire one more turn if budget remains.
+    new_iter = fresh.goal_iterations + 1
+    if new_iter > fresh.goal_max_iterations:
+        log.warning(
+            "goal cap reached without completion",
+            extra={"session_id": fresh.id, "iterations": fresh.goal_iterations},
+        )
+        return
+    fresh.goal_iterations = new_iter
+    mgr.save(fresh)
+    prompt = _goal.build_followup_prompt(
+        goal=fresh.goal or "",
+        reason=decision.reason,
+        iteration=new_iter,
+        cap=fresh.goal_max_iterations,
+    )
+    log.info(
+        "goal auto-iteration firing",
+        extra={
+            "session_id": fresh.id,
+            "iteration": new_iter,
+            "max": fresh.goal_max_iterations,
+            "reason": decision.reason,
+        },
+    )
+    try:
+        # Mark this as a goal-auto POST so the receiving turn doesn't
+        # reset the iteration counter back to 0.
+        await chat_runner(fresh.id, prompt, extra_body={"_goal_auto": True})
+    except TypeError:
+        # Older chat_runner signature didn't take extra_body — fall back
+        # gracefully (counter will reset, but the loop still progresses).
+        try:
+            await chat_runner(fresh.id, prompt)
+        except Exception:
+            log.exception("goal chat_runner failed (fallback)")
+    except Exception:
+        log.exception("goal chat_runner failed")
+
+
 async def _run_turn(
     provider: LLMProvider,
     session_id: str,
@@ -168,6 +271,10 @@ async def _run_turn(
     yolo_sessions: set | None = None,
     session_modes: dict | None = None,
     pending_approval_meta: dict | None = None,
+    *,
+    chat_runner=None,  # (session_id, message) -> awaitable, posts to /api/chat
+    subagent_runner=None,  # (agent_name, prompt) -> awaitable[str], cheap model
+    is_goal_auto: bool = False,  # True when fired by the auto-iteration loop
 ) -> None:
     """Background task: drive the provider, persist the assistant turn,
     publish events to the StreamRegistry. NOT tied to any HTTP connection
@@ -484,6 +591,46 @@ async def _run_turn(
         except Exception:
             pass
 
+        # ── /goal auto-iteration ──
+        # After every assistant turn ends, if the session has an active
+        # goal we ask a cheap model whether the condition is met. If yes,
+        # mark done + leave a transcript marker. If no, fire ONE more
+        # auto-turn with the evaluator's reason as guidance — bounded by
+        # goal_max_iterations and short-circuited by the `goal:done`
+        # token in the assistant reply.
+        try:
+            if session and chat_runner is not None and subagent_runner is not None:
+                from arz import goal as _goal
+
+                g_text = (getattr(session, "goal", None) or "").strip()
+                g_status = getattr(session, "goal_status", "active")
+                g_iters = int(getattr(session, "goal_iterations", 0) or 0)
+                g_cap = int(getattr(session, "goal_max_iterations", 20) or 20)
+                last_text = session.messages[-1].text if session.messages else ""
+                if g_text and g_status == "active" and not is_goal_auto:
+                    # First fire for THIS user turn: reset the counter so
+                    # a fresh user message restarts the loop budget.
+                    session.goal_iterations = 0
+                    g_iters = 0
+                    mgr.save(session)
+                if _goal.should_auto_iterate(
+                    goal=g_text,
+                    status=g_status,
+                    iterations=g_iters,
+                    max_iterations=g_cap,
+                    last_assistant_text=last_text,
+                ):
+                    asyncio.create_task(
+                        _goal_followup(
+                            session=session,
+                            mgr=mgr,
+                            subagent_runner=subagent_runner,
+                            chat_runner=chat_runner,
+                        )
+                    )
+        except Exception:
+            log.exception("goal auto-iteration scheduling failed")
+
 
 async def _sse_subscribe(session_id: str) -> AsyncIterator[str]:
     """Subscribe an SSE client to an in-flight (or just-finished) turn.
@@ -791,6 +938,9 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             request.app.state.yolo_sessions,
             request.app.state.session_modes,
             getattr(request.app.state, "pending_approval_meta", None),
+            chat_runner=getattr(request.app.state, "chat_runner", None),
+            subagent_runner=getattr(request.app.state, "subagent_runner", None),
+            is_goal_auto=bool(body.get("_goal_auto") or False),
         )
     )
 
