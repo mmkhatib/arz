@@ -79,6 +79,17 @@ def build_prefix(
         except Exception:
             log.exception("intent render failed")
 
+    # 0b. Recent sessions index — small block listing the last N days of
+    # session titles grouped by day. Gives terse, always-on context for
+    # "what did I work on yesterday?" / "summarise this week" style asks
+    # without forcing a `<recall>` round-trip.
+    try:
+        block = _recent_sessions_block(days=7, cap_per_day=8)
+        if block:
+            parts.append(_cite("recent-sessions", "~/.arz/sessions/", block))
+    except Exception:
+        log.exception("recent sessions render failed")
+
     # 1. Always-on preferences/projects/memory_notes (with source citations)
     if enable_memory_files:
         try:
@@ -186,6 +197,88 @@ def _skills_index_block() -> str:
     if not lines:
         return ""
     return "<skills>\n" + "\n".join(lines) + "\n</skills>"
+
+
+def _recent_sessions_block(
+    *, days: int = 14, cap_per_day: int = 8, fallback_recent: int = 8
+) -> str:
+    """List recent session titles grouped by day so the model can answer
+    "what did I work on yesterday/this week" without recall round-trips.
+
+    Reads session JSON files directly from ~/.arz/sessions/ — cheap
+    (just title + updated_at, no message bodies). Today's sessions go
+    first, then yesterday, then older. Caps at ``cap_per_day`` titles
+    per day to keep the block bounded.
+
+    If no sessions fall within ``days``, falls back to the ``fallback_recent``
+    most recent ones regardless of age. Better to show "your last session
+    was 3 weeks ago" than to silently render nothing.
+    """
+    import datetime as _dt
+    import json
+    from pathlib import Path
+
+    sessions_dir = Path.home() / ".arz" / "sessions"
+    if not sessions_dir.exists():
+        return ""
+    cutoff = _dt.datetime.now() - _dt.timedelta(days=days)
+    by_day: dict[str, list[str]] = {}
+    all_real: list[tuple[_dt.datetime, str, int]] = []  # (ts, title, msg_count)
+    for path in sessions_dir.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        updated = data.get("updated_at") or data.get("created_at")
+        if not isinstance(updated, str):
+            continue
+        try:
+            ts = _dt.datetime.fromisoformat(updated.replace("Z", "+00:00"))
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
+        except ValueError:
+            continue
+        title = (data.get("title") or "Untitled")[:80]
+        msg_count = len(data.get("messages") or [])
+        # Skip ghost "New session" rows that warm-pool / failed creates
+        # leave behind — they're noise, not real activity.
+        if msg_count == 0 and title in ("New session", "Untitled"):
+            continue
+        all_real.append((ts, title, msg_count))
+        if ts < cutoff:
+            continue
+        day = ts.date().isoformat()
+        by_day.setdefault(day, []).append(f"- {title} ({msg_count} msgs)")
+
+    today = _dt.date.today().isoformat()
+    yesterday = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+
+    if by_day:
+        out: list[str] = ["<recent-sessions>"]
+        for day in sorted(by_day.keys(), reverse=True):
+            label = day
+            if day == today:
+                label = f"{day} (today)"
+            elif day == yesterday:
+                label = f"{day} (yesterday)"
+            out.append(label + ":")
+            for line in by_day[day][:cap_per_day]:
+                out.append(line)
+        out.append("</recent-sessions>")
+        return "\n".join(out)
+
+    # Fallback: no sessions in window, but maybe there are older ones.
+    if not all_real:
+        return ""
+    all_real.sort(reverse=True)
+    out = [
+        "<recent-sessions>",
+        f"No sessions in the last {days} days. Most recent ever:",
+    ]
+    for ts, title, msg_count in all_real[:fallback_recent]:
+        out.append(f"- [{ts.date().isoformat()}] {title} ({msg_count} msgs)")
+    out.append("</recent-sessions>")
+    return "\n".join(out)
 
 
 def _widget_hint(density: str) -> str:

@@ -197,6 +197,15 @@ async def _run_cron_entry(app: FastAPI, entry: CronEntry) -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     log.info("Arz gateway starting", port=app.state.config.dashboard.port)
+    # Purge ghost session files (title="New session", 0 messages) older
+    # than an hour. Warm pool + failed creates left ~115 of these on the
+    # user's box; they polluted the <recent-sessions> block.
+    try:
+        purged = app.state.session_manager.purge_ghosts(older_than_minutes=60)
+        if purged:
+            log.info("Purged ghost sessions on startup", count=purged)
+    except Exception:
+        log.exception("Ghost session purge failed; continuing")
     app.state.session_manager.load_all()
     # Hydrate approval-mode hot path from persisted session state.
     for s in app.state.session_manager._sessions.values():  # noqa: SLF001
@@ -331,7 +340,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.78", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.79", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)

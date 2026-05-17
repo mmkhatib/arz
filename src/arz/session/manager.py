@@ -128,6 +128,39 @@ class SessionManager:
             except Exception:
                 log.exception("on_save hook failed for session %s", session.id)
 
+    def purge_ghosts(self, *, older_than_minutes: int = 60) -> int:
+        """Delete ghost session files that the warm pool / failed creates
+        leave behind: title=="New session", 0 messages, last touched
+        more than ``older_than_minutes`` ago.
+
+        Returns the count deleted. Cheap to call on startup — only reads
+        each JSON's first ~200 bytes via Python's json parser. Safe under
+        race because we never touch files newer than the threshold.
+        """
+        import time as _time
+
+        cutoff_ts = _time.time() - older_than_minutes * 60
+        deleted = 0
+        for path in list(self._dir.glob("*.json")):
+            try:
+                if path.stat().st_mtime > cutoff_ts:
+                    continue
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            title = data.get("title") or ""
+            msgs = data.get("messages") or []
+            if len(msgs) == 0 and title in ("New session", "Untitled", ""):
+                try:
+                    path.unlink()
+                    deleted += 1
+                    self._sessions.pop(data.get("id", ""), None)
+                except OSError:
+                    pass
+        if deleted:
+            log.info("Purged %d ghost session file(s)", deleted)
+        return deleted
+
     def close(self, session_id: str) -> None:
         """Mark a session inactive and persist it."""
         session = self._sessions.get(session_id)

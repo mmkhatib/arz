@@ -25,6 +25,7 @@ _DB_PATH = Path.home() / ".arz" / "memory_fts.db"
 _MEMORY_DIR = Path.home() / ".arz" / "memory"
 _LESSONS_PATH = Path.home() / ".arz" / "lessons.jsonl"
 _MARKDOWN_DIR = Path.home() / ".arz" / "markdown"
+_SESSIONS_DIR = Path.home() / ".arz" / "sessions"
 
 
 _DDL = """
@@ -74,11 +75,18 @@ class MemoryFTS:
                 conn.execute("DELETE FROM memory_meta")
                 conn.commit()
 
-        counts = {"memory_files": 0, "history": 0, "lessons": 0, "notes": 0}
+        counts = {
+            "memory_files": 0,
+            "history": 0,
+            "lessons": 0,
+            "notes": 0,
+            "sessions": 0,
+        }
         counts["memory_files"] = self._index_memory_files()
         counts["history"] = self._index_history()
         counts["lessons"] = self._index_lessons()
         counts["notes"] = self._index_markdown_notes()
+        counts["sessions"] = self._index_sessions()
         return counts
 
     def search(self, q: str, source: str | None = None, k: int = 10) -> list[dict]:
@@ -200,6 +208,52 @@ class MemoryFTS:
             )
             conn.commit()
         return count
+
+    def _index_sessions(self) -> int:
+        """Index raw session transcripts so `<recall>` can find them by
+        topic OR date. Title includes the date tag ``[YYYY-MM-DD]`` so a
+        FTS match on the date string surfaces all that day's sessions.
+        Body holds the first ~3 user/assistant turns — enough signal to
+        answer "what was that session about" without bloating the index.
+        """
+        if not _SESSIONS_DIR.exists():
+            return 0
+        n = 0
+        for path in sorted(_SESSIONS_DIR.glob("*.json")):
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                continue
+            if not self._needs_reindex("sessions", path.name, mtime):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            sid = data.get("id") or path.stem
+            title = data.get("title") or "Untitled"
+            updated = data.get("updated_at") or data.get("created_at") or ""
+            day = updated[:10] if isinstance(updated, str) else ""
+            # First few turn snippets give recall something topical to match.
+            snippets: list[str] = []
+            for m in (data.get("messages") or [])[:6]:
+                role = m.get("role", "")
+                text = (m.get("text") or "").strip()
+                if not text:
+                    continue
+                snippets.append(f"{role}: {text[:300]}")
+            body = "\n".join(snippets) or title
+            self._upsert(
+                source="sessions",
+                key=sid,
+                # `[2026-05-16] session-title` — FTS will tokenise the date
+                # so queries like "2026-05-16" or "may 16" find this row.
+                title=f"[{day}] {title}" if day else title,
+                body=body,
+                mtime=mtime,
+            )
+            n += 1
+        return n
 
     def _index_markdown_notes(self) -> int:
         if not _MARKDOWN_DIR.exists():
