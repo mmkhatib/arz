@@ -1558,14 +1558,24 @@ export default function ChatPanel({
           setGoalIterations(0);
           setGoalLastReason("");
           // Server fires the first turn immediately (no separate user
-          // POST). Attach the SSE stream so the live reply renders
-          // here without forcing the user to refresh.
+          // POST). Poll up to 5s for streaming=true, then attach the
+          // SSE — covers the race where the kickoff POST is still
+          // being scheduled when we get back from setGoal.
           if (res?.kickoff_fired) {
-            // Small delay lets the gateway register the in-flight
-            // turn before we ask for its stream.
-            setTimeout(() => {
-              reattachStream().catch(() => {});
-            }, 150);
+            const tryAttach = async (attempt: number): Promise<void> => {
+              if (attempt > 25) return; // ~5s total at 200ms intervals
+              try {
+                const s = await api.getSession(sessionId);
+                if (s.streaming) {
+                  await reattachStream().catch(() => {});
+                  return;
+                }
+              } catch {
+                /* ignore — retry */
+              }
+              setTimeout(() => void tryAttach(attempt + 1), 200);
+            };
+            void tryAttach(0);
           }
         }}
         onClearGoal={async () => {

@@ -193,25 +193,42 @@ async def _goal_followup(
         return
 
     fresh.goal_last_reason = decision.reason
-    if decision.met:
-        fresh.goal_status = "done"
-        mgr.save(fresh)
+
+    # Always emit an evaluator marker so the user can see the
+    # back-and-forth between the worker turn and the judge — without
+    # this the evaluator was invisible and felt like nothing was
+    # happening between auto-iterations.
+    def _emit_marker(text: str) -> None:
         try:
+            from arz.dashboard.sse import sse_chunk
             from arz.dashboard.stream_registry import get_stream_registry
 
             reg = get_stream_registry()
-            # Best-effort UI ping; if no active subscriber, silently drop.
             state = reg._states.get(fresh.id)  # noqa: SLF001
-            if state is not None:
-                from arz.dashboard.sse import sse_chunk
-
-                for q in list(state.subscribers):
-                    try:
-                        q.put_nowait(sse_chunk(f"\n\n_[goal: done — {decision.reason}]_\n\n"))
-                    except Exception:
-                        pass
+            if state is None:
+                return
+            chunk = sse_chunk(text)
+            # Persist into state.events so a late-joining subscriber
+            # replaying the buffer sees the marker too.
+            try:
+                state.events.append(chunk)
+            except Exception:
+                pass
+            for q in list(state.subscribers):
+                try:
+                    q.put_nowait(chunk)
+                except Exception:
+                    pass
         except Exception:
             pass
+
+    verdict = "met" if decision.met else "not met"
+    _emit_marker(f"\n\n_[evaluator · {verdict}: {decision.reason}]_\n\n")
+
+    if decision.met:
+        fresh.goal_status = "done"
+        mgr.save(fresh)
+        _emit_marker(f"_[goal: done — {decision.reason}]_\n\n")
         log.info(
             "goal achieved",
             extra={

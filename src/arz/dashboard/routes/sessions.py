@@ -174,19 +174,33 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
                 "literal token `goal:done`.\n\n"
                 f"Goal:\n{goal}"
             )
+            log.info(
+                "goal kickoff scheduling",
+                extra={"session_id": session_id, "goal_len": len(goal)},
+            )
 
             async def _kickoff() -> None:
+                log.info("goal kickoff posting", extra={"session_id": session_id})
                 try:
                     await chat_runner(session_id, kickoff, extra_body={"_goal_auto": True})
+                    log.info("goal kickoff posted ok", extra={"session_id": session_id})
                 except TypeError:
                     try:
                         await chat_runner(session_id, kickoff)
+                        log.info(
+                            "goal kickoff posted ok (fallback)",
+                            extra={"session_id": session_id},
+                        )
                     except Exception:
                         log.exception("goal kickoff fallback failed")
                 except Exception:
                     log.exception("goal kickoff failed")
 
             asyncio.create_task(_kickoff())
+            # Yield once so the task actually starts before we return —
+            # otherwise the response can race ahead of the task and the
+            # frontend's reattach poll finds nothing in flight yet.
+            await asyncio.sleep(0)
             fired = True
     else:
         session.goal = None
