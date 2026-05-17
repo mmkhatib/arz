@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2 } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2, Target } from "lucide-react";
+import { useDialog } from "@/components/Dialog";
 
 // Per-provider accent — matches the chat badges + analytics legend.
 const PROVIDER_ACCENT: Record<string, string> = {
@@ -61,6 +62,12 @@ interface Props {
   /** Session id is needed so the "improve with AI" rewrite mirrors the
    *  active session's provider/model. */
   sessionId?: string | null;
+  /** Persistent goal — shows a quick-access button in the input row. */
+  goal?: string | null;
+  goalStatus?: "active" | "done";
+  /** Save / replace goal. */
+  onSetGoal?: (text: string) => Promise<void> | void;
+  onClearGoal?: () => Promise<void> | void;
 }
 
 export default function InputBar({
@@ -84,7 +91,46 @@ export default function InputBar({
   queuedPreview = null,
   onCancelQueued,
   sessionId = null,
+  goal = null,
+  goalStatus = "active",
+  onSetGoal,
+  onClearGoal,
 }: Props) {
+  const dialog = useDialog();
+  const goalActive = !!(goal && goalStatus === "active");
+
+  const handleGoalClick = async () => {
+    if (!onSetGoal) return;
+    if (goalActive) {
+      // Goal exists — show a tiny picker via prompt + 3 buttons through dialog.
+      const choice = await dialog.prompt({
+        title: "Goal",
+        body: goal ?? "",
+        defaultValue: goal ?? "",
+        okLabel: "Update",
+        eyebrow: "active goal",
+        placeholder: "Edit goal text, or clear to remove",
+      });
+      if (choice === null) return;
+      const trimmed = choice.trim();
+      if (!trimmed) {
+        await onClearGoal?.();
+      } else if (trimmed !== goal) {
+        await onSetGoal(trimmed);
+      }
+      return;
+    }
+    const next = await dialog.prompt({
+      title: "Set persistent goal",
+      body: "Injected into every turn so the model keeps it in mind across restarts.",
+      defaultValue: "",
+      placeholder: "Ship the auth refactor and document the API.",
+      okLabel: "Set goal",
+      eyebrow: "new goal",
+    });
+    if (!next) return;
+    await onSetGoal(next.trim());
+  };
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -673,6 +719,30 @@ export default function InputBar({
                   <Paperclip size={15} />
                 </button>
               </>
+            )}
+            {/* Goal button — set / edit / clear the persistent objective.
+                Stays visible so the user can reach it without diving
+                into the ⋯ menu. Emerald when active, neutral when none. */}
+            {onSetGoal && (
+              <button
+                type="button"
+                onClick={handleGoalClick}
+                disabled={disabled}
+                className={[
+                  "w-8 h-8 rounded-lg flex items-center justify-center transition-all disabled:opacity-50",
+                  goalActive
+                    ? "text-emerald-400 hover:bg-emerald-400/10"
+                    : "text-[var(--muted)] hover:text-[var(--cedar)] hover:bg-[var(--surface)]",
+                ].join(" ")}
+                title={
+                  goalActive
+                    ? `Goal: ${goal}\nClick to edit or clear`
+                    : "Set persistent goal — keeps the AI focused across turns"
+                }
+                aria-label={goalActive ? "Edit goal" : "Set goal"}
+              >
+                <Target size={15} />
+              </button>
             )}
             {/* Improve-with-AI: rewrites the draft via a cheap one-shot.
                 Also triggered by Ctrl/Cmd+Enter. Hidden when there's

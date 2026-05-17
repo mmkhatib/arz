@@ -1522,6 +1522,18 @@ export default function ChatPanel({
         queuedPreview={queuedMessage?.text ?? null}
         onCancelQueued={() => setQueued(null)}
         sessionId={sessionId}
+        goal={goal}
+        goalStatus={goalStatus}
+        onSetGoal={async (text) => {
+          await api.setGoal(sessionId, text);
+          setGoal(text);
+          setGoalStatus("active");
+        }}
+        onClearGoal={async () => {
+          await api.clearGoal(sessionId);
+          setGoal(null);
+          setGoalStatus("active");
+        }}
       />
     </div>
   );
