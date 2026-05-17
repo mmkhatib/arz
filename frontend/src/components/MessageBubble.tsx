@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { stripInlineTags } from "@/utils/stripInline";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
@@ -469,7 +470,15 @@ export default function MessageBubble({
   onCycleVersion,
 }: Props) {
   const isUser = message.role === "user";
-  const segments = useMemo(() => splitWidgets(message.text), [message.text]);
+  // Strip inline tags (recall/learn/semantic/etc) for assistant messages.
+  // The server cleans before save, but old sessions may still hold raw
+  // tags, and the same util is used by ChatPanel's live stream view —
+  // keeping both paths consistent.
+  const displayText = useMemo(
+    () => (isUser ? message.text : stripInlineTags(message.text)),
+    [message.text, isUser],
+  );
+  const segments = useMemo(() => splitWidgets(displayText), [displayText]);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.text);
 
