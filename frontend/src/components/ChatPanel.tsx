@@ -1552,9 +1552,21 @@ export default function ChatPanel({
         goal={goal}
         goalStatus={goalStatus}
         onSetGoal={async (text) => {
-          await api.setGoal(sessionId, text);
+          const res = await api.setGoal(sessionId, text);
           setGoal(text);
           setGoalStatus("active");
+          setGoalIterations(0);
+          setGoalLastReason("");
+          // Server fires the first turn immediately (no separate user
+          // POST). Attach the SSE stream so the live reply renders
+          // here without forcing the user to refresh.
+          if (res?.kickoff_fired) {
+            // Small delay lets the gateway register the in-flight
+            // turn before we ask for its stream.
+            setTimeout(() => {
+              reattachStream().catch(() => {});
+            }, 150);
+          }
         }}
         onClearGoal={async () => {
           await api.clearGoal(sessionId);

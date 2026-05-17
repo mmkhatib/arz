@@ -94,7 +94,9 @@ def test_no_iter_when_cap_reached():
     )
 
 
-def test_no_iter_when_assistant_emitted_done_token():
+def test_iter_runs_even_when_assistant_emitted_done_token():
+    """Model's self-declared done is NOT a short-circuit — evaluator
+    is the authority. Matches Claude Code /goal semantics."""
     from arz.goal import should_auto_iterate
 
     assert (
@@ -105,7 +107,7 @@ def test_no_iter_when_assistant_emitted_done_token():
             max_iterations=20,
             last_assistant_text="all green. goal:done",
         )
-        is False
+        is True
     )
 
 

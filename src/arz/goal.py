@@ -151,17 +151,18 @@ def should_auto_iterate(
     status: str,
     iterations: int,
     max_iterations: int,
-    last_assistant_text: str,
+    last_assistant_text: str,  # noqa: ARG001 — kept for API compat / future use
 ) -> bool:
-    """Pure decision: should the chat route fire another auto-turn?"""
+    """Pure decision: should the chat route schedule the post-turn
+    evaluator? Matches Claude Code's `/goal`: the evaluator is the
+    sole authority on whether a goal is met. The model's self-declared
+    "goal:done" is a HINT to the evaluator (still in its transcript),
+    not a short-circuit.
+    """
     if not (goal or "").strip():
         return False
     if status != "active":
         return False
     if iterations >= max_iterations:
-        return False
-    # Honor the model's explicit done token so it can short-circuit even
-    # before the evaluator runs.
-    if "goal:done" in (last_assistant_text or "").lower():
         return False
     return True
