@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+
+log = logging.getLogger(__name__)
 from fastapi.responses import PlainTextResponse, Response
 
 from arz.dashboard.token_auth import require_token
@@ -124,14 +127,20 @@ async def set_autonudge(session_id: str, request: Request) -> None:
     mgr.save(session)
 
 
-@router.put("/api/sessions/{session_id}/goal", status_code=status.HTTP_204_NO_CONTENT)
-async def set_session_goal(session_id: str, request: Request) -> None:
+@router.put("/api/sessions/{session_id}/goal", status_code=status.HTTP_202_ACCEPTED)
+async def set_session_goal(session_id: str, request: Request) -> dict:
     """Set or update the persistent goal for a session.
 
     Body: ``{"goal": "ship the auth refactor"}``. Setting an empty
     string clears the goal. The goal is injected as a `<goal>` block
     into every turn's memory prefix until cleared or marked done.
+
+    Matches Claude Code's `/goal`: setting a goal IMMEDIATELY fires
+    the first auto-turn with the goal as the directive — the user
+    doesn't have to send a separate prompt. The auto-iteration loop
+    (in chat.py) takes over from there.
     """
+    import asyncio
     import time as _time
 
     mgr: SessionManager = _get_manager(request)
@@ -143,15 +152,50 @@ async def set_session_goal(session_id: str, request: Request) -> None:
     from arz.session.session import Session
 
     assert isinstance(session, Session)
+    fired = False
     if goal:
         session.goal = goal
         session.goal_status = "active"
         session.goal_set_at = _time.time()
+        # Reset the iteration counter on each new/replaced goal so
+        # the budget restarts fresh.
+        session.goal_iterations = 0
+        session.goal_last_reason = ""
+        mgr.save(session)
+        # Kick off the first turn so the model starts working
+        # immediately — no separate user prompt required.
+        chat_runner = getattr(request.app.state, "chat_runner", None)
+        if chat_runner is not None:
+            kickoff = (
+                "[goal-start] Begin working toward this goal. "
+                "Make tangible progress on each turn. "
+                "Use tools as needed. "
+                "If the goal is complete, end your reply with the "
+                "literal token `goal:done`.\n\n"
+                f"Goal:\n{goal}"
+            )
+
+            async def _kickoff() -> None:
+                try:
+                    await chat_runner(session_id, kickoff, extra_body={"_goal_auto": True})
+                except TypeError:
+                    try:
+                        await chat_runner(session_id, kickoff)
+                    except Exception:
+                        log.exception("goal kickoff fallback failed")
+                except Exception:
+                    log.exception("goal kickoff failed")
+
+            asyncio.create_task(_kickoff())
+            fired = True
     else:
         session.goal = None
         session.goal_status = "active"
         session.goal_set_at = 0.0
-    mgr.save(session)
+        session.goal_iterations = 0
+        session.goal_last_reason = ""
+        mgr.save(session)
+    return {"goal": session.goal, "kickoff_fired": fired}
 
 
 @router.post("/api/sessions/{session_id}/goal/done", status_code=status.HTTP_204_NO_CONTENT)

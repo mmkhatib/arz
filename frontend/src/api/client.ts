@@ -364,14 +364,21 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   },
 
-  /** Set or update the persistent goal injected into every turn's prefix. */
-  setGoal: async (sessionId: string, goal: string): Promise<void> => {
+  /** Set or update the persistent goal. Server immediately fires the
+   *  first auto-turn, so the user sees streaming start without sending
+   *  another message. Returns ``{kickoff_fired}`` so the UI can show
+   *  a hint if it didn't (e.g., empty goal). */
+  setGoal: async (
+    sessionId: string,
+    goal: string,
+  ): Promise<{ goal: string | null; kickoff_fired: boolean }> => {
     const res = await fetch(`${BASE}/sessions/${sessionId}/goal`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ goal }),
     });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+    return res.json();
   },
 
   /** Mark the active goal as done. Stops injecting it; keeps the text for audit. */
