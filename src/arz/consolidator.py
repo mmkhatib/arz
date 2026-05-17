@@ -33,6 +33,11 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _STATE_PATH = Path.home() / ".arz" / "consolidator_state.json"
+# Detector for "is this even an attempted JSON payload?" — looks for a
+# double-quoted key followed by a colon. Lets CSS / template literals
+# / arbitrary JS object code pass through to the silent-skip path
+# instead of warning on every consolidator tick.
+_JSON_KEY_RE = re.compile(r'"\s*[A-Za-z_][\w-]*\s*"\s*:')
 _RECENT_WINDOW_HOURS = 24  # only consolidate sessions touched in the last 24h
 _MIN_NEW_MESSAGES = 4  # skip sessions with too little to learn from
 _MAX_TRANSCRIPT_CHARS = 12000  # cap per-session transcript sent to LLM
@@ -272,19 +277,26 @@ def _strip_json(text: str) -> str:
 def _safe_loads(raw: str) -> dict:
     """json.loads with a couple of best-effort repairs for common LLM tics.
 
-    When the model returns plain prose ("Hey!" / "Avocado toast.") with
-    no JSON-looking content at all, we raise quietly — that's the model
-    declining to consolidate, not a malformed reply worth a warning.
+    When the model returns plain prose ("Hey!" / "Avocado toast.") or
+    CSS/template-literal content that happens to contain ``{ ... }``
+    but isn't JSON, we raise quietly — only warn when the model
+    actually attempted a JSON-shaped reply.
     """
     candidate = _strip_json(raw)
-    # No JSON shape at all → silent skip. Common when the cheap model
-    # responds conversationally instead of following the JSON format.
-    if "{" not in candidate or "}" not in candidate:
+    stripped = candidate.lstrip()
+    # Definitely-not-JSON: no opening brace at all.
+    if not stripped.startswith("{"):
+        log.debug("consolidator: no JSON in reply; skipping", head=candidate[:120])
+        raise json.JSONDecodeError("no JSON object in reply", candidate, 0)
+    # Probably-not-JSON: starts with `{` but no `"key":` shape anywhere
+    # in the first 500 chars — CSS bodies, JS object literals, template
+    # placeholders like `{name}`. Skip silently rather than warn.
+    if not _JSON_KEY_RE.search(candidate[:500]):
         log.debug(
-            "consolidator: no JSON in reply; skipping",
+            "consolidator: braces present but no JSON keys; skipping",
             head=candidate[:120],
         )
-        raise json.JSONDecodeError("no JSON object in reply", candidate, 0)
+        raise json.JSONDecodeError("no JSON keys", candidate, 0)
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
