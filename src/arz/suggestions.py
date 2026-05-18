@@ -33,7 +33,7 @@ log = structlog.get_logger(__name__)
 SuggestionRunner = Callable[[str, str], Awaitable[str]]
 
 _REFRESH_INTERVAL_SECS = 30 * 60
-_GEN_TIMEOUT_SECS = 60.0
+_GEN_TIMEOUT_SECS = 120.0  # cheap subagent occasionally slow; recoverable via fallback
 _COLD_START_THRESHOLD = 50
 _MAX_SUGGESTION_CHARS = 80
 _MAX_SUGGESTIONS = 6
@@ -168,7 +168,10 @@ async def _generate() -> list[str]:
             raw = await asyncio.wait_for(_runner("general", prompt), timeout=_GEN_TIMEOUT_SECS)
         except asyncio.TimeoutError:
             _cache.last_error = "timeout"
-            log.warning("suggestions: LLM timed out after %.0fs", _GEN_TIMEOUT_SECS)
+            # Recoverable: we fall back to cached/fallback list. No
+            # user-facing impact, demote to info so it doesn't drown
+            # the log on slow days.
+            log.info("suggestions: LLM timed out after %.0fs; using cached", _GEN_TIMEOUT_SECS)
             return get_cached()
         except Exception as e:
             _cache.last_error = f"{type(e).__name__}: {e}"
