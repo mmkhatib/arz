@@ -165,10 +165,13 @@ async def _goal_followup(
     mgr,
     subagent_runner,
     chat_runner,
-) -> None:
-    """Evaluate the goal after the just-finished assistant turn; if not
-    met, fire one auto-follow-up via the chat runner. Bounded by
-    ``session.goal_max_iterations``; respects user-cleared / met state.
+):
+    """Evaluate the goal after the just-finished assistant turn; emit
+    the verdict marker live. If not met and budget remains, RETURN a
+    coroutine for the follow-up writer POST so the caller can schedule
+    it AFTER the current SSE stream has finished. Returns ``None``
+    when no follow-up turn should fire (goal met / cap reached /
+    evaluator unavailable / user cleared the goal mid-eval).
     """
     from arz import goal as _goal
 
@@ -212,14 +215,14 @@ async def _goal_followup(
         )
     except Exception:
         log.exception("goal evaluator crashed", extra={"session_id": session.id})
-        return
+        return None
 
     # Refresh from disk in case the user cleared the goal mid-eval.
     fresh = mgr.get(session.id)
     if fresh is None:
-        return
+        return None
     if (not (fresh.goal or "").strip()) or fresh.goal_status != "active":
-        return
+        return None
 
     fresh.goal_last_reason = decision.reason
 
@@ -301,7 +304,7 @@ async def _goal_followup(
                 "reason": decision.reason,
             },
         )
-        return
+        return None
 
     # Bail without spawning a follow-up turn when the evaluator itself
     # was unreachable. We already emitted the marker above so the user
@@ -312,7 +315,7 @@ async def _goal_followup(
             "goal evaluator unavailable — not auto-iterating",
             extra={"session_id": fresh.id},
         )
-        return
+        return None
 
     # Not met — fire one more turn if budget remains.
     new_iter = fresh.goal_iterations + 1
@@ -325,7 +328,7 @@ async def _goal_followup(
             f'<goal-marker variant="cap" iter="{fresh.goal_iterations}" '
             f'cap="{fresh.goal_max_iterations}" reason="{safe_reason}" />\n\n'
         )
-        return
+        return None
     fresh.goal_iterations = new_iter
     mgr.save(fresh)
     prompt = _goal.build_followup_prompt(
@@ -343,19 +346,24 @@ async def _goal_followup(
             "reason": decision.reason,
         },
     )
-    try:
-        # Mark this as a goal-auto POST so the receiving turn doesn't
-        # reset the iteration counter back to 0.
-        await chat_runner(fresh.id, prompt, extra_body={"_goal_auto": True})
-    except TypeError:
-        # Older chat_runner signature didn't take extra_body — fall back
-        # gracefully (counter will reset, but the loop still progresses).
+
+    # Defer the writer POST: the caller schedules this AFTER the
+    # current SSE stream has finished so the next turn's stream starts
+    # on a clean slate.
+    target_id = fresh.id
+
+    async def _do_post() -> None:
         try:
-            await chat_runner(fresh.id, prompt)
+            await chat_runner(target_id, prompt, extra_body={"_goal_auto": True})
+        except TypeError:
+            try:
+                await chat_runner(target_id, prompt)
+            except Exception:
+                log.exception("goal chat_runner failed (fallback)")
         except Exception:
-            log.exception("goal chat_runner failed (fallback)")
-    except Exception:
-        log.exception("goal chat_runner failed")
+            log.exception("goal chat_runner failed")
+
+    return _do_post()
 
 
 async def _run_turn(
@@ -674,26 +682,13 @@ async def _run_turn(
                 mgr.save(session)
             except Exception:
                 log.exception("Failed to persist partial reply on stream end")
-        await registry.finish(session_id, status=final_status, error=final_error)
-        registry.discard(session_id, after_seconds=120.0)
-        # 30-msg threshold trigger — fire-and-forget. The consolidator
-        # bumps last_consolidated_index itself so re-entering on the next
-        # turn won't double-fire. If no runner is wired or threshold
-        # isn't crossed, this is a no-op.
-        try:
-            from arz.consolidator import get_consolidator
-
-            asyncio.create_task(get_consolidator().maybe_trigger(session))
-        except Exception:
-            pass
-
         # ── /goal auto-iteration ──
-        # After every assistant turn ends, if the session has an active
-        # goal we ask a cheap model whether the condition is met. If yes,
-        # mark done + leave a transcript marker. If no, fire ONE more
-        # auto-turn with the evaluator's reason as guidance — bounded by
-        # goal_max_iterations and short-circuited by the `goal:done`
-        # token in the assistant reply.
+        # Run the evaluator INLINE — before registry.finish() — so its
+        # marker chips stream live to subscribers instead of arriving
+        # only after a page refresh. The follow-up writer turn (if the
+        # judge rules "not met") is still scheduled as a background
+        # task because it spawns a new /api/chat POST.
+        goal_auto_iter_task = None
         try:
             if session and chat_runner is not None and subagent_runner is not None:
                 from arz import goal as _goal
@@ -716,16 +711,52 @@ async def _run_turn(
                     max_iterations=g_cap,
                     last_assistant_text=last_text,
                 ):
-                    asyncio.create_task(
-                        _goal_followup(
-                            session=session,
-                            mgr=mgr,
-                            subagent_runner=subagent_runner,
-                            chat_runner=chat_runner,
+                    # Show a placeholder chip immediately so the user
+                    # knows the cheap judge is running. The real verdict
+                    # marker overwrites — well, follows — this once
+                    # _goal_followup finishes its subagent call.
+                    try:
+                        chunk = sse_chunk(
+                            '\n\n<goal-marker variant="pending" reason="judge running…" />\n\n'
                         )
+                        state.events.append(chunk)
+                        for q in list(state.subscribers):
+                            try:
+                                q.put_nowait(chunk)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    goal_auto_iter_task = await _goal_followup(
+                        session=session,
+                        mgr=mgr,
+                        subagent_runner=subagent_runner,
+                        chat_runner=chat_runner,
                     )
         except Exception:
             log.exception("goal auto-iteration scheduling failed")
+
+        await registry.finish(session_id, status=final_status, error=final_error)
+        registry.discard(session_id, after_seconds=120.0)
+        # 30-msg threshold trigger — fire-and-forget. The consolidator
+        # bumps last_consolidated_index itself so re-entering on the next
+        # turn won't double-fire. If no runner is wired or threshold
+        # isn't crossed, this is a no-op.
+        try:
+            from arz.consolidator import get_consolidator
+
+            asyncio.create_task(get_consolidator().maybe_trigger(session))
+        except Exception:
+            pass
+
+        # Detach the follow-up writer POST after the SSE stream is
+        # finished so the next turn's stream starts cleanly.
+        if goal_auto_iter_task is not None:
+            try:
+                asyncio.create_task(goal_auto_iter_task)
+            except Exception:
+                log.exception("goal follow-up POST scheduling failed")
 
 
 async def _sse_subscribe(session_id: str) -> AsyncIterator[str]:

@@ -485,7 +485,11 @@ function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
   let icon = "⟳";
   let color = "var(--cedar)";
   let label = "evaluator";
-  if (variant === "done") {
+  if (variant === "pending") {
+    icon = "⏳";
+    color = "var(--cedar-glow, var(--cedar))";
+    label = "evaluator · running";
+  } else if (variant === "done") {
     icon = "◎";
     color = "#34d399";
     label = "goal · done";
