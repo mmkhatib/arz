@@ -411,6 +411,7 @@ async def _run_turn(
     saved_assistant = False
     final_status = "complete"
     final_error: str | None = None
+    deferred_complete: str | None = None  # held back so evaluator chips stream before "complete"
 
     # Same-turn recall loop. When the model emits `<recall>q</recall>` mid-
     # reply we drain the queue, run the search, and feed `<recall_result>`
@@ -638,12 +639,15 @@ async def _run_turn(
                     msg.version_index = len(msg.versions) - 1
                 mgr.save(session)
                 saved_assistant = True
-            await emit(
-                sse_complete(
-                    event.stop_reason or "end_turn",
-                    context_pct=event.context_usage_pct or 0.0,
-                    usage=usage_dict,
-                )
+            # Defer the SSE `complete` event until AFTER the goal
+            # evaluator has streamed its marker chip. Frontend closes
+            # the EventSource on `complete`, so emitting it now would
+            # mean the judge's verdict only arrives on the next page
+            # load. The finally block emits this once everything is in.
+            deferred_complete = sse_complete(
+                event.stop_reason or "end_turn",
+                context_pct=event.context_usage_pct or 0.0,
+                usage=usage_dict,
             )
             break  # outer while
 
@@ -736,6 +740,16 @@ async def _run_turn(
                     )
         except Exception:
             log.exception("goal auto-iteration scheduling failed")
+
+        # Flush the held-back `complete` event AFTER the evaluator
+        # marker. The frontend closes its EventSource on this event,
+        # so the order is what matters: writer chunks → judge chips →
+        # complete.
+        if deferred_complete is not None:
+            try:
+                await emit(deferred_complete)
+            except Exception:
+                log.exception("deferred sse_complete emit failed")
 
         await registry.finish(session_id, status=final_status, error=final_error)
         registry.discard(session_id, after_seconds=120.0)
