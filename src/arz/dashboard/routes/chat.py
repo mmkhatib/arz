@@ -172,6 +172,15 @@ async def _goal_followup(
     """
     from arz import goal as _goal
 
+    log.info(
+        "goal followup starting",
+        extra={
+            "session_id": session.id,
+            "goal_len": len((session.goal or "").strip()),
+            "iterations": getattr(session, "goal_iterations", 0),
+        },
+    )
+
     # Pin the evaluator to a cheap judge model matching the session's
     # main provider (Opus writes → Haiku judges, Pro writes → Flash-Lite
     # judges, etc.). Without this the evaluator falls through to the
@@ -219,6 +228,25 @@ async def _goal_followup(
     # this the evaluator was invisible and felt like nothing was
     # happening between auto-iterations.
     def _emit_marker(text: str) -> None:
+        # 1. Persist the marker into the last assistant message so it
+        #    survives session reload + markdown export. Without this the
+        #    evaluator verdict was invisible to anyone re-reading the
+        #    transcript and the goal loop looked like it never fired.
+        try:
+            last_assistant = next(
+                (m for m in reversed(fresh.messages) if m.role == "assistant"),
+                None,
+            )
+            if last_assistant is not None:
+                tag = text.strip()
+                if tag and tag not in (last_assistant.text or ""):
+                    last_assistant.text = (last_assistant.text or "").rstrip() + "\n\n" + tag
+                    mgr.save(fresh)
+        except Exception:
+            log.exception("goal marker persist failed", extra={"session_id": fresh.id})
+
+        # 2. Broadcast the marker to live SSE subscribers so the active
+        #    chat view shows the chip without waiting for a refresh.
         try:
             from arz.dashboard.sse import sse_chunk
             from arz.dashboard.stream_registry import get_stream_registry
@@ -228,8 +256,6 @@ async def _goal_followup(
             if state is None:
                 return
             chunk = sse_chunk(text)
-            # Persist into state.events so a late-joining subscriber
-            # replaying the buffer sees the marker too.
             try:
                 state.events.append(chunk)
             except Exception:
@@ -274,6 +300,17 @@ async def _goal_followup(
                 "iterations": fresh.goal_iterations,
                 "reason": decision.reason,
             },
+        )
+        return
+
+    # Bail without spawning a follow-up turn when the evaluator itself
+    # was unreachable. We already emitted the marker above so the user
+    # can see WHY the loop paused; the next user message kicks things
+    # back into gear.
+    if (decision.reason or "").lower().startswith("evaluator unavailable"):
+        log.warning(
+            "goal evaluator unavailable — not auto-iterating",
+            extra={"session_id": fresh.id},
         )
         return
 
