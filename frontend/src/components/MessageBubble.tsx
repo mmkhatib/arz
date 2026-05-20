@@ -10,11 +10,30 @@ import MermaidBlock from "./MermaidBlock";
 import { formatTokens } from "@/utils/tokens";
 import Widget from "./Widget";
 
+type GoalAttrs = Record<string, string>;
+
 type MsgSegment =
   | { kind: "text"; value: string }
-  | { kind: "widget"; title: string; html: string };
+  | { kind: "widget"; title: string; html: string }
+  | { kind: "goal-marker"; attrs: GoalAttrs }
+  | { kind: "goal-auto"; attrs: GoalAttrs; body: string };
 
 const _WIDGET_OPEN = /<(arzwidget|mcwidget)(\s+[^>]*)?>/i;
+// Self-closing marker chip: `<goal-marker ... />`
+const _GOAL_MARKER_RE = /<goal-marker\b([^>]*?)\/>/gi;
+// Wrapping card around a writer follow-up prompt:
+// `<goal-auto iter="N" cap="20" reason="...">body</goal-auto>`
+const _GOAL_AUTO_RE = /<goal-auto\b([^>]*)>([\s\S]*?)<\/goal-auto>/gi;
+
+function _parseAttrs(raw: string): GoalAttrs {
+  const out: GoalAttrs = {};
+  const re = /([a-zA-Z_][\w-]*)\s*=\s*"([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw)) !== null) {
+    out[m[1].toLowerCase()] = m[2];
+  }
+  return out;
+}
 
 /* Path-shaped tokens we want to make click-to-open. Catches:
  *   /abs/posix/path.ext
@@ -76,6 +95,58 @@ function remarkFilePaths() {
     };
     visit(tree);
   };
+}
+
+// Split a text segment further on goal-marker (self-closing) and
+// goal-auto (wrapping) tags. Runs after splitWidgets so widget bodies
+// are never re-scanned. Order: goal-auto first (greedier match), then
+// goal-marker on the leftovers.
+function splitGoalTags(text: string): MsgSegment[] {
+  if (!text || (!text.includes("<goal-marker") && !text.includes("<goal-auto"))) {
+    return [{ kind: "text", value: text }];
+  }
+  const placeholders: MsgSegment[] = [];
+  let working = text;
+
+  // Phase 1 — extract <goal-auto>…</goal-auto> blocks.
+  working = working.replace(_GOAL_AUTO_RE, (_full, attrsRaw, body) => {
+    const idx = placeholders.length;
+    placeholders.push({
+      kind: "goal-auto",
+      attrs: _parseAttrs(String(attrsRaw)),
+      body: String(body || "").trim(),
+    });
+    return `\x00GA${idx}\x00`;
+  });
+
+  // Phase 2 — extract <goal-marker … />.
+  working = working.replace(_GOAL_MARKER_RE, (_full, attrsRaw) => {
+    const idx = placeholders.length;
+    placeholders.push({
+      kind: "goal-marker",
+      attrs: _parseAttrs(String(attrsRaw)),
+    });
+    return `\x00GM${idx}\x00`;
+  });
+
+  // Phase 3 — walk by placeholders, emit text + extracted segments in order.
+  const out: MsgSegment[] = [];
+  const re = /\x00(GA|GM)(\d+)\x00/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(working)) !== null) {
+    if (m.index > last) {
+      const slice = working.slice(last, m.index);
+      if (slice.trim().length > 0) out.push({ kind: "text", value: slice });
+    }
+    out.push(placeholders[parseInt(m[2], 10)]);
+    last = m.index + m[0].length;
+  }
+  if (last < working.length) {
+    const tail = working.slice(last);
+    if (tail.trim().length > 0) out.push({ kind: "text", value: tail });
+  }
+  return out;
 }
 
 // Split a chat message into text and widget chunks so the widget body
@@ -398,6 +469,176 @@ function WrittenFilePreviewCard({
   );
 }
 
+function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
+  const variant = attrs.variant || "evaluator";
+  const judge = attrs.judge || "";
+  const verdict = attrs.verdict || ""; // "met" | "not-met" | ""
+  const reason = attrs.reason || "";
+  const iter = attrs.iter || "";
+  const cap = attrs.cap || "";
+
+  // Visual: small horizontal callout, color-coded by verdict.
+  // - evaluator + met       → green tone, ✓
+  // - evaluator + not-met   → amber tone, ⟳
+  // - done                  → green tone, ◎
+  // - cap (budget exhausted)→ red tone, ⨯
+  let icon = "⟳";
+  let color = "var(--cedar)";
+  let label = "evaluator";
+  if (variant === "done") {
+    icon = "◎";
+    color = "#34d399";
+    label = "goal · done";
+  } else if (variant === "cap") {
+    icon = "⨯";
+    color = "#f87171";
+    label = `goal · cap ${iter}/${cap}`;
+  } else if (verdict === "met") {
+    icon = "✓";
+    color = "#34d399";
+    label = "evaluator · met";
+  } else {
+    icon = "⟳";
+    color = "#fbbf24";
+    label = "evaluator · not met";
+  }
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        margin: "8px 0",
+        padding: "6px 10px",
+        background: "var(--surface)",
+        border: `1px solid ${color}33`,
+        borderLeft: `3px solid ${color}`,
+        borderRadius: 6,
+        fontSize: 11.5,
+        fontFamily: "var(--fm, ui-monospace, monospace)",
+      }}
+    >
+      <span style={{ color, fontSize: 13, fontWeight: 600 }}>{icon}</span>
+      <span
+        style={{
+          color: "var(--muted)",
+          textTransform: "uppercase",
+          letterSpacing: ".08em",
+          fontSize: 9.5,
+        }}
+      >
+        {label}
+      </span>
+      {judge ? (
+        <span
+          style={{
+            color: "var(--cedar-2, var(--cedar))",
+            fontSize: 10.5,
+          }}
+        >
+          {judge}
+        </span>
+      ) : null}
+      {reason ? (
+        <span
+          style={{
+            color: "var(--text2, var(--text))",
+            flex: 1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+          title={reason}
+        >
+          {reason}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function GoalAutoCard({ attrs, body }: { attrs: GoalAttrs; body: string }) {
+  const iter = attrs.iter || "0";
+  const cap = attrs.cap || "";
+  const reason = attrs.reason || "";
+  const isKickoff = reason === "kickoff";
+  const [open, setOpen] = useState(false);
+  const header = isKickoff
+    ? "goal · kickoff"
+    : `goal-auto · ${iter}/${cap}`;
+  return (
+    <div
+      style={{
+        margin: "8px 0",
+        background: "var(--surface)",
+        border: "1px dashed var(--border)",
+        borderRadius: 8,
+        overflow: "hidden",
+      }}
+    >
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "6px 10px",
+          background: "transparent",
+          border: "none",
+          cursor: "pointer",
+          textAlign: "left",
+          fontSize: 11,
+          fontFamily: "var(--fm, ui-monospace, monospace)",
+        }}
+      >
+        <span style={{ fontSize: 11, color: "var(--cedar-glow, var(--cedar))" }}>
+          {open ? "▾" : "▸"}
+        </span>
+        <span
+          style={{
+            color: "var(--cedar-glow, var(--cedar))",
+            textTransform: "uppercase",
+            letterSpacing: ".08em",
+            fontSize: 9.5,
+          }}
+        >
+          {header}
+        </span>
+        {!isKickoff && reason ? (
+          <span
+            style={{
+              color: "var(--muted)",
+              flex: 1,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={reason}
+          >
+            evaluator: {reason}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <div
+          style={{
+            padding: "8px 10px",
+            borderTop: "1px solid var(--hairline, var(--border))",
+            fontSize: 12,
+            color: "var(--text2, var(--text))",
+            whiteSpace: "pre-wrap",
+            fontFamily: "var(--fm, ui-monospace, monospace)",
+          }}
+        >
+          {body}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function CodeBlock({ children, className }: { children?: React.ReactNode; className?: string }) {
   const lang = className?.match(/language-(\w+)/)?.[1] ?? "";
   const codeRef = useRef<HTMLElement | null>(null);
@@ -478,7 +719,17 @@ export default function MessageBubble({
     () => (isUser ? message.text : stripInlineTags(message.text)),
     [message.text, isUser],
   );
-  const segments = useMemo(() => splitWidgets(displayText), [displayText]);
+  const segments = useMemo(() => {
+    // Two-phase split: widgets first (preserves their raw HTML), then
+    // goal tags on the resulting text segments.
+    const widgetSplit = splitWidgets(displayText);
+    const out: MsgSegment[] = [];
+    for (const seg of widgetSplit) {
+      if (seg.kind === "text") out.push(...splitGoalTags(seg.value));
+      else out.push(seg);
+    }
+    return out;
+  }, [displayText]);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.text);
 
@@ -553,7 +804,28 @@ export default function MessageBubble({
                 </div>
               </div>
             ) : (
-              message.text
+              // User bubble. Most messages render as plain text, but
+              // goal-auto follow-up prompts (kickoff + auto-iteration)
+              // arrive wrapped in <goal-auto> tags so the agent loop
+              // is visible to the user. Split + render the chip form
+              // when present; otherwise just emit the raw text.
+              (() => {
+                const userSegs = splitGoalTags(message.text);
+                if (userSegs.length === 1 && userSegs[0].kind === "text") {
+                  return message.text;
+                }
+                return userSegs.map((seg, idx) =>
+                  seg.kind === "goal-auto" ? (
+                    <GoalAutoCard key={idx} attrs={seg.attrs} body={seg.body} />
+                  ) : seg.kind === "goal-marker" ? (
+                    <GoalMarkerChip key={idx} attrs={seg.attrs} />
+                  ) : seg.kind === "text" ? (
+                    seg.value.trim() ? (
+                      <span key={idx} style={{ whiteSpace: "pre-wrap" }}>{seg.value}</span>
+                    ) : null
+                  ) : null,
+                );
+              })()
             )
           ) : (
             <>
@@ -572,6 +844,10 @@ export default function MessageBubble({
               {segments.map((seg, segIdx) =>
                 seg.kind === "widget" ? (
                   <Widget key={segIdx} title={seg.title} html={seg.html} />
+                ) : seg.kind === "goal-marker" ? (
+                  <GoalMarkerChip key={segIdx} attrs={seg.attrs} />
+                ) : seg.kind === "goal-auto" ? (
+                  <GoalAutoCard key={segIdx} attrs={seg.attrs} body={seg.body} />
                 ) : !seg.value.trim() ? null : (
               <ReactMarkdown
               key={segIdx}

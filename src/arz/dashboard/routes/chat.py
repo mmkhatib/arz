@@ -242,11 +242,17 @@ async def _goal_followup(
         except Exception:
             pass
 
-    verdict = "met" if decision.met else "not met"
-    # Show which cheap judge ran. Empty model_override means the provider
-    # picked its own default (e.g. Ollama) — surface the provider alone.
+    # Empty model_override means the provider picked its own default
+    # (e.g. Ollama) — surface the provider alone.
     judge_label = judge_model or (judge_provider or "default")
-    _emit_marker(f"\n\n_[evaluator ({judge_label}) · {verdict}: {decision.reason}]_\n\n")
+    verdict_attr = "met" if decision.met else "not-met"
+    safe_reason = (
+        (decision.reason or "").replace('"', "'").replace("\n", " ").replace("\r", " ")[:200]
+    )
+    _emit_marker(
+        f'\n\n<goal-marker variant="evaluator" judge="{judge_label}" '
+        f'verdict="{verdict_attr}" reason="{safe_reason}" />\n\n'
+    )
     log.info(
         "goal evaluator judged",
         extra={
@@ -260,7 +266,7 @@ async def _goal_followup(
     if decision.met:
         fresh.goal_status = "done"
         mgr.save(fresh)
-        _emit_marker(f"_[goal: done — {decision.reason}]_\n\n")
+        _emit_marker(f'<goal-marker variant="done" reason="{safe_reason}" />\n\n')
         log.info(
             "goal achieved",
             extra={
@@ -277,6 +283,10 @@ async def _goal_followup(
         log.warning(
             "goal cap reached without completion",
             extra={"session_id": fresh.id, "iterations": fresh.goal_iterations},
+        )
+        _emit_marker(
+            f'<goal-marker variant="cap" iter="{fresh.goal_iterations}" '
+            f'cap="{fresh.goal_max_iterations}" reason="{safe_reason}" />\n\n'
         )
         return
     fresh.goal_iterations = new_iter

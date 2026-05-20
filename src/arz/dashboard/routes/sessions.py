@@ -166,13 +166,20 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         # immediately — no separate user prompt required.
         chat_runner = getattr(request.app.state, "chat_runner", None)
         if chat_runner is not None:
-            kickoff = (
+            safe_goal_attr = goal.replace('"', "'").replace("\n", " ").replace("\r", " ")[:200]
+            kickoff_body = (
                 "[goal-start] Begin working toward this goal. "
                 "Make tangible progress on each turn. "
                 "Use tools as needed. "
                 "If the goal is complete, end your reply with the "
                 "literal token `goal:done`.\n\n"
                 f"Goal:\n{goal}"
+            )
+            kickoff = (
+                f'<goal-auto iter="0" cap="{session.goal_max_iterations}" '
+                f'reason="kickoff" goal="{safe_goal_attr}">\n'
+                f"{kickoff_body}\n"
+                "</goal-auto>"
             )
             log.info(
                 "goal kickoff scheduling",

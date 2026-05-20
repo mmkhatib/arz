@@ -168,13 +168,33 @@ _AUTO_TURN_TEMPLATE = (
 )
 
 
+def _attr_escape(s: str, *, cap: int = 200) -> str:
+    """Quote-safe attribute encoding. Strips newlines + caps length so
+    the wrapping tag stays well-formed even when the source string has
+    quotes, line breaks, or is enormous.
+    """
+    return (s or "").replace('"', "'").replace("\n", " ").replace("\r", " ")[:cap]
+
+
 def build_followup_prompt(goal: str, reason: str, iteration: int, cap: int) -> str:
-    """The user-message body posted back to /api/chat for an auto-iteration."""
-    return _AUTO_TURN_TEMPLATE.format(
+    """The user-message body posted back to /api/chat for an auto-iteration.
+
+    Wrapped in a semantic ``<goal-auto>`` tag so the dashboard renderer
+    can show it as a distinct card. Modern LLM providers (Claude, Codex,
+    Gemini, Ollama) all parse XML-shaped attributes harmlessly — the
+    tag is metadata; the writer reads the body inside.
+    """
+    body = _AUTO_TURN_TEMPLATE.format(
         n=iteration,
         cap=cap,
         reason=(reason or "no specific feedback").replace("\n", " ")[:400],
         goal=(goal or "").strip()[:4000],
+    )
+    return (
+        f'<goal-auto iter="{iteration}" cap="{cap}" '
+        f'reason="{_attr_escape(reason or "no specific feedback")}">\n'
+        f"{body}\n"
+        "</goal-auto>"
     )
 
 
