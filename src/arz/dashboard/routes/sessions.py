@@ -236,12 +236,21 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         chat_runner = getattr(request.app.state, "chat_runner", None)
         if chat_runner is not None:
             safe_goal_attr = goal.replace('"', "'").replace("\n", " ").replace("\r", " ")[:200]
+            # Force a clean break from any prior `goal:done` in this
+            # session — otherwise providers with strong history caching
+            # (Claude Code in particular) will pattern-match the new
+            # kickoff against the previous one and re-emit the old
+            # answer verbatim. The "NEW GOAL" header + explicit
+            # invalidation sentence resets the writer's frame.
             kickoff_body = (
-                "[goal-start] Begin working toward this goal. "
-                "Make tangible progress on each turn. "
-                "Use tools as needed. "
-                "If the goal is complete, end your reply with the "
-                "literal token `goal:done`.\n\n"
+                "[goal-start] === NEW GOAL — supersedes any prior goal in this session ===\n\n"
+                "Ignore any earlier `goal:done` declaration; THIS goal is fresh and "
+                "unanswered. Re-read the goal text below word-for-word, then make "
+                "tangible progress toward it on each turn. Do not copy or paraphrase "
+                "the previous turn's answer. Use tools as needed.\n\n"
+                "If — and only if — this NEW goal is actually complete, end your "
+                "reply with the literal token `goal:done`. The evaluator (not you) "
+                "decides whether the goal is met.\n\n"
                 f"Goal:\n{goal}"
             )
             kickoff = (
