@@ -340,7 +340,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.86", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.7.87", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -378,6 +378,9 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
         prompt: str,
         approval_mode: str | None = None,
         work_dir: str | None = None,
+        *,
+        provider_override: str | None = None,
+        model_override: str | None = None,
     ) -> str:
         from arz.acp.types import EVENT_COMPLETE as _EC
         from arz.acp.types import EVENT_TEXT_CHUNK as _ETC
@@ -387,14 +390,21 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
         from arz.providers.kiro_cli import KiroCliProvider
 
         agent = agent_registry.get(agent_name)
-        provider_name = (agent.provider if agent else None) or config.provider.name
+        provider_name = (
+            provider_override or (agent.provider if agent else None) or config.provider.name
+        )
         # Use the agent's preferred model if set; otherwise leave empty and
         # let the provider pick its own default. We deliberately do NOT
         # inherit the global config.provider.model — it's frequently
         # mismatched (e.g. provider=claude-code but model=gpt-5.4 left over
         # from a previous codex experiment), and the wrong model id makes
         # the underlying CLI hard-fail.
-        model = agent.model if (agent and agent.model) else ""
+        if model_override:
+            model = model_override
+        elif agent and agent.model:
+            model = agent.model
+        else:
+            model = ""
         sys_prompt = resolve_system_prompt(agent.system_prompt if agent else None)
 
         # Caller override beats agent default. Project-linked channels

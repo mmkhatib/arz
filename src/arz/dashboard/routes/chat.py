@@ -172,13 +172,33 @@ async def _goal_followup(
     """
     from arz import goal as _goal
 
+    # Pin the evaluator to a cheap judge model matching the session's
+    # main provider (Opus writes → Haiku judges, Pro writes → Flash-Lite
+    # judges, etc.). Without this the evaluator falls through to the
+    # same model the main turn used, which defeats the point of having
+    # an independent cheap critic and burns tokens.
+    judge_provider = session.provider or None
+    judge_model = _goal.cheap_model_for(judge_provider)
+
+    async def _judge_runner(agent_name: str, prompt: str) -> str:
+        try:
+            return await subagent_runner(
+                agent_name,
+                prompt,
+                provider_override=judge_provider,
+                model_override=judge_model or None,
+            )
+        except TypeError:
+            # Backwards-compat: older runner sig without overrides.
+            return await subagent_runner(agent_name, prompt)
+
     try:
         # Build a short history tail for the evaluator.
         history = [{"role": m.role, "text": m.text} for m in (session.messages or [])][-8:]
         decision = await _goal.evaluate(
             goal=session.goal or "",
             history=history,
-            runner=subagent_runner,
+            runner=_judge_runner,
             n_turns=6,
         )
     except Exception:
@@ -223,7 +243,19 @@ async def _goal_followup(
             pass
 
     verdict = "met" if decision.met else "not met"
-    _emit_marker(f"\n\n_[evaluator · {verdict}: {decision.reason}]_\n\n")
+    # Show which cheap judge ran. Empty model_override means the provider
+    # picked its own default (e.g. Ollama) — surface the provider alone.
+    judge_label = judge_model or (judge_provider or "default")
+    _emit_marker(f"\n\n_[evaluator ({judge_label}) · {verdict}: {decision.reason}]_\n\n")
+    log.info(
+        "goal evaluator judged",
+        extra={
+            "session_id": session.id,
+            "judge_provider": judge_provider,
+            "judge_model": judge_model,
+            "met": decision.met,
+        },
+    )
 
     if decision.met:
         fresh.goal_status = "done"

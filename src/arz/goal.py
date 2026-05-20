@@ -27,6 +27,39 @@ log = logging.getLogger(__name__)
 GoalRunner = Callable[[str, str], Awaitable[str]]
 
 
+# Cheap model per provider — the evaluator is meant to be a SMALL fast
+# judge, not another full Opus/Pro turn. Maps the session's main provider
+# to the cheapest reliable counterpart for that family. Mirrors the
+# Claude Code /goal design: Opus 4.7 writes; Haiku 4.5 judges.
+#
+#   claude-code → Haiku 4.5
+#   codex       → GPT-5.4 Mini
+#   gemini      → Gemini 2.5 Flash-Lite
+#   kiro-cli    → Haiku 4.5 (Kiro routes to Anthropic underneath)
+#   ollama      → "" (leave default; user picks; local models are already cheap)
+#   anthropic   → Haiku 4.5
+CHEAP_MODELS_BY_PROVIDER: dict[str, str] = {
+    "claude-code": "claude-haiku-4-5-20251001",
+    "codex": "gpt-5.4-mini",
+    "gemini": "gemini-2.5-flash-lite",
+    "kiro-cli": "claude-haiku-4.5",
+    "ollama": "",
+    "anthropic": "claude-haiku-4-5",
+}
+
+
+def cheap_model_for(provider: str | None) -> str:
+    """Return the cheap-judge model id for a given main-chat provider.
+
+    Empty string means "let the provider pick its own default" — used for
+    Ollama where the user already chose a small local model and forcing
+    one would be wrong.
+    """
+    if not provider:
+        return ""
+    return CHEAP_MODELS_BY_PROVIDER.get(provider, "")
+
+
 @dataclass
 class GoalDecision:
     met: bool
