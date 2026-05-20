@@ -20,6 +20,75 @@ from arz.session.manager import SessionManager
 router = APIRouter(dependencies=[Depends(require_token)])
 
 
+_GOAL_AUTO_BLOCK_RE = re.compile(r"<goal-auto\b([^>]*)>([\s\S]*?)</goal-auto\s*>", re.IGNORECASE)
+_GOAL_MARKER_RE = re.compile(r"<goal-marker\b([^>]*?)/>", re.IGNORECASE)
+_GOAL_ATTR_RE = re.compile(r'([a-zA-Z_][\w-]*)\s*=\s*"([^"]*)"')
+
+
+def _attrs_of(raw: str) -> dict[str, str]:
+    return {m.group(1).lower(): m.group(2) for m in _GOAL_ATTR_RE.finditer(raw)}
+
+
+def _render_goal_tags_for_md(text: str) -> str:
+    """Render the goal-auto + goal-marker tags as collapsible HTML
+    blocks for markdown export. Most markdown renderers (GitHub,
+    Obsidian, VSCode preview) honor inline ``<details>`` + ``<blockquote>``
+    HTML, so the export reads like a chat transcript with a goal banner
+    instead of dumping raw XML at the reader.
+    """
+    if not text or ("<goal-auto" not in text and "<goal-marker" not in text):
+        return text
+
+    def _auto_sub(match: re.Match) -> str:
+        attrs = _attrs_of(match.group(1) or "")
+        body = (match.group(2) or "").strip()
+        iter_ = attrs.get("iter", "0")
+        cap = attrs.get("cap", "")
+        reason = attrs.get("reason", "")
+        goal_attr = attrs.get("goal", "")
+        is_kickoff = reason == "kickoff"
+        header_label = "🎯 Goal · kickoff" if is_kickoff else f"🎯 goal-auto · {iter_}/{cap}"
+        summary_extra = (
+            f" — {goal_attr}"
+            if (is_kickoff and goal_attr)
+            else (f" — evaluator: {reason}" if (reason and not is_kickoff) else "")
+        )
+        return (
+            f"<details>\n"
+            f"<summary><strong>{header_label}</strong>{summary_extra}</summary>\n\n"
+            f"```\n{body}\n```\n\n"
+            f"</details>"
+        )
+
+    def _marker_sub(match: re.Match) -> str:
+        attrs = _attrs_of(match.group(1) or "")
+        variant = attrs.get("variant", "evaluator")
+        judge = attrs.get("judge", "")
+        verdict = attrs.get("verdict", "")
+        reason = attrs.get("reason", "")
+        iter_ = attrs.get("iter", "")
+        cap = attrs.get("cap", "")
+        if variant == "done":
+            icon = "✅"
+            label = "goal · done"
+        elif variant == "cap":
+            icon = "⛔"
+            label = f"goal · cap reached {iter_}/{cap}"
+        elif verdict == "met":
+            icon = "✅"
+            label = "evaluator · met"
+        else:
+            icon = "🔁"
+            label = "evaluator · not met"
+        judge_part = f" `{judge}`" if judge else ""
+        reason_part = f" — {reason}" if reason else ""
+        return f"> {icon} **{label}**{judge_part}{reason_part}"
+
+    out = _GOAL_AUTO_BLOCK_RE.sub(_auto_sub, text)
+    out = _GOAL_MARKER_RE.sub(_marker_sub, out)
+    return out
+
+
 def _get_manager(request: Request) -> SessionManager:
     return request.app.state.session_manager
 
@@ -409,7 +478,7 @@ async def export_session(session_id: str, request: Request, format: str = "markd
             )
             lines.append(f"## {heading}  ·  {m.created_at.isoformat()}")
             lines.append("")
-            lines.append(m.text)
+            lines.append(_render_goal_tags_for_md(m.text))
             lines.append("")
         body = "\n".join(lines)
         filename = f"{_slugify(session.title)}-{session.id[:8]}.md"

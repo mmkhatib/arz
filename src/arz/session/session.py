@@ -2,10 +2,46 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
+
+_GOAL_AUTO_OPEN_RE = re.compile(r"<goal-auto\b[^>]*>", re.IGNORECASE)
+_GOAL_AUTO_CLOSE_RE = re.compile(r"</goal-auto\s*>", re.IGNORECASE)
+_GOAL_KICKOFF_PREFIX_RE = re.compile(r"^\s*\[goal-(?:start|auto[^\]]*)\][^\n]*\n*", re.IGNORECASE)
+
+
+def _title_from_user_text(raw: str) -> str:
+    """Pick a session title from the first user message.
+
+    Strips the synthetic goal-auto wrapper (kickoff / auto-iteration
+    prompts) and the visible scaffolding inside so the title reflects
+    the actual goal — e.g. ``a poem about a red car`` instead of
+    ``<goal-auto iter="0" cap="20" reason="kickoff" goal="a poem a``.
+    Falls back to the raw text for normal user messages.
+    """
+    text = raw or ""
+
+    # Prefer the explicit goal= attribute on the wrapping tag — already
+    # the canonical short form of what the user typed.
+    m = re.search(r'<goal-auto\b[^>]*\bgoal="([^"]+)"', text, re.IGNORECASE)
+    if m:
+        return m.group(1).strip()[:60]
+
+    # No goal attr (legacy / auto-iteration follow-ups) — strip the
+    # wrapper, drop the `[goal-...]` prefix, drop the boilerplate, and
+    # take the first non-empty content line as the title.
+    text = _GOAL_AUTO_OPEN_RE.sub("", text)
+    text = _GOAL_AUTO_CLOSE_RE.sub("", text)
+    text = _GOAL_KICKOFF_PREFIX_RE.sub("", text)
+    # The auto-iteration prompt body has a recognisable "Goal:\n<x>"
+    # line — promote that when present.
+    m = re.search(r"^Goal:\s*\n(.+)$", text, re.IGNORECASE | re.MULTILINE)
+    if m:
+        return m.group(1).strip()[:60]
+    return text.strip()[:60]
 
 
 @dataclass
@@ -135,7 +171,7 @@ class Session:
         self.messages.append(msg)
         self.updated_at = datetime.utcnow()
         if self.title == "New session" and role == "user" and text.strip():
-            self.title = text[:60].strip()
+            self.title = _title_from_user_text(text)
         return msg
 
     def to_dict(self) -> dict:

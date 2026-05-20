@@ -562,19 +562,38 @@ function GoalAutoCard({ attrs, body }: { attrs: GoalAttrs; body: string }) {
   const iter = attrs.iter || "0";
   const cap = attrs.cap || "";
   const reason = attrs.reason || "";
+  const goalAttr = attrs.goal || "";
   const isKickoff = reason === "kickoff";
   const [open, setOpen] = useState(false);
-  const header = isKickoff
-    ? "goal · kickoff"
-    : `goal-auto · ${iter}/${cap}`;
+
+  // Hero label + accent color per phase.
+  const accent = isKickoff ? "#34d399" : "var(--cedar-glow, var(--cedar))";
+  const icon = isKickoff ? "🎯" : "⟲";
+  const label = isKickoff ? "goal · kickoff" : `goal-auto · ${iter}/${cap}`;
+
+  // Strip the leading `[goal-start]` / `[goal-auto …]` line + the
+  // `Goal:` heading from the body when we already know the goal — the
+  // user just sees the actual goal text rendered on its own line.
+  const cleanedBody = (() => {
+    let b = body;
+    b = b.replace(/^\s*\[goal-(?:start|auto[^\]]*)\][^\n]*\n*/i, "");
+    b = b.replace(/^Goal:\s*\n/i, "");
+    return b.trim();
+  })();
+
+  const goalText = (goalAttr || cleanedBody.split("\n")[0] || "").trim();
+
   return (
     <div
       style={{
-        margin: "8px 0",
-        background: "var(--surface)",
-        border: "1px dashed var(--border)",
-        borderRadius: 8,
+        margin: "10px 0",
+        background:
+          "linear-gradient(135deg, color-mix(in srgb, var(--surface) 92%, transparent), var(--surface))",
+        border: `1px solid color-mix(in srgb, ${accent} 35%, var(--border))`,
+        borderLeft: `3px solid ${accent}`,
+        borderRadius: 10,
         overflow: "hidden",
+        boxShadow: "0 1px 0 rgba(0,0,0,0.05) inset",
       }}
     >
       <button
@@ -583,56 +602,85 @@ function GoalAutoCard({ attrs, body }: { attrs: GoalAttrs; body: string }) {
           width: "100%",
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          padding: "6px 10px",
+          gap: 10,
+          padding: "10px 12px",
           background: "transparent",
           border: "none",
           cursor: "pointer",
           textAlign: "left",
-          fontSize: 11,
           fontFamily: "var(--fm, ui-monospace, monospace)",
         }}
       >
-        <span style={{ fontSize: 11, color: "var(--cedar-glow, var(--cedar))" }}>
-          {open ? "▾" : "▸"}
-        </span>
+        <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span
+              style={{
+                color: accent,
+                textTransform: "uppercase",
+                letterSpacing: ".08em",
+                fontSize: 10,
+                fontWeight: 600,
+              }}
+            >
+              {label}
+            </span>
+            {!isKickoff && reason ? (
+              <span
+                style={{
+                  color: "var(--muted)",
+                  fontSize: 10.5,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={`evaluator: ${reason}`}
+              >
+                · evaluator: {reason}
+              </span>
+            ) : null}
+          </div>
+          {goalText ? (
+            <div
+              style={{
+                color: "var(--text)",
+                fontSize: 13.5,
+                fontWeight: 500,
+                fontFamily: "var(--ft, system-ui, sans-serif)",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={goalText}
+            >
+              {goalText}
+            </div>
+          ) : null}
+        </div>
         <span
           style={{
-            color: "var(--cedar-glow, var(--cedar))",
-            textTransform: "uppercase",
-            letterSpacing: ".08em",
-            fontSize: 9.5,
+            fontSize: 11,
+            color: "var(--muted)",
+            transform: open ? "rotate(90deg)" : "none",
+            transition: "transform 120ms ease",
           }}
         >
-          {header}
+          ▸
         </span>
-        {!isKickoff && reason ? (
-          <span
-            style={{
-              color: "var(--muted)",
-              flex: 1,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={reason}
-          >
-            evaluator: {reason}
-          </span>
-        ) : null}
       </button>
       {open ? (
         <div
           style={{
-            padding: "8px 10px",
-            borderTop: "1px solid var(--hairline, var(--border))",
+            padding: "10px 12px",
+            borderTop: "1px solid color-mix(in srgb, var(--border) 60%, transparent)",
             fontSize: 12,
             color: "var(--text2, var(--text))",
             whiteSpace: "pre-wrap",
             fontFamily: "var(--fm, ui-monospace, monospace)",
+            background: "color-mix(in srgb, var(--bg) 50%, transparent)",
           }}
         >
-          {body}
+          {cleanedBody || body}
         </div>
       ) : null}
     </div>
