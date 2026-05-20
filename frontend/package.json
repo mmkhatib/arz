@@ -1,6 +1,6 @@
 {
   "name": "@arz/dashboard",
-  "version": "0.7.89",
+  "version": "0.7.90",
   "private": true,
   "type": "module",
   "scripts": {

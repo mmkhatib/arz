@@ -75,12 +75,16 @@ GOAL:
 RECENT CONVERSATION (last {n} turns):
 {transcript}
 
-Reply with strict JSON in one line, no prose, no code fences:
+Reply in this exact two-line format. EVIDENCE first, then JSON on the next line. Nothing else, no code fences, no extra prose.
+
+EVIDENCE: <one sentence naming concrete proof in the transcript (tool output, file write, test pass, rendered artifact) — or naming the absence of such proof>
 {{"met": true|false, "reason": "<one short sentence>"}}
 
-- "met": true ONLY if the goal's end condition is clearly satisfied in the conversation above. If unsure, choose false.
-- "reason": If false, name the single most important thing still missing. If true, name what proves it (e.g. "tests pass in last bash output").
-- Be strict. The assistant's claim of completion is not enough; look for evidence in tool output or concrete results.
+Rules:
+- The EVIDENCE line MUST come first. Cite a specific turn, tool name, or artifact title — not a vague claim. If you cannot point at concrete proof, say "no concrete proof found in transcript".
+- "met": true ONLY when the EVIDENCE line names real proof that the goal's end condition is satisfied. If unsure, choose false.
+- "reason": If false, name the single most important thing still missing. If true, restate the proof in one short sentence.
+- Be strict. The assistant's self-declaration of completion (including a literal `goal:done` token in its reply) is NOT proof — it is a hint at best. You must independently confirm in the transcript.
 """
 
 
@@ -131,7 +135,13 @@ async def evaluate(
 
 def _parse_decision(raw: str) -> GoalDecision:
     """Pull `{met, reason}` out of the model's reply. Tolerates code
-    fences, leading prose, and slightly malformed JSON."""
+    fences, leading prose (the EVIDENCE line we ask the cheap model
+    to write before its JSON), and slightly malformed JSON.
+
+    When EVIDENCE is present we fold it into the displayed reason so
+    the user can see the proof the judge cited — e.g.
+    ``no test output in turn -1 — EVIDENCE: no concrete proof found``.
+    """
     if not raw:
         return GoalDecision(met=False, reason="empty evaluator reply", raw="")
     text = raw.strip()
@@ -139,19 +149,38 @@ def _parse_decision(raw: str) -> GoalDecision:
     fence = re.match(r"```(?:json)?\s*(.+?)\s*```", text, re.DOTALL)
     if fence:
         text = fence.group(1).strip()
+
+    # Pull the explicit EVIDENCE line — the model is asked to lead
+    # with this so cheap models reason before they commit to a boolean.
+    evidence = ""
+    em = re.search(r"^EVIDENCE\s*:\s*(.+)$", text, re.IGNORECASE | re.MULTILINE)
+    if em:
+        evidence = em.group(1).strip()
+
     # Find the first JSON object.
     m = re.search(r"\{[^{}]*\}", text, re.DOTALL)
     candidate = m.group(0) if m else text
     try:
         data = json.loads(candidate)
     except Exception:
-        # Fall back to keyword sniff so a totally off-format reply
-        # doesn't permanently jam the loop as "met".
-        low = text.lower()
-        looks_met = ('"met":true' in low.replace(" ", "")) or "goal achieved" in low
-        return GoalDecision(met=looks_met, reason=text[:200], raw=raw)
+        # Fall back to a very-narrow met-detector so a totally off-format
+        # reply doesn't permanently jam the loop as "met". Looking for
+        # the exact `"met":true` substring (post whitespace strip) is the
+        # only signal we trust — the previous "goal achieved" keyword
+        # sniff caused false positives when that phrase appeared inside
+        # the EVIDENCE line.
+        normalized = text.lower().replace(" ", "")
+        looks_met = '"met":true' in normalized
+        reason = (evidence or text)[:200]
+        return GoalDecision(met=looks_met, reason=reason, raw=raw)
     met = bool(data.get("met", False))
-    reason = str(data.get("reason") or "").strip() or ("goal met" if met else "no reason given")
+    reason_field = str(data.get("reason") or "").strip()
+    # Prefer the JSON reason; append EVIDENCE when distinct so the user
+    # sees both the verdict justification AND the proof the judge cited.
+    if evidence and evidence.lower() not in reason_field.lower():
+        reason = f"{reason_field} — EVIDENCE: {evidence}" if reason_field else evidence
+    else:
+        reason = reason_field or ("goal met" if met else "no reason given")
     return GoalDecision(met=met, reason=reason[:400], raw=raw)
 
 

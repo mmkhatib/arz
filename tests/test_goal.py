@@ -39,10 +39,20 @@ def test_parse_empty_input_returns_not_met():
     assert d.met is False
 
 
-def test_parse_garbage_falls_back_to_keyword_sniff():
+def test_parse_garbage_falls_back_to_met_true_only():
+    """Narrow fallback: only the literal `"met":true` substring counts.
+
+    The old `goal achieved` keyword sniff caused false positives when
+    the cheap evaluator's EVIDENCE preamble mentioned the phrase
+    (e.g. ``EVIDENCE: the writer claimed goal achieved but ...``).
+    """
     from arz.goal import _parse_decision
 
-    d = _parse_decision("Goal achieved finally")
+    # Phrase-only reply no longer trips a met=True verdict.
+    assert _parse_decision("Goal achieved finally").met is False
+
+    # But a malformed JSON-ish reply with the unambiguous met token does.
+    d = _parse_decision('garbage "met":true more garbage')
     assert d.met is True
 
 
