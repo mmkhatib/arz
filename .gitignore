@@ -45,3 +45,8 @@ docs/_build/
 *.db
 *.sqlite
 *.sqlite3
+
+# Playwright visual traces (scripts/trace-*.mjs output)
+goal-trace/
+test-results/
+playwright-report/

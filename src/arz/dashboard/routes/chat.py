@@ -67,7 +67,19 @@ def _make_provider(
     assert isinstance(config, ArzConfig)
 
     provider_name = provider_name_override or config.provider.name
-    model = model_override or config.provider.model
+    # Only inherit `config.provider.model` when the session's provider
+    # matches the global config provider. Otherwise the model is almost
+    # certainly wrong (e.g. global config sets model=gpt-5.4 for
+    # provider=claude-code from an earlier codex experiment — the writer
+    # then errors out every turn with "model not found", spinning the
+    # /goal loop to its iteration cap). Pass "" and let the provider
+    # pick its own default for the new provider family.
+    if model_override:
+        model = model_override
+    elif provider_name == config.provider.name:
+        model = config.provider.model
+    else:
+        model = ""
     work_dir = Path(session_work_dir) if session_work_dir else (_WORKSPACE_ROOT / session_id)
     # Resolve the steered prompt: agent's system_prompt (if set) → per-config
     # override → bundled.
