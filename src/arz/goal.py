@@ -205,7 +205,50 @@ def _attr_escape(s: str, *, cap: int = 200) -> str:
     return (s or "").replace('"', "'").replace("\n", " ").replace("\r", " ")[:cap]
 
 
-def build_followup_prompt(goal: str, reason: str, iteration: int, cap: int) -> str:
+FRUSTRATION_THRESHOLD = 3  # consecutive identical rejections before hard reset
+
+
+def _normalize_reason(reason: str) -> str:
+    """Compare-key for two evaluator reasons. Lowercased, whitespace
+    collapsed, truncated to 120 chars so trailing EVIDENCE tail doesn't
+    fool us into thinking each round was "different"."""
+    import re as _re
+
+    text = _re.sub(r"\s+", " ", (reason or "").strip().lower())
+    return text[:120]
+
+
+def is_same_reason(a: str, b: str) -> bool:
+    """Two reasons are 'the same' if their normalised forms match."""
+    return bool(a) and _normalize_reason(a) == _normalize_reason(b)
+
+
+_HARD_RESET_TEMPLATE = (
+    '<goal-auto iter="{n}" cap="{cap}" reason="hard-reset">\n'
+    "[goal-auto {n}/{cap}] === HARD RESET — your last {streak} attempts were "
+    "rejected for the SAME reason ===\n\n"
+    "Stop. Discard whatever approach you have been using — it is clearly not "
+    "working. The evaluator has rejected your last {streak} replies with the "
+    "identical complaint:\n\n"
+    "    {reason}\n\n"
+    "DO NOT repeat the previous answer. DO NOT paraphrase it. Start over "
+    "from the goal text and write a fundamentally different reply. If your "
+    "previous reply was the wrong shape (countdown vs. count-up, wrong range, "
+    "wrong subject), correct that NOW.\n\n"
+    "Goal:\n{goal}\n\n"
+    "End with `goal:done` only if THIS attempt actually satisfies the goal.\n"
+    "</goal-auto>"
+)
+
+
+def build_followup_prompt(
+    goal: str,
+    reason: str,
+    iteration: int,
+    cap: int,
+    *,
+    same_reason_streak: int = 0,
+) -> str:
     """The user-message body posted back to /api/chat for an auto-iteration.
 
     Wrapped in a semantic ``<goal-auto>`` tag so the dashboard renderer
@@ -213,6 +256,18 @@ def build_followup_prompt(goal: str, reason: str, iteration: int, cap: int) -> s
     Gemini, Ollama) all parse XML-shaped attributes harmlessly — the
     tag is metadata; the writer reads the body inside.
     """
+    # Frustration trip: writer has failed for the SAME reason N times
+    # in a row. Send the hard-reset variant instead of the usual nudge
+    # — keeps the loop honest when the writer's KV cache is sticky.
+    if same_reason_streak >= FRUSTRATION_THRESHOLD:
+        return _HARD_RESET_TEMPLATE.format(
+            n=iteration,
+            cap=cap,
+            streak=same_reason_streak,
+            reason=_attr_escape(reason or "no specific feedback", cap=400),
+            goal=(goal or "").strip()[:4000],
+        )
+
     body = _AUTO_TURN_TEMPLATE.format(
         n=iteration,
         cap=cap,

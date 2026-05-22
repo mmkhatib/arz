@@ -74,6 +74,13 @@ def _render_goal_tags_for_md(text: str) -> str:
         elif variant == "cap":
             icon = "⛔"
             label = f"goal · cap reached {iter_}/{cap}"
+        elif variant == "reset":
+            streak = attrs.get("streak", "3")
+            icon = "⚠️"
+            label = f"frustration · hard reset ({streak}× same complaint)"
+        elif variant == "pending":
+            icon = "⏳"
+            label = "evaluator · running"
         elif verdict == "met":
             icon = "✅"
             label = "evaluator · met"
@@ -230,6 +237,7 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         # the budget restarts fresh.
         session.goal_iterations = 0
         session.goal_last_reason = ""
+        session.goal_same_reason_count = 0
         mgr.save(session)
         # Kick off the first turn so the model starts working
         # immediately — no separate user prompt required.
@@ -293,6 +301,7 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         session.goal_set_at = 0.0
         session.goal_iterations = 0
         session.goal_last_reason = ""
+        session.goal_same_reason_count = 0
         mgr.save(session)
     return {"goal": session.goal, "kickoff_fired": fired}
 

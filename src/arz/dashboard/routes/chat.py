@@ -224,6 +224,16 @@ async def _goal_followup(
     if (not (fresh.goal or "").strip()) or fresh.goal_status != "active":
         return None
 
+    # Frustration counter: bump when judge rejects with the same reason
+    # back-to-back; reset on any new complaint or a "met" verdict.
+    prev_reason = getattr(fresh, "goal_last_reason", "")
+    prev_streak = int(getattr(fresh, "goal_same_reason_count", 0) or 0)
+    if decision.met:
+        fresh.goal_same_reason_count = 0
+    elif _goal.is_same_reason(decision.reason, prev_reason):
+        fresh.goal_same_reason_count = prev_streak + 1
+    else:
+        fresh.goal_same_reason_count = 1
     fresh.goal_last_reason = decision.reason
 
     # Always emit an evaluator marker so the user can see the
@@ -331,11 +341,21 @@ async def _goal_followup(
         return None
     fresh.goal_iterations = new_iter
     mgr.save(fresh)
+
+    # Surface a frustration marker when we're about to fire a hard
+    # reset so the user can see WHY the next prompt looks different.
+    streak = int(getattr(fresh, "goal_same_reason_count", 0) or 0)
+    if streak >= _goal.FRUSTRATION_THRESHOLD:
+        _emit_marker(
+            f'<goal-marker variant="reset" streak="{streak}" reason="{safe_reason}" />\n\n'
+        )
+
     prompt = _goal.build_followup_prompt(
         goal=fresh.goal or "",
         reason=decision.reason,
         iteration=new_iter,
         cap=fresh.goal_max_iterations,
+        same_reason_streak=int(getattr(fresh, "goal_same_reason_count", 0) or 0),
     )
     log.info(
         "goal auto-iteration firing",

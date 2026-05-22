@@ -489,6 +489,11 @@ function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
     icon = "⏳";
     color = "var(--cedar-glow, var(--cedar))";
     label = "evaluator · running";
+  } else if (variant === "reset") {
+    const streak = attrs.streak || "3";
+    icon = "⚠";
+    color = "#fbbf24";
+    label = `frustration · hard reset (${streak}× same complaint)`;
   } else if (variant === "done") {
     icon = "◎";
     color = "#34d399";

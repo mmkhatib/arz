@@ -152,6 +152,12 @@ class Session:
     goal_iterations: int = 0
     goal_max_iterations: int = 20
     goal_last_reason: str = ""
+    # Frustration tracker: how many consecutive iterations the evaluator
+    # has rejected the writer for the SAME reason. When this hits the
+    # threshold (3) we inject a hard-reset prompt forcing the writer to
+    # discard its current approach — handles sticky-cache failure modes
+    # where the writer keeps repeating the previous answer verbatim.
+    goal_same_reason_count: int = 0
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
@@ -201,6 +207,7 @@ class Session:
             "goal_iterations": self.goal_iterations,
             "goal_max_iterations": self.goal_max_iterations,
             "goal_last_reason": self.goal_last_reason,
+            "goal_same_reason_count": self.goal_same_reason_count,
             "pinned": self.pinned,
             "archived": self.archived,
             "last_consolidated_index": self.last_consolidated_index,
@@ -235,6 +242,7 @@ class Session:
             goal_iterations=int(d.get("goal_iterations") or 0),
             goal_max_iterations=int(d.get("goal_max_iterations") or 20),
             goal_last_reason=str(d.get("goal_last_reason") or ""),
+            goal_same_reason_count=int(d.get("goal_same_reason_count") or 0),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
             last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),
