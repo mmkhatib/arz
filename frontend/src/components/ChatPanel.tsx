@@ -1243,7 +1243,33 @@ export default function ChatPanel({
       setStreamBuffer("");
       setPendingApproval(null);
       abortRef.current = null;
+      void watchForAutoIterStream();
     }
+  };
+
+  // After a turn ends inside an active /goal loop, the server may
+  // POST back a goal-auto follow-up — that fires a brand-new SSE
+  // stream which the current EventSource won't pick up on its own.
+  // Poll session.streaming for a short window and reattach when it
+  // flips back to true. Bails immediately if the goal isn't active.
+  const watchForAutoIterStream = async () => {
+    let attempts = 0;
+    const maxAttempts = 60; // 60 × 200ms = 12s
+    const tick = async () => {
+      if (attempts++ > maxAttempts) return;
+      try {
+        const s = await api.getSession(sessionId);
+        if (!s.goal || s.goal_status !== "active") return;
+        if (s.streaming) {
+          await reattachStream().catch(() => {});
+          return;
+        }
+      } catch {
+        /* swallow; we'll retry */
+      }
+      setTimeout(() => void tick(), 200);
+    };
+    void tick();
   };
 
   // Re-attach to an in-flight turn — the LLM is running detached on the
@@ -1269,6 +1295,7 @@ export default function ChatPanel({
       setStreamBuffer("");
       setPendingApproval(null);
       abortRef.current = null;
+      void watchForAutoIterStream();
     }
   };
 

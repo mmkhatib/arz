@@ -286,7 +286,7 @@ async def _goal_followup(
     judge_label = judge_model or (judge_provider or "default")
     verdict_attr = "met" if decision.met else "not-met"
     safe_reason = (
-        (decision.reason or "").replace('"', "'").replace("\n", " ").replace("\r", " ")[:200]
+        (decision.reason or "").replace('"', "'").replace("\n", " ").replace("\r", " ")[:600]
     )
     _emit_marker(
         f'\n\n<goal-marker variant="evaluator" judge="{judge_label}" '

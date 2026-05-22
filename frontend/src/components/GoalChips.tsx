@@ -43,10 +43,10 @@ export function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
     <div
       style={{
         display: "flex",
-        alignItems: "center",
+        alignItems: "flex-start",
         gap: 8,
         margin: "8px 0",
-        padding: "6px 10px",
+        padding: "8px 10px",
         background: "var(--surface)",
         border: `1px solid ${color}33`,
         borderLeft: `3px solid ${color}`,
@@ -55,34 +55,37 @@ export function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
         fontFamily: "var(--fm, ui-monospace, monospace)",
       }}
     >
-      <span style={{ color, fontSize: 13, fontWeight: 600 }}>{icon}</span>
-      <span
-        style={{
-          color: "var(--muted)",
-          textTransform: "uppercase",
-          letterSpacing: ".08em",
-          fontSize: 9.5,
-        }}
-      >
-        {label}
-      </span>
-      {judge ? (
-        <span style={{ color: "var(--cedar-2, var(--cedar))", fontSize: 10.5 }}>{judge}</span>
-      ) : null}
-      {reason ? (
-        <span
-          style={{
-            color: "var(--text2, var(--text))",
-            flex: 1,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-          title={reason}
-        >
-          {reason}
-        </span>
-      ) : null}
+      <span style={{ color, fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>{icon}</span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span
+            style={{
+              color: "var(--muted)",
+              textTransform: "uppercase",
+              letterSpacing: ".08em",
+              fontSize: 9.5,
+            }}
+          >
+            {label}
+          </span>
+          {judge ? (
+            <span style={{ color: "var(--cedar-2, var(--cedar))", fontSize: 10.5 }}>{judge}</span>
+          ) : null}
+        </div>
+        {reason ? (
+          <span
+            style={{
+              color: "var(--text2, var(--text))",
+              fontSize: 11.5,
+              lineHeight: 1.45,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {reason}
+          </span>
+        ) : null}
+      </div>
     </div>
   );
 }
