@@ -21,6 +21,7 @@ from arz.acp.types import (
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
 )
+from arz.dashboard.redact import redact_chunk, redact_full
 from arz.dashboard.sse import (
     sse_chunk,
     sse_compaction,
@@ -171,10 +172,14 @@ def _final_assistant_text(cleaned: str, extracted: list, raw: str) -> str:
     into the visible bubble. That's exactly the case we want cleaned to
     win in. So: trust cleaned when we actually extracted something,
     falling back to a tiny placeholder so the bubble isn't blank.
+
+    Stay-on-task #12: apply full-text redaction here so cross-chunk
+    credential patterns (which slip past the per-chunk pass) don't
+    persist into session.messages.
     """
     if extracted:
-        return cleaned or "_(memory updated — no visible reply)_"
-    return cleaned or raw
+        return redact_full(cleaned) if cleaned else "_(memory updated — no visible reply)_"
+    return redact_full(cleaned or raw)
 
 
 async def _goal_followup(
@@ -518,13 +523,17 @@ async def _run_turn(
                     if getattr(state, "_in_tool_group", False):
                         await emit(sse_segment())
                         state._in_tool_group = False  # type: ignore[attr-defined]
-                    state.full_reply += event.text
-                    await emit(sse_chunk(event.text))
+                    # Stay-on-task #12: per-chunk credential +
+                    # exfiltration-URL redaction. The full-text pass
+                    # at turn-end catches cross-chunk patterns.
+                    safe_text = redact_chunk(event.text)
+                    state.full_reply += safe_text
+                    await emit(sse_chunk(safe_text))
 
                 elif event.kind == EVENT_THINKING_CHUNK and getattr(event, "text", ""):
                     # Stay-on-task #5: reasoning chunks render in a
                     # separate collapsible panel — never inline.
-                    await emit(sse_thinking(event.text))
+                    await emit(sse_thinking(redact_chunk(event.text)))
 
                 elif event.kind == EVENT_COMPACTION_STATUS:
                     # Stay-on-task #6: surface provider-level

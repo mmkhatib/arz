@@ -4,6 +4,28 @@
 
 export type GoalAttrs = Record<string, string>;
 
+// Stay-on-task #13-14 — OPTIONS extractor. When the assistant ends a
+// reply with `[OPTIONS: A | B | C]`, surface a checkbox+Send block
+// instead of leaving the bracketed text inline. Up to 10 choices.
+const _OPTIONS_RE = /\[OPTIONS:\s*([^\]]+?)\]\s*$/im;
+
+export interface ExtractedOptions {
+  cleanedText: string;
+  choices: string[];
+}
+
+export function extractOptions(text: string): ExtractedOptions {
+  const m = text.match(_OPTIONS_RE);
+  if (!m) return { cleanedText: text, choices: [] };
+  const raw = m[1] || "";
+  const choices = raw
+    .split("|")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 10);
+  return { cleanedText: text.slice(0, m.index ?? 0).trimEnd(), choices };
+}
+
 export type MsgSegment =
   | { kind: "text"; value: string }
   | { kind: "widget"; title: string; html: string }
