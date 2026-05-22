@@ -47,6 +47,50 @@ class TaskStep:
     status: str = "pending"  # pending | running | done | failed
     attempts: int = 0
     result: str = ""
+    error: str = ""
+
+
+# Stay-on-task #11 — WorkingMemory per Project. Survives compaction
+# because we maintain it ourselves; re-injected into every task prompt.
+@dataclass
+class WorkingMemory:
+    files_changed: list[str] = field(default_factory=list)
+    decisions: list[str] = field(default_factory=list)
+    blockers: list[str] = field(default_factory=list)
+
+    def update_from_result(self, result: str) -> None:
+        """Cheap regex extraction of file-touched lines from a task's
+        output. Decisions + blockers are best surfaced explicitly by
+        the worker (`DECISION: …` / `BLOCKER: …`) but we don't require
+        it — the files list alone is enough to give the next task
+        useful context after compaction.
+        """
+        for line in (result or "").splitlines():
+            stripped = line.strip()
+            if any(
+                stripped.startswith(p)
+                for p in ("Created ", "Modified ", "Updated ", "Deleted ", "Wrote ")
+            ):
+                self.files_changed.append(stripped[:200])
+            elif stripped.startswith("DECISION:"):
+                self.decisions.append(stripped[9:].strip()[:240])
+            elif stripped.startswith("BLOCKER:"):
+                self.blockers.append(stripped[8:].strip()[:240])
+
+    def summary(self) -> str:
+        if not (self.files_changed or self.decisions or self.blockers):
+            return ""
+        parts = ["## Working Memory"]
+        if self.files_changed:
+            parts.append("### Files Changed")
+            parts.extend(f"- {f}" for f in self.files_changed[-20:])
+        if self.decisions:
+            parts.append("### Decisions")
+            parts.extend(f"- {d}" for d in self.decisions[-10:])
+        if self.blockers:
+            parts.append("### Blockers")
+            parts.extend(f"- {b}" for b in self.blockers[-5:])
+        return "\n".join(parts)
 
 
 @dataclass
@@ -59,6 +103,13 @@ class TaskRecord:
     verdict: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
+    # Stay-on-task #11 — accumulated working memory across all steps.
+    memory: WorkingMemory = field(default_factory=WorkingMemory)
+    # Stay-on-task #9 — how many times we've called _try_replan.
+    replan_count: int = 0
+
+
+_MAX_REPLAN = 2  # stay-on-task #9 — cap on replan attempts
 
 
 _DECOMPOSE_PROMPT = """\
@@ -90,6 +141,119 @@ STEP RESULTS:
 """
 
 _STEP_LINE_RE = re.compile(r"^\s*\d+[.)]\s+(.+)$")
+
+
+# Stay-on-task #10 — every step prompt opens with the full plan + a
+# cursor (← YOU ARE HERE). MeshClaw's single biggest prompt-engineering
+# win: the model sees what's done, what's pending, and where it is.
+def _build_step_prompt(rec: TaskRecord, step: TaskStep, attempt: int) -> str:
+    lines: list[str] = [
+        "You are an autonomous execution agent in a multi-step plan.",
+        "Execute the CURRENT STEP precisely. Do not skip ahead or combine steps.",
+    ]
+    if attempt > 1:
+        lines.append(f"This is retry attempt {attempt}. Fix the previous error — don't restart.")
+    mem_block = rec.memory.summary()
+    if mem_block:
+        lines.append("")
+        lines.append(mem_block)
+    lines.append("")
+    lines.append("## Full Execution Plan (follow strictly)")
+    lines.append(
+        "Execute ONLY what your current step describes. Do not skip ahead or combine steps."
+    )
+    for s in rec.steps:
+        if s.status == "done":
+            icon = "✅"
+            here = ""
+        elif s.n == step.n:
+            icon = "🔄"
+            here = " ← YOU ARE HERE"
+        else:
+            icon = "⬜"
+            here = ""
+        lines.append(f"{icon} {s.n}. {s.text[:160]}{here}")
+    lines.append("")
+    lines.append(f"## Current Step ({step.n}/{len(rec.steps)})")
+    lines.append(step.text)
+    if attempt > 1 and step.error:
+        lines.append("")
+        lines.append(f"## Previous Attempt Failed (attempt {attempt - 1})")
+        lines.append(f"Error: {step.error}")
+        lines.append("")
+        lines.append("Fix the error and try again. Do not start over.")
+    lines.append("")
+    lines.append(
+        "When you write or change files, prefix each line with one of: Created/Modified/"
+        "Updated/Deleted/Wrote. Surface key choices on a line beginning DECISION:. Surface "
+        "blockers on a line beginning BLOCKER:. These tags drive the working-memory layer."
+    )
+    return "\n".join(lines)
+
+
+_REPLAN_PROMPT = """\
+You are replanning the REMAINING work for a multi-step task after a
+step failed. Read the original spec, the completed steps (✅), the
+failed step + its error, and the current working memory + git state.
+Produce a NEW plan covering only what's left.
+
+Output ONLY the new steps, one per line, prefixed `1. `, `2. `, etc.
+No prose before or after.
+
+ORIGINAL SPEC:
+{spec}
+
+COMPLETED STEPS:
+{completed}
+
+FAILED STEP (will be discarded):
+{failed_step}
+Error: {failed_error}
+
+WORKING MEMORY:
+{memory}
+
+Aim for 1–6 new steps that finish the spec without revisiting what is
+already done.
+"""
+
+
+async def _try_replan(rec: TaskRecord, failed: TaskStep, runner: SubagentRunner) -> bool:
+    """Ask the LLM for a revised plan for the REMAINING work. Returns
+    True when new steps were appended + the task can keep running."""
+    if rec.replan_count >= _MAX_REPLAN:
+        return False
+    rec.replan_count += 1
+    completed = "\n".join(f"✅ {s.n}. {s.text[:160]}" for s in rec.steps if s.status == "done")
+    prompt = _REPLAN_PROMPT.format(
+        spec=rec.spec.strip()[:4000],
+        completed=completed or "(none)",
+        failed_step=f"{failed.n}. {failed.text[:240]}",
+        failed_error=(failed.error or failed.result)[:400] or "(no error captured)",
+        memory=rec.memory.summary() or "(empty)",
+    )
+    try:
+        raw = await runner(rec.agent, prompt)
+    except Exception:
+        log.exception("replan call failed", task_id=rec.id)
+        return False
+    new_steps: list[str] = []
+    for line in (raw or "").splitlines():
+        m = _STEP_LINE_RE.match(line)
+        if m:
+            new_steps.append(m.group(1).strip())
+    if not new_steps:
+        return False
+    next_n = (rec.steps[-1].n if rec.steps else 0) + 1
+    for i, text in enumerate(new_steps):
+        rec.steps.append(TaskStep(n=next_n + i, text=text))
+    log.info(
+        "task replanned",
+        task_id=rec.id,
+        appended=len(new_steps),
+        replan_count=rec.replan_count,
+    )
+    return True
 
 
 def _parse_steps(decomposition: str) -> list[str]:
@@ -240,22 +404,14 @@ class TaskRunner:
 
             # 2. execute each step with retries. Prior step results are
             # fed forward as context so later stages know what's done.
-            for step in rec.steps:
+            # Iterate by index so we can pick up replan-appended steps
+            # without restarting the loop.
+            idx = 0
+            while idx < len(rec.steps):
+                step = rec.steps[idx]
+                idx += 1
                 if step.status == "done":
                     continue  # resume-aware: don't re-run finished steps
-                prior = "\n\n".join(
-                    f"## Step {s.n} — {s.status}\n{s.text}\n\n{(s.result or '').strip()[:1500]}"
-                    for s in rec.steps
-                    if s.n < step.n and s.status == "done"
-                )
-                prompt = step.text
-                if prior:
-                    prompt = (
-                        f"You are working on stage {step.n} of a multi-step plan.\n\n"
-                        f"GOAL:\n{rec.spec.strip()[:1500]}\n\n"
-                        f"PRIOR STAGES:\n{prior}\n\n"
-                        f"YOUR STAGE:\n{step.text}"
-                    )
                 attempt = 0
                 recoveries = 0
                 compactions = 0
@@ -263,6 +419,11 @@ class TaskRunner:
                 same_error_count = 0
                 while attempt < _MAX_RETRIES:
                     attempt += 1
+                    # Stay-on-task #10 + #11 — Full Execution Plan
+                    # prompt + WorkingMemory summary, rebuilt on every
+                    # attempt so the model always sees the cursor +
+                    # any accumulated files/decisions/blockers.
+                    prompt = _build_step_prompt(rec, step, attempt)
                     step.status = "running"
                     step.attempts = attempt
                     self._persist(rec)
@@ -270,6 +431,7 @@ class TaskRunner:
                         out = await self._runner(rec.agent, prompt)
                         step.result = out or ""
                         step.status = "done"
+                        rec.memory.update_from_result(step.result)
                         self._persist(rec)
                         break
                     except Exception as e:
@@ -277,19 +439,20 @@ class TaskRunner:
                         cls = type(e).__name__.lower()
                         log.exception("step failed", task_id=rec.id, step=step.n, attempt=attempt)
                         step.result = f"(error: {e})"
+                        step.error = err_str
                         # Classify the failure: process death + context
                         # overflow get their own budgets so a flaky CLI
                         # doesn't burn the logic-retry budget.
                         if "processdied" in cls or "brokenpipe" in cls or "connectionreset" in cls:
                             if recoveries >= _MAX_RECOVERIES:
-                                step.error = f"Process died {recoveries + 1} times — giving up"  # type: ignore[attr-defined]
+                                step.error = f"Process died {recoveries + 1} times — giving up"
                                 break
                             recoveries += 1
                             attempt -= 1  # crash doesn't tick the logic counter
                             continue
                         if "contextoverflow" in cls or "context window" in str(e).lower():
                             if compactions >= _MAX_COMPACTIONS:
-                                step.error = f"Context overflow {compactions + 1} times"  # type: ignore[attr-defined]
+                                step.error = f"Context overflow {compactions + 1} times"
                                 break
                             compactions += 1
                             attempt -= 1
@@ -306,6 +469,14 @@ class TaskRunner:
                             prev_error = err_str
                 if step.status != "done":
                     step.status = "failed"
+                    # Stay-on-task #9 — _try_replan: ask the LLM for a
+                    # revised plan for the REMAINING work. If new steps
+                    # come back we append them + keep running. Capped
+                    # so a pathological loop can't run forever.
+                    replanned = await _try_replan(rec, step, self._runner)
+                    if replanned:
+                        self._persist(rec)
+                        continue
                     rec.status = "failed"
                     rec.finished_at = time.time()
                     self._persist(rec)
