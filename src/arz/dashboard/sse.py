@@ -70,3 +70,32 @@ def sse_permission_request(title: str, tool_input: str, request_id: str) -> str:
             "request_id": request_id,
         }
     )
+
+
+# Stay-on-task tier 2 — extra event kinds the frontend uses for
+# segmentation + status banners.
+
+
+def sse_thinking(text: str) -> str:
+    """Streaming reasoning / scratchpad text. Renders in a separate
+    collapsible panel, never in the main bubble."""
+    return sse_event({"type": "thinking_chunk", "text": text})
+
+
+def sse_compaction(status: str, detail: str = "") -> str:
+    """Provider context-compaction status — ``in_progress`` / ``done``
+    / ``failed``. Renders as a top-of-chat banner."""
+    return sse_event({"type": "compaction_status", "status": status, "detail": detail})
+
+
+def sse_segment() -> str:
+    """Bubble-boundary hint: close the current streaming bubble + start
+    fresh on the next text_chunk. Emitted when a tool-group ends and
+    text resumes."""
+    return sse_event({"type": "chat_segment"})
+
+
+def sse_heartbeat() -> str:
+    """5s keepalive ping during long turns. Frontend resets its
+    client-side stall timer; not rendered."""
+    return sse_event({"type": "heartbeat"})

@@ -878,6 +878,18 @@ export default function ChatPanel({
     setQueuedMessage(q);
   };
   const [streamBuffer, setStreamBuffer] = useState("");
+  // Stay-on-task tier 2 — chat-render parity.
+  const [thinkingBuffer, setThinkingBuffer] = useState("");
+  const [compactionStatus, setCompactionStatus] = useState<
+    { status: string; detail: string } | null
+  >(null);
+  // Pulse indicator state. Heartbeat ticks reset this; useEffect below
+  // fades it after 7s of no event.
+  const [heartbeatAt, setHeartbeatAt] = useState<number>(0);
+  // chat_segment SSE event is emitted by the server when text resumes
+  // after a tool group. The full bubble-split refactor (separate saved
+  // segments mid-stream) is out of scope for this tier — we forward
+  // the signal to onSseEvent for telemetry + future use.
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
   const [estimatedContext, setEstimatedContext] = useState(false);
@@ -1148,6 +1160,19 @@ export default function ChatPanel({
           t.callId === chunk.tool_call_id ? { ...t, state: "done" } : t,
         ));
         onSseEvent?.("tool_result", chunk.tool_call_id);
+      } else if (chunk.type === "thinking_chunk" && chunk.text) {
+        setThinkingBuffer((s) => s + chunk.text);
+        onSseEvent?.("thinking_chunk");
+      } else if (chunk.type === "compaction_status") {
+        setCompactionStatus({
+          status: String((chunk as { status?: string }).status || "in_progress"),
+          detail: String((chunk as { detail?: string }).detail || ""),
+        });
+        onSseEvent?.("compaction_status");
+      } else if (chunk.type === "chat_segment") {
+        onSseEvent?.("chat_segment");
+      } else if (chunk.type === "heartbeat") {
+        setHeartbeatAt(Date.now());
       } else if (chunk.type === "permission_request" && chunk.request_id) {
         setPendingApproval({
           requestId: chunk.request_id!,
@@ -1158,6 +1183,9 @@ export default function ChatPanel({
       } else if (chunk.type === "complete") {
         if (chunk.context_pct) { setContextPct(chunk.context_pct); setEstimatedContext(false); }
         if (chunk.usage) turnUsage = chunk.usage;
+        // Clear transient tier-2 state on turn-end.
+        setThinkingBuffer("");
+        setCompactionStatus(null);
         if (messages.length === 0 && fullText && firstUserMsgRef.current) {
           api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
             if (t) { setTitle(t); onTitleChange?.(t); }
@@ -1526,11 +1554,75 @@ export default function ChatPanel({
           );
         })}
 
+        {/* Compaction banner — top of the streaming area. */}
+        {compactionStatus && (
+          <div
+            className="mx-auto mb-3 px-3 py-1.5 rounded-md border text-[12px] text-center"
+            style={{
+              maxWidth: 420,
+              background: "color-mix(in srgb, var(--cedar) 8%, transparent)",
+              borderColor: "color-mix(in srgb, var(--cedar) 35%, var(--border))",
+              color: "var(--text2, var(--text))",
+            }}
+          >
+            <span style={{ fontFamily: "var(--fm, ui-monospace, monospace)" }}>
+              {compactionStatus.status === "done"
+                ? "✓ Context compressed"
+                : compactionStatus.status === "failed"
+                  ? "⚠ Compaction failed"
+                  : "⏳ Compressing context…"}
+            </span>
+            {compactionStatus.detail ? (
+              <span className="ml-2 text-[var(--muted)]">{compactionStatus.detail}</span>
+            ) : null}
+          </div>
+        )}
+
+        {/* Thinking panel — collapsible scratchpad beside the bubble. */}
+        {streaming && thinkingBuffer && (
+          <div className="flex justify-start mb-2 px-9">
+            <details
+              className="text-[12px] text-[var(--muted)] max-w-[75%]"
+              style={{
+                background: "var(--surface)",
+                border: "1px dashed var(--border)",
+                borderRadius: 8,
+                padding: "6px 10px",
+                fontFamily: "var(--fm, ui-monospace, monospace)",
+              }}
+            >
+              <summary style={{ cursor: "pointer", userSelect: "none" }}>
+                💭 thinking… ({thinkingBuffer.length} chars)
+              </summary>
+              <pre
+                style={{
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                  marginTop: 6,
+                  color: "var(--text2, var(--text))",
+                }}
+              >
+                {thinkingBuffer}
+              </pre>
+            </details>
+          </div>
+        )}
+
         {/* Live streaming bubble */}
         {streaming && (
           <div className="flex justify-start mb-4">
-            <div className="w-7 h-7 rounded-full bg-[var(--cedar)] flex items-center justify-center text-[12px] mr-2 mt-0.5 shrink-0">
+            <div className="w-7 h-7 rounded-full bg-[var(--cedar)] flex items-center justify-center text-[12px] mr-2 mt-0.5 shrink-0 relative">
               🌲
+              {/* Heartbeat pulse — fades 7s after the last heartbeat event. */}
+              {heartbeatAt > 0 && Date.now() - heartbeatAt < 7000 && (
+                <span
+                  className="absolute inset-0 rounded-full animate-ping"
+                  style={{
+                    border: "1.5px solid var(--cedar)",
+                    pointerEvents: "none",
+                  }}
+                />
+              )}
             </div>
             <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-bl-sm bg-[var(--asst-bg)] border border-[var(--border)] text-[14px] whitespace-pre-wrap">
               {(toolCalls.length > 0 || pendingApproval) && (

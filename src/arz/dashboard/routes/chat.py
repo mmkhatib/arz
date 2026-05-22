@@ -13,17 +13,23 @@ from fastapi.responses import StreamingResponse
 from arz import inline_learn
 from arz.acp.client import AcpError
 from arz.acp.types import (
+    EVENT_COMPACTION_STATUS,
     EVENT_COMPLETE,
     EVENT_PERMISSION_REQUEST,
     EVENT_TEXT_CHUNK,
+    EVENT_THINKING_CHUNK,
     EVENT_TOOL_CALL,
     EVENT_TOOL_RESULT,
 )
 from arz.dashboard.sse import (
     sse_chunk,
+    sse_compaction,
     sse_complete,
     sse_error,
+    sse_heartbeat,
     sse_permission_request,
+    sse_segment,
+    sse_thinking,
     sse_tool_call,
     sse_tool_result,
 )
@@ -445,6 +451,24 @@ async def _run_turn(
     final_error: str | None = None
     deferred_complete: str | None = None  # held back so evaluator chips stream before "complete"
 
+    # Stay-on-task #8: 5s heartbeat keepalive so the frontend's pulse
+    # indicator stays alive + the client-side stall timer resets. The
+    # provider's text_chunks also count as activity; this task just
+    # guarantees the floor when the model is silent (thinking / calling
+    # a long-running tool / blocked on a slow MCP server).
+    async def _heartbeat_loop() -> None:
+        try:
+            while True:
+                await asyncio.sleep(5.0)
+                try:
+                    await emit(sse_heartbeat())
+                except Exception:
+                    return
+        except asyncio.CancelledError:
+            return
+
+    heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
     # Same-turn recall loop. When the model emits `<recall>q</recall>` mid-
     # reply we drain the queue, run the search, and feed `<recall_result>`
     # back as a continuation message in the SAME assistant bubble. The cap
@@ -486,10 +510,34 @@ async def _run_turn(
                         )
 
                 if event.kind == EVENT_TEXT_CHUNK and event.text:
+                    # Stay-on-task #7: when text resumes after a
+                    # tool-group, emit a chat_segment boundary so the
+                    # frontend closes the current bubble + opens a
+                    # fresh one. Avoids the "wall of text with tool
+                    # cards mid-paragraph" rendering bug.
+                    if getattr(state, "_in_tool_group", False):
+                        await emit(sse_segment())
+                        state._in_tool_group = False  # type: ignore[attr-defined]
                     state.full_reply += event.text
                     await emit(sse_chunk(event.text))
 
+                elif event.kind == EVENT_THINKING_CHUNK and getattr(event, "text", ""):
+                    # Stay-on-task #5: reasoning chunks render in a
+                    # separate collapsible panel — never inline.
+                    await emit(sse_thinking(event.text))
+
+                elif event.kind == EVENT_COMPACTION_STATUS:
+                    # Stay-on-task #6: surface provider-level
+                    # compaction transitions to the UI banner.
+                    await emit(
+                        sse_compaction(
+                            status=str(getattr(event, "stop_reason", "") or "in_progress"),
+                            detail=str(getattr(event, "text", "") or ""),
+                        )
+                    )
+
                 elif event.kind == EVENT_TOOL_RESULT:
+                    state._in_tool_group = True  # type: ignore[attr-defined]
                     await emit(
                         sse_tool_result(
                             tool_call_id=event.tool_call_id or "",
@@ -498,6 +546,7 @@ async def _run_turn(
                     )
 
                 elif event.kind == EVENT_TOOL_CALL:
+                    state._in_tool_group = True  # type: ignore[attr-defined]
                     tool_name = event.text or ""
                     tool_input_str = str(event.tool_input or "")
                     if tool_name:
@@ -734,6 +783,11 @@ async def _run_turn(
         final_error = str(e)
         await emit(sse_error(str(e)))
     finally:
+        # Cancel the 5s heartbeat keepalive — turn is ending.
+        try:
+            heartbeat_task.cancel()
+        except Exception:
+            pass
         # Always persist the assistant message if we got any text. This
         # covers all the failure modes: cancellation, provider crash,
         # mid-stream provider eviction, etc.
