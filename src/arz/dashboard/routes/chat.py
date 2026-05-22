@@ -33,6 +33,7 @@ from arz.dashboard.sse import (
     sse_thinking,
     sse_tool_call,
     sse_tool_result,
+    sse_writer_done,
 )
 from arz.dashboard.stream_registry import get_stream_registry
 from arz.dashboard.token_auth import require_token
@@ -771,11 +772,14 @@ async def _run_turn(
                     msg.version_index = len(msg.versions) - 1
                 mgr.save(session)
                 saved_assistant = True
-            # Defer the SSE `complete` event until AFTER the goal
-            # evaluator has streamed its marker chip. Frontend closes
-            # the EventSource on `complete`, so emitting it now would
-            # mean the judge's verdict only arrives on the next page
-            # load. The finally block emits this once everything is in.
+            # The writer turn is finished AND persisted. Emit
+            # sse_writer_done so the frontend can clear its live
+            # streamBuffer — otherwise the saved bubble + the
+            # streaming bubble both render the same writer text for
+            # the entire ~10s judge runtime. Distinct from
+            # sse_complete: complete still waits for the evaluator
+            # chips so the frontend's EventSource stays open.
+            await emit(sse_writer_done())
             deferred_complete = sse_complete(
                 event.stop_reason or "end_turn",
                 context_pct=event.context_usage_pct or 0.0,

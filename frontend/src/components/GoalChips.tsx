@@ -12,10 +12,12 @@ export function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
   let icon = "⟳";
   let color = "var(--cedar)";
   let label = "evaluator";
+  let animated = false;
   if (variant === "pending") {
     icon = "⏳";
     color = "var(--cedar-glow, var(--cedar))";
     label = "evaluator · running";
+    animated = true;
   } else if (variant === "reset") {
     const streak = attrs.streak || "3";
     icon = "⚠";
@@ -55,7 +57,18 @@ export function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
         fontFamily: "var(--fm, ui-monospace, monospace)",
       }}
     >
-      <span style={{ color, fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}>{icon}</span>
+      <span
+        style={{
+          color,
+          fontSize: 13,
+          fontWeight: 600,
+          lineHeight: 1.4,
+          display: "inline-block",
+          animation: animated ? "arz-pulse 1.4s ease-in-out infinite" : undefined,
+        }}
+      >
+        {icon}
+      </span>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span

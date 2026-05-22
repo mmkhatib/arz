@@ -462,3 +462,9 @@ pre, code {
   text-transform: uppercase;
   color: var(--muted);
 }
+
+/* ── Goal pending chip pulse (stay-on-task) ──────────────────── */
+@keyframes arz-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.12); }
+}

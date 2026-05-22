@@ -1173,6 +1173,19 @@ export default function ChatPanel({
         onSseEvent?.("compaction_status");
       } else if (chunk.type === "chat_segment") {
         onSseEvent?.("chat_segment");
+      } else if (chunk.type === "writer_done") {
+        // Writer finished + message persisted server-side. Clear
+        // the live streamBuffer so the just-saved bubble doesn't
+        // duplicate-render alongside the streaming bubble while
+        // the evaluator runs. Subsequent goal-marker chunks land
+        // in the saved bubble via mgr.save + session reload.
+        setStreamBuffer("");
+        // Also force a session refetch so the saved bubble (with
+        // chips appended by _emit_marker) shows up immediately.
+        api.getSession(sessionId)
+          .then((s) => setMessages(s.messages))
+          .catch(() => {});
+        onSseEvent?.("writer_done");
       } else if (chunk.type === "heartbeat") {
         setHeartbeatAt(Date.now());
       } else if (chunk.type === "permission_request" && chunk.request_id) {

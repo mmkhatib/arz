@@ -99,3 +99,12 @@ def sse_heartbeat() -> str:
     """5s keepalive ping during long turns. Frontend resets its
     client-side stall timer; not rendered."""
     return sse_event({"type": "heartbeat"})
+
+
+def sse_writer_done() -> str:
+    """Writer turn finished + assistant message persisted. Frontend
+    clears its live streamBuffer so the just-saved bubble doesn't
+    duplicate-render alongside the streaming bubble while the
+    evaluator runs. Distinct from sse_complete — that one fires
+    only after the evaluator has streamed its chips."""
+    return sse_event({"type": "writer_done"})
