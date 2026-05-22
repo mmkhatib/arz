@@ -10,10 +10,21 @@ const TAG_RE =
 // Self-closing recall: `<recall query="…" />` or `<recall query="…"/>`.
 const SELF_CLOSING_RE = /<recall(?:\s+[a-z_]+="[^"]*")*\s*\/>/gi;
 
+// `goal:done` is a signal token the writer emits at the end of a turn
+// when it thinks the goal is satisfied. The evaluator (not the writer)
+// is the authority on done-state; the token has no value to the user
+// once the goal-marker chip has rendered. Strip it so it doesn't show
+// as plain text trailing every goal turn.
+const _GOAL_DONE_RE = /(^|\s)goal:done\s*$/gim;
+
 export function stripInlineTags(text: string): string {
-  if (!text || text.indexOf("<") === -1) return text;
-  let out = text.replace(TAG_RE, "");
-  out = out.replace(SELF_CLOSING_RE, "");
+  if (!text) return text;
+  let out = text;
+  if (text.indexOf("<") !== -1) {
+    out = out.replace(TAG_RE, "");
+    out = out.replace(SELF_CLOSING_RE, "");
+  }
+  out = out.replace(_GOAL_DONE_RE, "");
   // Collapse runs of 3+ newlines left behind by stripping inline tags.
   out = out.replace(/\n{3,}/g, "\n\n");
   return out.trim();

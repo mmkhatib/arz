@@ -251,14 +251,18 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
             # answer verbatim. The "NEW GOAL" header + explicit
             # invalidation sentence resets the writer's frame.
             kickoff_body = (
-                "[goal-start] === NEW GOAL — supersedes any prior goal in this session ===\n\n"
-                "Ignore any earlier `goal:done` declaration; THIS goal is fresh and "
-                "unanswered. Re-read the goal text below word-for-word, then make "
-                "tangible progress toward it on each turn. Do not copy or paraphrase "
-                "the previous turn's answer. Use tools as needed.\n\n"
+                "[goal-start] === NEW GOAL — supersedes any prior context in this session ===\n\n"
+                "STOP. Do NOT greet. Do NOT ask 'how can I help'. Do NOT acknowledge.\n"
+                "Ignore any earlier `goal:done`, any chit-chat, and any cached "
+                "conversational pattern in this session's history. THIS goal is "
+                "fresh, unanswered, and the ONLY thing that matters for this turn.\n\n"
+                "Re-read the goal text below WORD-FOR-WORD. Then make tangible "
+                "progress toward it RIGHT NOW. Produce the artifact, write the "
+                "code, generate the widget — whatever the goal asks for. Do NOT "
+                "copy or paraphrase the previous turn's answer.\n\n"
                 "If — and only if — this NEW goal is actually complete, end your "
-                "reply with the literal token `goal:done`. The evaluator (not you) "
-                "decides whether the goal is met.\n\n"
+                "reply with the literal token `goal:done` on its own line. The "
+                "evaluator (not you) decides whether the goal is met.\n\n"
                 f"Goal:\n{goal}"
             )
             kickoff = (

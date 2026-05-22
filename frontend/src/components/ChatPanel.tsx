@@ -1186,6 +1186,12 @@ export default function ChatPanel({
         // Clear transient tier-2 state on turn-end.
         setThinkingBuffer("");
         setCompactionStatus(null);
+        // Clear the live streamBuffer IMMEDIATELY on complete so the
+        // streaming bubble + the just-saved MessageBubble don't both
+        // render the same widget for the brief window before the
+        // outer finally block clears state. Without this users see
+        // any embedded arzwidget rendered twice.
+        setStreamBuffer("");
         if (messages.length === 0 && fullText && firstUserMsgRef.current) {
           api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
             if (t) { setTitle(t); onTitleChange?.(t); }
