@@ -49,6 +49,17 @@ class StreamState:
     # Regenerate: alternate assistant texts to merge into the new
     # assistant message at completion time. Empty for normal turns.
     archive_versions: list[str] = field(default_factory=list)
+    # Watchdog + context-guard state (stay-on-task layers 2 + 6).
+    # last_event_at: tick on every publish() so the watchdog can detect
+    #   no-progress stalls without conflating slow-but-active streams.
+    # last_context_pct: latest provider context %, captured from acp
+    #   events. Mid-stream guard reads this before approving a tool.
+    # stall_notified: idempotent — only emit the 60min notice once.
+    last_event_at: float = field(default_factory=time.time)
+    last_context_pct: float = 0.0
+    stall_notified: bool = False
+    context_warned_85: bool = False
+    context_warned_95: bool = False
 
 
 class StreamRegistry:
@@ -154,6 +165,7 @@ class StreamRegistry:
             if not state:
                 return
             state.events.append(sse_chunk)
+            state.last_event_at = time.time()
             for q in state.subscribers:
                 try:
                     q.put_nowait(sse_chunk)
@@ -219,6 +231,88 @@ class StreamRegistry:
             "full_reply_len": len(state.full_reply),
             "error": state.error,
         }
+
+
+# Watchdog tunables — stay-on-task layer 6.
+_WATCHDOG_TICK_S = 30.0
+_STALL_NOTIFY_S = 60 * 60  # 60min — emit a "stalled?" marker
+_STALL_CANCEL_S = 2 * 60 * 60  # 2h — force-cancel + reset
+
+
+async def watchdog_loop() -> None:
+    """30s tick that walks running streams + emits stall markers.
+
+    Stage 1 (>60min no event): emit a `<goal-marker variant="stall"/>`
+    style chunk so the UI can show the user that the turn looks stuck.
+    Stage 2 (>2h no event): force-cancel the asyncio.Task, mark the
+    state cancelled, and broadcast a final marker. The next turn the
+    user fires starts on a clean slate.
+
+    Resilient to gateway restart — state.last_event_at lives on the
+    in-memory StreamState; restarts clear it, which is fine because
+    on restart there are no running streams to watch.
+    """
+    from arz.dashboard.sse import sse_chunk
+
+    reg = get_stream_registry()
+    while True:
+        try:
+            await asyncio.sleep(_WATCHDOG_TICK_S)
+        except asyncio.CancelledError:
+            return
+
+        now = time.time()
+        async with reg._lock:  # noqa: SLF001
+            states = list(reg._states.values())  # noqa: SLF001
+
+        for state in states:
+            if state.status != "running":
+                continue
+            idle = now - state.last_event_at
+            if idle >= _STALL_CANCEL_S:
+                log.warning(
+                    "watchdog: stall-cancel session %s (idle %.0fs)",
+                    state.session_id,
+                    idle,
+                )
+                if state.task is not None and not state.task.done():
+                    state.task.cancel()
+                chunk = sse_chunk(
+                    '\n\n<goal-marker variant="stall-cancel" '
+                    f'reason="No progress for {idle / 60:.0f} minutes — turn force-cancelled" />\n\n'
+                )
+                try:
+                    state.events.append(chunk)
+                    for q in list(state.subscribers):
+                        try:
+                            q.put_nowait(chunk)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                await reg.finish(
+                    state.session_id, status="cancelled", error="watchdog-stall-cancel"
+                )
+            elif idle >= _STALL_NOTIFY_S and not state.stall_notified:
+                state.stall_notified = True
+                log.warning(
+                    "watchdog: stall-notify session %s (idle %.0fs)",
+                    state.session_id,
+                    idle,
+                )
+                chunk = sse_chunk(
+                    '\n\n<goal-marker variant="stall-notify" '
+                    f'reason="No progress for {idle / 60:.0f} minutes — provider may be stuck" />\n\n'
+                )
+                try:
+                    state.events.append(chunk)
+                    for q in list(state.subscribers):
+                        try:
+                            q.put_nowait(chunk)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
 
 _singleton: StreamRegistry | None = None

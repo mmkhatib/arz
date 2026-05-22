@@ -459,6 +459,32 @@ async def _run_turn(
         while True:
             inner_complete = False
             async for event in provider.stream(current_message):
+                # Stay-on-task: track provider's context usage on every
+                # event so the mid-stream guard + watchdog have fresh
+                # state without an extra provider RPC.
+                pct = getattr(event, "context_usage_pct", None)
+                if pct:
+                    state.last_context_pct = float(pct)
+                    # Emit one-time warning markers as the context fills.
+                    if state.last_context_pct >= 95.0 and not state.context_warned_95:
+                        state.context_warned_95 = True
+                        await emit(
+                            sse_chunk(
+                                '\n\n<goal-marker variant="context-warn" '
+                                f'reason="Context at {state.last_context_pct:.0f}% — '
+                                'tool calls may be rejected" />\n\n'
+                            )
+                        )
+                    elif state.last_context_pct >= 85.0 and not state.context_warned_85:
+                        state.context_warned_85 = True
+                        await emit(
+                            sse_chunk(
+                                '\n\n<goal-marker variant="context-warn" '
+                                f'reason="Context at {state.last_context_pct:.0f}% — '
+                                'approaching compaction threshold" />\n\n'
+                            )
+                        )
+
                 if event.kind == EVENT_TEXT_CHUNK and event.text:
                     state.full_reply += event.text
                     await emit(sse_chunk(event.text))
@@ -491,6 +517,22 @@ async def _run_turn(
                         tool_name = str(event.text or "")
                         hooks = get_hook_manager()
                         raw_input = str(event.tool_input or "")
+                        # Stay-on-task #1: mid-stream context guard.
+                        # Reject expensive tool calls when the provider's
+                        # context window is almost full — otherwise one
+                        # more 30K-token tool call blows past the limit
+                        # and forces a full session reset that loses
+                        # progress. The marker tells the user why.
+                        if state.last_context_pct >= 90.0:
+                            await provider.reject_tool(request_id)
+                            await emit(
+                                sse_chunk(
+                                    '\n\n<goal-marker variant="context-guard" '
+                                    f'reason="Tool {tool_name!r} rejected — context at '
+                                    f'{state.last_context_pct:.0f}%. Compact or start a new session." />\n\n'
+                                )
+                            )
+                            continue
                         if tool_name == "Bash":
                             rule = hooks.evaluate_command(raw_input)
                             if rule and rule.severity == "block":

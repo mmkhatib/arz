@@ -286,6 +286,15 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.idle_sweep_task = asyncio.create_task(_idle_sweep_loop())
     log.info("Consolidator idle-sweep task started")
+    # Watchdog: 30s sweep that detects active-session stalls (no event
+    # for 60min → notify, 2h → force-cancel). Stay-on-task layer 6.
+    try:
+        from arz.dashboard.stream_registry import watchdog_loop
+
+        app.state.watchdog_task = asyncio.create_task(watchdog_loop())
+        log.info("Stream watchdog task started")
+    except Exception:
+        log.warning("Could not start stream watchdog", exc_info=True)
     # Suggestions periodic refresh — every 30 min in the background.
     try:
         from arz.suggestions import start_periodic_refresh
@@ -301,6 +310,13 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         sweep.cancel()
         try:
             await sweep
+        except (asyncio.CancelledError, Exception):
+            pass
+    wd = getattr(app.state, "watchdog_task", None)
+    if wd:
+        wd.cancel()
+        try:
+            await wd
         except (asyncio.CancelledError, Exception):
             pass
     try:
@@ -340,7 +356,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.7.99", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.8.0", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)

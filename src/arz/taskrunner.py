@@ -27,7 +27,15 @@ log = structlog.get_logger(__name__)
 
 _DIR = Path.home() / ".arz" / "tasks"
 _DEFAULT_AGENT = "general"
-_MAX_RETRIES_PER_STEP = 3
+
+# Stay-on-task #3 — separate retry counters by failure mode. The old
+# single counter conflated process crashes (not the model's fault) with
+# logic errors (where retry should drain the budget), so a flaky CLI
+# burned 3 logic retries on what should've been 2 free recoveries.
+_MAX_RETRIES = 3  # logic failures (model returned wrong answer)
+_MAX_RECOVERIES = 2  # process crashes — don't tick the retry counter
+_MAX_COMPACTIONS = 2  # context-overflow recoveries — same exemption
+_SAME_ERROR_THRESHOLD = 2  # two consecutive identical errors → escalate early
 
 SubagentRunner = Callable[[str, str], Awaitable[str]]
 
@@ -248,7 +256,13 @@ class TaskRunner:
                         f"PRIOR STAGES:\n{prior}\n\n"
                         f"YOUR STAGE:\n{step.text}"
                     )
-                for attempt in range(1, _MAX_RETRIES_PER_STEP + 1):
+                attempt = 0
+                recoveries = 0
+                compactions = 0
+                prev_error = ""
+                same_error_count = 0
+                while attempt < _MAX_RETRIES:
+                    attempt += 1
                     step.status = "running"
                     step.attempts = attempt
                     self._persist(rec)
@@ -259,8 +273,37 @@ class TaskRunner:
                         self._persist(rec)
                         break
                     except Exception as e:
+                        err_str = f"{type(e).__name__}: {e}"
+                        cls = type(e).__name__.lower()
                         log.exception("step failed", task_id=rec.id, step=step.n, attempt=attempt)
                         step.result = f"(error: {e})"
+                        # Classify the failure: process death + context
+                        # overflow get their own budgets so a flaky CLI
+                        # doesn't burn the logic-retry budget.
+                        if "processdied" in cls or "brokenpipe" in cls or "connectionreset" in cls:
+                            if recoveries >= _MAX_RECOVERIES:
+                                step.error = f"Process died {recoveries + 1} times — giving up"  # type: ignore[attr-defined]
+                                break
+                            recoveries += 1
+                            attempt -= 1  # crash doesn't tick the logic counter
+                            continue
+                        if "contextoverflow" in cls or "context window" in str(e).lower():
+                            if compactions >= _MAX_COMPACTIONS:
+                                step.error = f"Context overflow {compactions + 1} times"  # type: ignore[attr-defined]
+                                break
+                            compactions += 1
+                            attempt -= 1
+                            continue
+                        # Same-error twice → escalate early. No point
+                        # burning the rest of the budget on a known-doomed
+                        # retry pattern.
+                        if err_str == prev_error:
+                            same_error_count += 1
+                            if same_error_count >= _SAME_ERROR_THRESHOLD:
+                                break
+                        else:
+                            same_error_count = 1
+                            prev_error = err_str
                 if step.status != "done":
                     step.status = "failed"
                     rec.status = "failed"
