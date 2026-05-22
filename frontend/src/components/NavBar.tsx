@@ -297,7 +297,7 @@ function MemoryStatsRow({
       <span className="flex-1 min-w-0 truncate">
         {stats ? `${total} mem` : "mem…"}
       </span>
-      <span className="text-[var(--muted)]/60 shrink-0">v0.7.95</span>
+      <span className="text-[var(--muted)]/60 shrink-0">v0.7.96</span>
     </div>
   );
 }

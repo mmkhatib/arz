@@ -8,7 +8,7 @@ import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
 import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon, Target, Check, X as XIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
-import { stripInlineTags } from "@/utils/stripInline";
+import { renderGoalTagsForLive, stripInlineTags } from "@/utils/stripInline";
 import { useDialog } from "@/components/Dialog";
 
 /* Preserved for revert: original three-dot bouncer. Was the only
@@ -1514,7 +1514,11 @@ export default function ChatPanel({
                   />
                 </div>
               )}
-              {streamBuffer ? stripInlineTags(streamBuffer) : <ThinkingDots />}
+              {streamBuffer ? (
+                renderGoalTagsForLive(stripInlineTags(streamBuffer))
+              ) : (
+                <ThinkingDots />
+              )}
             </div>
           </div>
         )}
