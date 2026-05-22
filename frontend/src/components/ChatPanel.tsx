@@ -8,7 +8,10 @@ import WelcomeView from "./WelcomeView";
 import CompareModal from "./CompareModal";
 import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon, Target, Check, X as XIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
-import { renderGoalTagsForLive, stripInlineTags } from "@/utils/stripInline";
+import { stripInlineTags } from "@/utils/stripInline";
+import { segmentMessage } from "@/utils/segments";
+import Widget from "./Widget";
+import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
 import { useDialog } from "@/components/Dialog";
 
 /* Preserved for revert: original three-dot bouncer. Was the only
@@ -1515,7 +1518,17 @@ export default function ChatPanel({
                 </div>
               )}
               {streamBuffer ? (
-                renderGoalTagsForLive(stripInlineTags(streamBuffer))
+                segmentMessage(stripInlineTags(streamBuffer)).map((seg, i) =>
+                  seg.kind === "widget" ? (
+                    <Widget key={i} title={seg.title} html={seg.html} />
+                  ) : seg.kind === "goal-marker" ? (
+                    <GoalMarkerChip key={i} attrs={seg.attrs} />
+                  ) : seg.kind === "goal-auto" ? (
+                    <GoalAutoCard key={i} attrs={seg.attrs} body={seg.body} />
+                  ) : (
+                    <span key={i}>{seg.value}</span>
+                  ),
+                )
               ) : (
                 <ThinkingDots />
               )}
