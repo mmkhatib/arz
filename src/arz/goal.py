@@ -293,7 +293,9 @@ _AUTO_TURN_TEMPLATE = (
     "Continue working toward it. "
     'Evaluator feedback on the last turn: "{reason}"\n\n'
     "Goal:\n{goal}\n\n"
-    "Make one concrete step. Use tools as needed. "
+    "Make one concrete step. Use tools as needed. Output ONLY the artifact "
+    "or the next concrete change — no 'plain-text fallback', no 'for the "
+    "evaluator' duplicate. The judge has its own tools to verify. "
     "If the goal is now done, end your reply with the literal token `goal:done`."
 )
 
@@ -336,6 +338,9 @@ _HARD_RESET_TEMPLATE = (
     "from the goal text and write a fundamentally different reply. If your "
     "previous reply was the wrong shape (countdown vs. count-up, wrong range, "
     "wrong subject), correct that NOW.\n\n"
+    "Output ONLY the artifact. NO 'plain-text fallback', NO 'for the "
+    "evaluator' duplicate, NO defensive belt-and-suspenders restatement. "
+    "The judge has its own tools to verify your output directly.\n\n"
     "Goal:\n{goal}\n\n"
     "End with `goal:done` only if THIS attempt actually satisfies the goal.\n"
     "</goal-auto>"
