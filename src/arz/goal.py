@@ -75,6 +75,8 @@ GOAL:
 RECENT CONVERSATION (last {n} turns):
 {transcript}
 
+{artifacts_block}
+
 Reply in this exact two-line format. EVIDENCE first, then JSON on the next line. Nothing else, no code fences, no extra prose.
 
 EVIDENCE: <one sentence naming concrete proof in the transcript (tool output, file write, test pass, rendered artifact) — or naming the absence of such proof>
@@ -85,7 +87,42 @@ Rules:
 - "met": true ONLY when the EVIDENCE line names real proof that the goal's end condition is satisfied. If unsure, choose false.
 - "reason": If false, name the single most important thing still missing. If true, restate the proof in one short sentence.
 - Be strict. The assistant's self-declaration of completion (including a literal `goal:done` token in its reply) is NOT proof — it is a hint at best. You must independently confirm in the transcript.
+- When an ARTIFACTS section is present, treat its file contents as the SOURCE OF TRUTH for any file-output goal. The artifacts are read directly from disk after the writer's tool calls. If the goal asks for a file / table / data dump and the artifact content satisfies it, that's met regardless of how the transcript looks.
 """
+
+
+def _format_artifacts(artifacts: list[dict] | None) -> str:
+    """Render the writer's recently-touched files as inline content
+    blocks the judge can read. Empty when no artifacts. Caller is
+    responsible for size-capping individual file contents — we still
+    apply an outer cap here for safety.
+
+    Total budget: 40K chars across all artifacts. Per-file cap: 16K.
+    Bigger than the transcript cap because file goals (CSV dump, code
+    file, table) are the case where transcript-only fails.
+    """
+    if not artifacts:
+        return ""
+    total = 0
+    chunks: list[str] = ["ARTIFACTS (files the writer just created or modified):"]
+    for art in artifacts[:8]:  # at most 8 files
+        path = str(art.get("path") or "").strip()
+        content = str(art.get("content") or "")
+        if not path:
+            continue
+        if len(content) > 16000:
+            content = (
+                content[:12000]
+                + f"\n\n…ELIDED {len(content) - 12000 - 4000} chars from middle…\n\n"
+                + content[-4000:]
+            )
+        block = f"\n=== {path} ({len(content)} chars) ===\n{content}\n"
+        if total + len(block) > 40000:
+            chunks.append(f"\n(further artifacts elided — budget exhausted at {total} chars)")
+            break
+        chunks.append(block)
+        total += len(block)
+    return "\n".join(chunks) + "\n"
 
 
 def _format_transcript(history: list[dict], n: int) -> str:
@@ -131,8 +168,15 @@ async def evaluate(
     *,
     n_turns: int = 6,
     agent_name: str = "goal-evaluator",
+    artifacts: list[dict] | None = None,
 ) -> GoalDecision:
     """Run the cheap evaluator. Always returns a decision — never raises.
+
+    ``artifacts`` is an optional list of ``{path, content}`` dicts the
+    caller pre-loaded (typically files the writer just created via
+    Write/Edit tool calls). When supplied the judge can verify a
+    file-output goal by reading the content directly instead of
+    guessing from transcript chatter.
 
     Defaults to "not met, reason: evaluator failed" on any error so the
     auto-loop falls back to "keep going" rather than spuriously
@@ -145,6 +189,7 @@ async def evaluate(
         goal=goal[:4000],
         n=n_turns,
         transcript=_format_transcript(history, n_turns),
+        artifacts_block=_format_artifacts(artifacts),
     )
     try:
         raw = await runner(agent_name, prompt)

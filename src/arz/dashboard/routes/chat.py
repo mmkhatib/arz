@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -183,6 +184,62 @@ def _final_assistant_text(cleaned: str, extracted: list, raw: str) -> str:
     return redact_full(cleaned or raw)
 
 
+_ARTIFACT_TOOLS = frozenset(
+    {"Write", "Edit", "MultiEdit", "Create", "fs_write", "fs_edit", "fs_create"}
+)
+
+
+def _collect_recent_artifacts(session) -> list[dict]:
+    """Walk recent assistant messages for Write/Edit/Create-shaped
+    tool_calls. Resolve each path against the session's work_dir and
+    read the current content from disk. The judge prompt gets these
+    as inline file dumps so file-output goals (CSV, code file, table
+    written to disk) can be verified directly instead of guessed from
+    transcript chatter.
+
+    Bounds:
+      - Last 4 assistant turns scanned
+      - At most 8 unique files
+      - Per-file read cap 64K (formatter trims further)
+      - Silently skips files that don't exist or aren't UTF-8 readable
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    work_dir = Path(session.work_dir) if session.work_dir else (_WORKSPACE_ROOT / session.id)
+    msgs = [m for m in (session.messages or []) if m.role == "assistant"][-4:]
+    for m in reversed(msgs):
+        for tc in m.tool_calls or []:
+            name = str(tc.get("name") or "")
+            if name not in _ARTIFACT_TOOLS:
+                continue
+            raw_input = tc.get("input") or ""
+            try:
+                tc_data = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
+            except Exception:
+                tc_data = {}
+            path = (
+                tc_data.get("file_path")
+                or tc_data.get("path")
+                or tc_data.get("target_file")
+                or tc_data.get("filename")
+            )
+            if not path or not isinstance(path, str):
+                continue
+            full = Path(path) if Path(path).is_absolute() else work_dir / path
+            key = str(full)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                content = full.read_text(encoding="utf-8", errors="replace")[:65536]
+            except Exception:
+                continue
+            out.append({"path": str(full), "content": content})
+            if len(out) >= 8:
+                return out
+    return out
+
+
 async def _goal_followup(
     *,
     session,
@@ -232,11 +289,16 @@ async def _goal_followup(
     try:
         # Build a short history tail for the evaluator.
         history = [{"role": m.role, "text": m.text} for m in (session.messages or [])][-8:]
+        # Collect file artifacts the writer touched in recent turns so
+        # the judge can verify file-output goals directly instead of
+        # guessing from transcript chatter.
+        artifacts = _collect_recent_artifacts(session)
         decision = await _goal.evaluate(
             goal=session.goal or "",
             history=history,
             runner=_judge_runner,
             n_turns=6,
+            artifacts=artifacts,
         )
     except Exception:
         log.exception("goal evaluator crashed", extra={"session_id": session.id})
