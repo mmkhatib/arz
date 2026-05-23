@@ -96,10 +96,30 @@ export function HtmlSandbox({
   const sandboxId = useMemo(() => id || `w_${Math.random().toString(36).slice(2, 10)}`, [id]);
   const [height, setHeight] = useState(120);
 
+  // Some writers (notably kiro-cli + some claude-code completions) emit
+  // a FULL `<!DOCTYPE html><html>…<body>…</body></html>` document
+  // inside the arzwidget body. We wrap that again in our own
+  // boilerplate → the iframe renders nothing visible. Normalize first:
+  // if the incoming html looks like a full document, extract just the
+  // <body> innerHTML; otherwise pass through.
+  const normalizedHtml = useMemo(() => {
+    if (!html) return html;
+    if (/<!doctype|<html\b/i.test(html)) {
+      const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+      if (m) return m[1];
+      // No <body> but has <html>/<doctype>: strip them.
+      return html
+        .replace(/<!doctype[^>]*>/gi, "")
+        .replace(/<html[^>]*>|<\/html>/gi, "")
+        .replace(/<head[\s\S]*?<\/head>/gi, "");
+    }
+    return html;
+  }, [html]);
+
   const srcdoc = useMemo(() => {
     const boot = BOOTSTRAP.replace("__ID__", sandboxId);
-    return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${html}</body></html>`;
-  }, [html, sandboxId, reloadKey]);
+    return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${normalizedHtml}</body></html>`;
+  }, [normalizedHtml, sandboxId, reloadKey]);
 
   useEffect(() => {
     if (fill) return; // fill mode ignores postMessage heights

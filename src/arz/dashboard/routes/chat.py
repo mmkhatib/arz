@@ -493,7 +493,16 @@ async def _goal_followup(
     judge_label = judge_model or (judge_provider or "default")
     verdict_attr = "met" if decision.met else "not-met"
     safe_reason = (
-        (decision.reason or "").replace('"', "'").replace("\n", " ").replace("\r", " ")[:600]
+        (decision.reason or "")
+        .replace('"', "'")
+        .replace("\n", " ")
+        .replace("\r", " ")
+        # Escape angle brackets so embedded `<arzwidget>` / `<goal-marker>`
+        # mentions inside the reason text don't break the chip's regex
+        # parser (which scans for the next `>` to end the self-closing
+        # tag). Use unicode angle quotes — visually similar, parse-safe.
+        .replace("<", "‹")
+        .replace(">", "›")[:600]
     )
     _emit_marker(
         f'\n\n<goal-marker variant="evaluator" judge="{judge_label}" '

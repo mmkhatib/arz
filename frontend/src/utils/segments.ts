@@ -33,7 +33,11 @@ export type MsgSegment =
   | { kind: "goal-auto"; attrs: GoalAttrs; body: string };
 
 const _WIDGET_OPEN = /<(arzwidget|mcwidget)(\s+[^>]*)?>/i;
-const _GOAL_MARKER_RE = /<goal-marker\b([^>]*?)\/>/gi;
+// Match `<goal-marker ... />` allowing quoted attribute values to
+// contain `>` chars. Without this, a `reason="…<arzwidget>"` mention
+// inside the chip breaks the regex on the first nested `>` and the
+// chip falls through to plaintext render.
+const _GOAL_MARKER_RE = /<goal-marker\b((?:"[^"]*"|'[^']*'|[^>])*?)\/>/gi;
 const _GOAL_AUTO_RE = /<goal-auto\b([^>]*)>([\s\S]*?)<\/goal-auto>/gi;
 const _ATTR_RE = /([a-zA-Z_][\w-]*)\s*=\s*"([^"]*)"/g;
 
