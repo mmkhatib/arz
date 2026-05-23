@@ -1451,24 +1451,57 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         session.add_message("user", original_message)
         mgr.save(session)
 
-    # Spawn the LLM run as a fire-and-forget task. It's anchored on the
-    # event loop, not on this HTTP request — so client disconnects don't
-    # cancel it.
-    state.task = asyncio.create_task(
-        _run_turn(
-            provider,
-            session_id,
-            message,
-            mgr,
-            request.app.state.pending_approvals,
-            request.app.state.yolo_sessions,
-            request.app.state.session_modes,
-            getattr(request.app.state, "pending_approval_meta", None),
-            chat_runner=getattr(request.app.state, "chat_runner", None),
-            subagent_runner=getattr(request.app.state, "subagent_runner", None),
-            is_goal_auto=bool(body.get("_goal_auto") or False),
+    # Spawn the LLM run as a fire-and-forget task. The task itself runs
+    # detached from this HTTP request (client disconnect only drops the
+    # SSE subscriber; the task keeps running). BUT — if the client
+    # disconnected during pool.activate / registry.start above, the
+    # request handler could already be cancelled by the time we reach
+    # this line. asyncio.shield isolates the spawn from that
+    # cancellation, then we explicitly schedule the task onto the loop
+    # via call_soon so it survives even if THIS coroutine is being
+    # torn down.
+    loop = asyncio.get_running_loop()
+    spawned_task: asyncio.Task | None = None
+
+    def _spawn() -> None:
+        nonlocal spawned_task
+        spawned_task = asyncio.create_task(
+            _run_turn(
+                provider,
+                session_id,
+                message,
+                mgr,
+                request.app.state.pending_approvals,
+                request.app.state.yolo_sessions,
+                request.app.state.session_modes,
+                getattr(request.app.state, "pending_approval_meta", None),
+                chat_runner=getattr(request.app.state, "chat_runner", None),
+                subagent_runner=getattr(request.app.state, "subagent_runner", None),
+                is_goal_auto=bool(body.get("_goal_auto") or False),
+            )
         )
-    )
+        state.task = spawned_task
+
+    # call_soon schedules synchronously on the loop — runs even if this
+    # handler is mid-cancel. Without this, a client disconnect anywhere
+    # after we'd saved the user message but before create_task was
+    # reached would leave an orphan user msg with no writer turn.
+    loop.call_soon(_spawn)
+    # call_soon defers — yield once so _spawn fires before we return,
+    # otherwise spawned_task is None when StreamingResponse subscribes.
+    # shield prevents the yield from being cancellable.
+    try:
+        await asyncio.shield(asyncio.sleep(0))
+    except asyncio.CancelledError:
+        # Client already disconnected. Task is still scheduled via
+        # call_soon — let it run. Re-raise so the response is dropped
+        # cleanly; SSE replay via GET /chat/{id}/stream will pick it up
+        # when client reconnects.
+        log.info(
+            "chat handler cancelled mid-spawn but task scheduled",
+            extra={"session_id": session_id},
+        )
+        raise
 
     # The returned SSE stream just observes the same registry. Disconnecting
     # only drops the subscriber — the background task keeps running.
