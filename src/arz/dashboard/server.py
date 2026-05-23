@@ -356,7 +356,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.8.6", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.8.7", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -548,19 +548,32 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
         body: dict = {"message": message}
         if extra_body:
             body.update(extra_body)
-        async with _httpx.AsyncClient(timeout=300.0) as client:
-            resp = await client.post(
-                f"http://127.0.0.1:{port}/api/chat/{session_id}",
-                json=body,
-                headers=headers,
-            )
-            # Drain so the server treats the response as consumed; we don't
-            # care about the SSE chunks here.
+        # /api/chat is an SSE stream that can run for many minutes
+        # (writer + judge + auto-iter). A flat 300s timeout was tripping
+        # ReadTimeout mid-loop and killing the goal-auto chain. Keep a
+        # short connect timeout so a dead gateway fails fast, but no
+        # read deadline once we're connected — the stream-drain loop
+        # below decides when to stop.
+        timeout = _httpx.Timeout(connect=5.0, read=None, write=30.0, pool=5.0)
+        async with _httpx.AsyncClient(timeout=timeout) as client:
             try:
-                async for _ in resp.aiter_text():
-                    pass
+                async with client.stream(
+                    "POST",
+                    f"http://127.0.0.1:{port}/api/chat/{session_id}",
+                    json=body,
+                    headers=headers,
+                ) as resp:
+                    # Drain so the server treats the response as consumed; we
+                    # don't care about the SSE chunks here.
+                    async for _ in resp.aiter_text():
+                        pass
             except Exception:
-                pass
+                # Swallow — the actual chat turn is detached from this
+                # POST (StreamRegistry owns it). Goal-loop continues.
+                log.exception(
+                    "autonudge runner POST failed (turn still runs detached)",
+                    extra={"session_id": session_id},
+                )
 
     from arz.autonudge import init_autonudge
 
