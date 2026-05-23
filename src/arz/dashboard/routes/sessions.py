@@ -234,6 +234,13 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
             max_iter_override = max(1, min(200, int(v)))
     except (TypeError, ValueError):
         max_iter_override = None
+    # Optional judge tool-access override. "trust_reads" (default) =
+    # read-only verification; "trust" = full power (Bash, Edit) needed
+    # for run-tests/build-style goals; "none" = no tools.
+    judge_tools_override: str | None = None
+    v = body.get("goal_judge_tools")
+    if isinstance(v, str) and v in ("none", "trust_reads", "trust"):
+        judge_tools_override = v
     from arz.session.session import Session
 
     assert isinstance(session, Session)
@@ -252,6 +259,8 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         session.goal_blockers = []
         if max_iter_override is not None:
             session.goal_max_iterations = max_iter_override
+        if judge_tools_override is not None:
+            session.goal_judge_tools = judge_tools_override
         mgr.save(session)
         # Kick off the first turn so the model starts working
         # immediately — no separate user prompt required.
