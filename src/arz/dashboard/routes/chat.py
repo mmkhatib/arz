@@ -360,12 +360,22 @@ async def _goal_followup(
     # an independent cheap critic and burns tokens.
     judge_provider = session.provider or None
     judge_model = _goal.cheap_model_for(judge_provider)
+    judge_tools = getattr(session, "goal_judge_tools", "trust_reads") or "trust_reads"
+    # Judge runs in the same workspace as the writer so file artifacts
+    # the writer touched are reachable via Read / Grep / Bash without
+    # path mangling. "trust_reads" auto-approves Read/Grep/Glob/Web*;
+    # "trust" lets the judge run pytest / build commands; "none" runs
+    # without tools (fastest, blindest).
+    judge_work_dir = session.work_dir or None
+    judge_approval = "normal" if judge_tools == "none" else judge_tools
 
     async def _judge_runner(agent_name: str, prompt: str) -> str:
         try:
             return await subagent_runner(
                 agent_name,
                 prompt,
+                approval_mode=judge_approval,
+                work_dir=judge_work_dir,
                 provider_override=judge_provider,
                 model_override=judge_model or None,
             )

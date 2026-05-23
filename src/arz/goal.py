@@ -85,11 +85,13 @@ EVIDENCE: <one sentence naming concrete proof in the transcript (tool output, fi
 {{"met": true|false, "reason": "<one short sentence>"}}
 
 Rules:
-- The EVIDENCE line MUST come first. Cite a specific turn, tool name, or artifact title — not a vague claim. If you cannot point at concrete proof, say "no concrete proof found in transcript".
+- The EVIDENCE line MUST come first. Cite a specific turn, tool name, file path, or command output — not a vague claim. If you cannot point at concrete proof, say "no concrete proof found".
 - "met": true ONLY when the EVIDENCE line names real proof that the goal's end condition is satisfied. If unsure, choose false.
 - "reason": If false, name the single most important thing still missing. If true, restate the proof in one short sentence.
-- Be strict. The assistant's self-declaration of completion (including a literal `goal:done` token in its reply) is NOT proof — it is a hint at best. You must independently confirm in the transcript.
-- When an ARTIFACTS section is present, treat its file contents as the SOURCE OF TRUTH for any file-output goal. The artifacts are read directly from disk after the writer's tool calls. If the goal asks for a file / table / data dump and the artifact content satisfies it, that's met regardless of how the transcript looks.
+- Be strict. The assistant's self-declaration of completion (including a literal `goal:done` token in its reply) is NOT proof — it is a hint at best. You must independently confirm.
+- When an ARTIFACTS section is present, treat its file contents and captured tool output as the SOURCE OF TRUTH. Bigger source than the transcript.
+- YOU HAVE TOOLS. You're running in the writer's workspace with the same provider's tool access (Read, Grep, Glob, WebSearch when reads are trusted; Bash / Edit when full trust is granted). USE THEM when verifying is faster + more reliable than reasoning from text — e.g. `Read` the file the writer claims to have written, `Bash: pytest --cov` to verify coverage, `Grep` for a specific pattern across the codebase. Then base EVIDENCE on what your tools observed, not on what the transcript hopes.
+- Keep tool use focused. The user is paying a cheap fast model to judge — don't write code, don't refactor, don't make changes the writer didn't ask for. Verify and return.
 """
 
 

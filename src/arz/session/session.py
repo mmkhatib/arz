@@ -166,6 +166,13 @@ class Session:
     goal_files_changed: list[str] = field(default_factory=list)
     goal_decisions: list[str] = field(default_factory=list)
     goal_blockers: list[str] = field(default_factory=list)
+    # Judge tool-access level. "trust_reads" = auto-approve read-only
+    # tools (Read/Grep/Glob/WebSearch/WebFetch) so the cheap judge can
+    # verify by inspecting files. "trust" = auto-approve everything
+    # (judge can run pytest, build, etc. — required for "verify
+    # coverage" / "run tests" goals). "none" = no tools (faster +
+    # cheaper but blind). Default trust_reads.
+    goal_judge_tools: str = "trust_reads"
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
@@ -219,6 +226,7 @@ class Session:
             "goal_files_changed": self.goal_files_changed,
             "goal_decisions": self.goal_decisions,
             "goal_blockers": self.goal_blockers,
+            "goal_judge_tools": self.goal_judge_tools,
             "pinned": self.pinned,
             "archived": self.archived,
             "last_consolidated_index": self.last_consolidated_index,
@@ -257,6 +265,7 @@ class Session:
             goal_files_changed=list(d.get("goal_files_changed") or []),
             goal_decisions=list(d.get("goal_decisions") or []),
             goal_blockers=list(d.get("goal_blockers") or []),
+            goal_judge_tools=str(d.get("goal_judge_tools") or "trust_reads"),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
             last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),
