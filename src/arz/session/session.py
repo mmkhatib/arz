@@ -158,6 +158,14 @@ class Session:
     # discard its current approach — handles sticky-cache failure modes
     # where the writer keeps repeating the previous answer verbatim.
     goal_same_reason_count: int = 0
+    # Cross-iteration working memory for the goal loop. Each writer
+    # turn appends recently-touched files + DECISION/BLOCKER lines.
+    # Survives compaction because we own it; injected into every
+    # judge prompt so the evaluator sees cumulative progress rather
+    # than just the latest turn.
+    goal_files_changed: list[str] = field(default_factory=list)
+    goal_decisions: list[str] = field(default_factory=list)
+    goal_blockers: list[str] = field(default_factory=list)
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
@@ -208,6 +216,9 @@ class Session:
             "goal_max_iterations": self.goal_max_iterations,
             "goal_last_reason": self.goal_last_reason,
             "goal_same_reason_count": self.goal_same_reason_count,
+            "goal_files_changed": self.goal_files_changed,
+            "goal_decisions": self.goal_decisions,
+            "goal_blockers": self.goal_blockers,
             "pinned": self.pinned,
             "archived": self.archived,
             "last_consolidated_index": self.last_consolidated_index,
@@ -243,6 +254,9 @@ class Session:
             goal_max_iterations=int(d.get("goal_max_iterations") or 20),
             goal_last_reason=str(d.get("goal_last_reason") or ""),
             goal_same_reason_count=int(d.get("goal_same_reason_count") or 0),
+            goal_files_changed=list(d.get("goal_files_changed") or []),
+            goal_decisions=list(d.get("goal_decisions") or []),
+            goal_blockers=list(d.get("goal_blockers") or []),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
             last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),

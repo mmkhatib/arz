@@ -189,6 +189,66 @@ _ARTIFACT_TOOLS = frozenset(
 )
 
 
+def _accumulate_goal_memory(session) -> None:
+    """Walk the just-saved assistant message + extract files touched
+    by Write/Edit/Create tool_calls, plus DECISION:/BLOCKER: lines
+    from the assistant's text. Appended onto session.goal_* lists so
+    the judge sees cumulative progress across iterations. Deduped and
+    capped at modest sizes so a 50-iteration goal doesn't bloat the
+    session JSON unboundedly.
+    """
+    if not session or not session.messages:
+        return
+    last = session.messages[-1]
+    if last.role != "assistant":
+        return
+    # Files touched
+    for tc in last.tool_calls or []:
+        name = str(tc.get("name") or "")
+        if name not in _ARTIFACT_TOOLS:
+            continue
+        raw_input = tc.get("input") or ""
+        try:
+            tc_data = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
+        except Exception:
+            tc_data = {}
+        path = (
+            tc_data.get("file_path")
+            or tc_data.get("path")
+            or tc_data.get("target_file")
+            or tc_data.get("filename")
+        )
+        if path and isinstance(path, str):
+            entry = f"{name} {path}"
+            if entry not in session.goal_files_changed:
+                session.goal_files_changed.append(entry)
+    # Decisions + Blockers from text
+    for line in (last.text or "").splitlines():
+        s = line.strip()
+        if s.startswith("DECISION:"):
+            d = s[9:].strip()[:240]
+            if d and d not in session.goal_decisions:
+                session.goal_decisions.append(d)
+        elif s.startswith("BLOCKER:"):
+            b = s[8:].strip()[:240]
+            if b and b not in session.goal_blockers:
+                session.goal_blockers.append(b)
+    # Trim to recent N to keep session.json bounded.
+    if len(session.goal_files_changed) > 60:
+        session.goal_files_changed = session.goal_files_changed[-60:]
+    if len(session.goal_decisions) > 30:
+        session.goal_decisions = session.goal_decisions[-30:]
+    if len(session.goal_blockers) > 20:
+        session.goal_blockers = session.goal_blockers[-20:]
+
+
+# Tool calls whose stdout is itself the artifact — e.g. pytest --cov,
+# Tool calls whose stdout is itself the artifact — e.g. pytest --cov,
+# `npm test`, `go vet`. Judge sees the captured output as a synthetic
+# artifact entry alongside any files the writer touched.
+_STDOUT_TOOLS = frozenset({"Bash", "Run", "Shell", "execute_bash", "run_command"})
+
+
 def _collect_recent_artifacts(session) -> list[dict]:
     """Walk recent assistant messages for Write/Edit/Create-shaped
     tool_calls. Resolve each path against the session's work_dir and
@@ -210,6 +270,33 @@ def _collect_recent_artifacts(session) -> list[dict]:
     for m in reversed(msgs):
         for tc in m.tool_calls or []:
             name = str(tc.get("name") or "")
+            if name in _STDOUT_TOOLS:
+                # Synthetic artifact: the command output is the proof.
+                # Naming: `stdout:Bash:<short-cmd>` so the judge can
+                # cite which command produced the evidence.
+                raw_input = tc.get("input") or ""
+                try:
+                    tc_data = json.loads(raw_input) if isinstance(raw_input, str) else raw_input
+                except Exception:
+                    tc_data = {}
+                cmd = (
+                    tc_data.get("command")
+                    or tc_data.get("cmd")
+                    or tc_data.get("script")
+                    or (raw_input if isinstance(raw_input, str) else "")
+                )
+                cmd_str = str(cmd or "").strip().splitlines()[0][:200] if cmd else "?"
+                output = str(tc.get("output") or "").strip()
+                if not output:
+                    continue
+                key = f"stdout:{name}:{cmd_str}"
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append({"path": key, "content": output[:16000]})
+                if len(out) >= 8:
+                    return out
+                continue
             if name not in _ARTIFACT_TOOLS:
                 continue
             raw_input = tc.get("input") or ""
@@ -286,6 +373,15 @@ async def _goal_followup(
             # Backwards-compat: older runner sig without overrides.
             return await subagent_runner(agent_name, prompt)
 
+    # Update cumulative working memory from THIS turn before judging
+    # so the WORKING MEMORY block reflects everything the writer has
+    # done across the goal loop, not just turn 1.
+    try:
+        _accumulate_goal_memory(session)
+        mgr.save(session)
+    except Exception:
+        log.exception("goal memory accumulate failed", extra={"session_id": session.id})
+
     try:
         # Build a short history tail for the evaluator.
         history = [{"role": m.role, "text": m.text} for m in (session.messages or [])][-8:]
@@ -293,12 +389,18 @@ async def _goal_followup(
         # the judge can verify file-output goals directly instead of
         # guessing from transcript chatter.
         artifacts = _collect_recent_artifacts(session)
+        memory_payload = {
+            "files_changed": list(getattr(session, "goal_files_changed", []) or []),
+            "decisions": list(getattr(session, "goal_decisions", []) or []),
+            "blockers": list(getattr(session, "goal_blockers", []) or []),
+        }
         decision = await _goal.evaluate(
             goal=session.goal or "",
             history=history,
             runner=_judge_runner,
             n_turns=6,
             artifacts=artifacts,
+            memory=memory_payload,
         )
     except Exception:
         log.exception("goal evaluator crashed", extra={"session_id": session.id})
@@ -619,10 +721,22 @@ async def _run_turn(
 
                 elif event.kind == EVENT_TOOL_RESULT:
                     state._in_tool_group = True  # type: ignore[attr-defined]
+                    tcid = event.tool_call_id or ""
+                    out = event.tool_output or ""
+                    # Stitch the output back onto the matching tool_call
+                    # entry so it survives into the saved Message — the
+                    # goal evaluator reads these to verify pytest /
+                    # coverage / build / lint output for file-output
+                    # goals where the answer is in stdout, not on disk.
+                    if tcid and state.turn_tool_calls:
+                        for tc in reversed(state.turn_tool_calls):
+                            if tc.get("tool_call_id") == tcid:
+                                tc["output"] = (out or "")[:32000]
+                                break
                     await emit(
                         sse_tool_result(
-                            tool_call_id=event.tool_call_id or "",
-                            content=event.tool_output or "",
+                            tool_call_id=tcid,
+                            content=out,
                         )
                     )
 
@@ -631,7 +745,13 @@ async def _run_turn(
                     tool_name = event.text or ""
                     tool_input_str = str(event.tool_input or "")
                     if tool_name:
-                        state.turn_tool_calls.append({"name": tool_name, "input": tool_input_str})
+                        state.turn_tool_calls.append(
+                            {
+                                "name": tool_name,
+                                "input": tool_input_str,
+                                "tool_call_id": event.tool_call_id or event.request_id or "",
+                            }
+                        )
                     await emit(
                         sse_tool_call(
                             tool_name=tool_name,

@@ -72,6 +72,8 @@ _EVAL_PROMPT = """You are a goal-completion judge. Decide whether the assistant'
 GOAL:
 {goal}
 
+{memory_block}
+
 RECENT CONVERSATION (last {n} turns):
 {transcript}
 
@@ -161,6 +163,35 @@ def _format_transcript(history: list[dict], n: int) -> str:
     return "\n\n".join(lines)
 
 
+def _format_memory(memory: dict | None) -> str:
+    """Cumulative working memory across goal iterations.
+
+    Shape: ``{"files_changed": [...], "decisions": [...], "blockers":
+    [...]}``. Empty when nothing accumulated yet. The block lets the
+    judge see what the writer has touched across the whole loop — for
+    coverage-style goals where iteration 7 builds on iteration 3, the
+    transcript alone misses the lineage.
+    """
+    if not memory:
+        return ""
+    files = (memory.get("files_changed") or [])[-30:]
+    decisions = (memory.get("decisions") or [])[-15:]
+    blockers = (memory.get("blockers") or [])[-10:]
+    if not (files or decisions or blockers):
+        return ""
+    parts = ["WORKING MEMORY (cumulative across iterations):"]
+    if files:
+        parts.append("### Files Changed")
+        parts.extend(f"- {f}" for f in files)
+    if decisions:
+        parts.append("### Decisions")
+        parts.extend(f"- {d}" for d in decisions)
+    if blockers:
+        parts.append("### Blockers")
+        parts.extend(f"- {b}" for b in blockers)
+    return "\n".join(parts) + "\n"
+
+
 async def evaluate(
     goal: str,
     history: list[dict],
@@ -169,6 +200,7 @@ async def evaluate(
     n_turns: int = 6,
     agent_name: str = "goal-evaluator",
     artifacts: list[dict] | None = None,
+    memory: dict | None = None,
 ) -> GoalDecision:
     """Run the cheap evaluator. Always returns a decision — never raises.
 
@@ -190,6 +222,7 @@ async def evaluate(
         n=n_turns,
         transcript=_format_transcript(history, n_turns),
         artifacts_block=_format_artifacts(artifacts),
+        memory_block=_format_memory(memory),
     )
     try:
         raw = await runner(agent_name, prompt)

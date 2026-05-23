@@ -225,6 +225,15 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail="Session not found")
     body = await request.json()
     goal = (body.get("goal") or "").strip()
+    # Optional per-goal iteration budget. Default 20; clamped to
+    # [1, 200] so a typo doesn't blow up a single session forever.
+    max_iter_override: int | None = None
+    try:
+        v = body.get("max_iterations")
+        if v is not None:
+            max_iter_override = max(1, min(200, int(v)))
+    except (TypeError, ValueError):
+        max_iter_override = None
     from arz.session.session import Session
 
     assert isinstance(session, Session)
@@ -238,6 +247,11 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         session.goal_iterations = 0
         session.goal_last_reason = ""
         session.goal_same_reason_count = 0
+        session.goal_files_changed = []
+        session.goal_decisions = []
+        session.goal_blockers = []
+        if max_iter_override is not None:
+            session.goal_max_iterations = max_iter_override
         mgr.save(session)
         # Kick off the first turn so the model starts working
         # immediately — no separate user prompt required.
