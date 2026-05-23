@@ -89,16 +89,37 @@ Rules:
 
 
 def _format_transcript(history: list[dict], n: int) -> str:
-    """Trim transcript to last *n* turns, summarising older bulk."""
+    """Trim transcript to last *n* turns. Per-message body cap is
+    generous (12K) so the judge sees the actual artifact for goals
+    that legitimately produce long output — e.g. a 50-row table or a
+    full file dump. Smaller-than-cap messages pass through untouched;
+    over-cap messages keep the head + tail so the structure (table
+    delimiters, opening/closing braces, etc.) is preserved, with a
+    short ELIDED marker between them.
+
+    NOTE: We deliberately do NOT inject the literal phrase
+    ``[truncated]`` — the judge was earlier rejecting otherwise-valid
+    artifacts ("can't verify 50 rows because transcript shows
+    truncated") since the cheap model treats that string as evidence
+    of incompleteness instead of as a meta-marker about our context
+    handling.
+    """
     if not history:
         return "(empty)"
     tail = history[-n:]
+    body_cap = 12000
+    head_keep = 7000
+    tail_keep = 4000
     lines: list[str] = []
     for m in tail:
         role = m.get("role", "?")
         text = (m.get("text") or "").strip()
-        if len(text) > 1200:
-            text = text[:600] + "\n…[truncated]…\n" + text[-400:]
+        if len(text) > body_cap:
+            text = (
+                text[:head_keep]
+                + f"\n\n…ELIDED {len(text) - head_keep - tail_keep} chars…\n\n"
+                + text[-tail_keep:]
+            )
         lines.append(f"[{role}] {text}")
     return "\n\n".join(lines)
 

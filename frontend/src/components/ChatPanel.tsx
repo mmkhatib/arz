@@ -1208,9 +1208,19 @@ export default function ChatPanel({
         // Clear the live streamBuffer IMMEDIATELY on complete so the
         // streaming bubble + the just-saved MessageBubble don't both
         // render the same widget for the brief window before the
-        // outer finally block clears state. Without this users see
-        // any embedded arzwidget rendered twice.
+        // outer finally block clears state.
         setStreamBuffer("");
+        // Refetch session so the goal pill reflects any status flip
+        // the evaluator made between writer_done and sse_complete.
+        api.getSession(sessionId)
+          .then((s) => {
+            setGoal(s.goal ?? null);
+            setGoalStatus((s.goal_status as "active" | "done") ?? "active");
+            setGoalIterations(s.goal_iterations ?? 0);
+            setGoalLastReason(s.goal_last_reason ?? "");
+            setMessages(s.messages);
+          })
+          .catch(() => {});
         if (messages.length === 0 && fullText && firstUserMsgRef.current) {
           api.generateTitle(sessionId, firstUserMsgRef.current, fullText).then((t) => {
             if (t) { setTitle(t); onTitleChange?.(t); }
@@ -1305,7 +1315,9 @@ export default function ChatPanel({
   // POST back a goal-auto follow-up — that fires a brand-new SSE
   // stream which the current EventSource won't pick up on its own.
   // Poll session.streaming for a short window and reattach when it
-  // flips back to true. Bails immediately if the goal isn't active.
+  // flips back to true. Bails when the goal flips to done / cap /
+  // user-cleared; in that case we also propagate the new goal state
+  // up to the React tree so the goal pill flips out of "active".
   const watchForAutoIterStream = async () => {
     let attempts = 0;
     const maxAttempts = 60; // 60 × 200ms = 12s
@@ -1313,6 +1325,15 @@ export default function ChatPanel({
       if (attempts++ > maxAttempts) return;
       try {
         const s = await api.getSession(sessionId);
+        // Propagate goal state regardless of branch so a done/cap
+        // verdict immediately reflects in the chip + pill.
+        setGoal(s.goal ?? null);
+        setGoalStatus((s.goal_status as "active" | "done") ?? "active");
+        setGoalIterations(s.goal_iterations ?? 0);
+        setGoalLastReason(s.goal_last_reason ?? "");
+        // Also refresh saved messages so any chip _emit_marker
+        // appended after sse_complete is visible.
+        setMessages(s.messages);
         if (!s.goal || s.goal_status !== "active") return;
         if (s.streaming) {
           await reattachStream().catch(() => {});

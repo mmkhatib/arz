@@ -1,6 +1,6 @@
 [project]
 name = "arz"
-version = "0.8.8"
+version = "0.8.9"
 description = "Personal AI agent runtime — your cedar in the cloud."
 readme = "README.md"
 requires-python = ">=3.12"
