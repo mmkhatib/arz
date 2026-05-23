@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { stripInlineTags } from "@/utils/stripInline";
 import remarkMath from "remark-math";
+import remarkGfm from "remark-gfm";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { FileBody } from "./FileViewer";
@@ -557,7 +558,7 @@ export default function MessageBubble({
                 ) : !seg.value.trim() ? null : (
               <ReactMarkdown
               key={segIdx}
-              remarkPlugins={[remarkMath, remarkFilePaths()]}
+              remarkPlugins={[remarkGfm, remarkMath, remarkFilePaths()]}
               rehypePlugins={[rehypeKatex]}
               components={{
                 p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,

@@ -892,6 +892,10 @@ export default function ChatPanel({
   // after a tool group. The full bubble-split refactor (separate saved
   // segments mid-stream) is out of scope for this tier — we forward
   // the signal to onSseEvent for telemetry + future use.
+  // Track when the writer has finished + the message is persisted so
+  // the streaming bubble can unmount and only the saved bubble (with
+  // chips appended by _emit_marker) is visible during judge run.
+  const [writerDone, setWriterDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contextPct, setContextPct] = useState(0);
   const [estimatedContext, setEstimatedContext] = useState(false);
@@ -1175,13 +1179,13 @@ export default function ChatPanel({
         onSseEvent?.("chat_segment");
       } else if (chunk.type === "writer_done") {
         // Writer finished + message persisted server-side. Clear
-        // the live streamBuffer so the just-saved bubble doesn't
-        // duplicate-render alongside the streaming bubble while
-        // the evaluator runs. Subsequent goal-marker chunks land
-        // in the saved bubble via mgr.save + session reload.
+        // BOTH the streamBuffer state AND the local fullText
+        // accumulator + flip writerDone so the streaming bubble
+        // unmounts. Subsequent goal-marker chunks land in the
+        // saved bubble via mgr.save + the getSession refetch.
+        fullText = "";
         setStreamBuffer("");
-        // Also force a session refetch so the saved bubble (with
-        // chips appended by _emit_marker) shows up immediately.
+        setWriterDone(true);
         api.getSession(sessionId)
           .then((s) => setMessages(s.messages))
           .catch(() => {});
@@ -1268,6 +1272,7 @@ export default function ChatPanel({
     }
     setStreaming(true);
     setStreamBuffer("");
+    setWriterDone(false);
     setError(null);
     setToolCalls([]);
     setPendingApproval(null);
@@ -1326,6 +1331,7 @@ export default function ChatPanel({
   const reattachStream = async () => {
     setStreaming(true);
     setStreamBuffer("");
+    setWriterDone(false);
     setError(null);
     setToolCalls([]);
     setPendingApproval(null);
@@ -1629,8 +1635,10 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* Live streaming bubble */}
-        {streaming && (
+        {/* Live streaming bubble — suppressed after writer_done so the
+            saved bubble (with chips appended by _emit_marker) is the
+            only thing visible during the evaluator phase. */}
+        {streaming && !writerDone && (
           <div className="flex justify-start mb-4">
             <div className="w-7 h-7 rounded-full bg-[var(--cedar)] flex items-center justify-center text-[12px] mr-2 mt-0.5 shrink-0 relative">
               🌲

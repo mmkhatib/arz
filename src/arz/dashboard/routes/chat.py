@@ -189,6 +189,7 @@ async def _goal_followup(
     mgr,
     subagent_runner,
     chat_runner,
+    target_msg_idx: int | None = None,
 ):
     """Evaluate the goal after the just-finished assistant turn; emit
     the verdict marker live. If not met and budget remains, RETURN a
@@ -265,19 +266,27 @@ async def _goal_followup(
     # this the evaluator was invisible and felt like nothing was
     # happening between auto-iterations.
     def _emit_marker(text: str) -> None:
-        # 1. Persist the marker into the last assistant message so it
-        #    survives session reload + markdown export. Without this the
-        #    evaluator verdict was invisible to anyone re-reading the
-        #    transcript and the goal loop looked like it never fired.
+        # 1. Persist the marker into the assistant message that
+        #    corresponds to THIS turn (target_msg_idx, captured by the
+        #    caller before any auto-iter follow-up could land). Fallback
+        #    to "last assistant in session" only when caller didn't
+        #    supply an index — prevents chips from a no-text iteration
+        #    landing on the previous turn's bubble.
         try:
-            last_assistant = next(
-                (m for m in reversed(fresh.messages) if m.role == "assistant"),
-                None,
-            )
-            if last_assistant is not None:
+            target = None
+            if target_msg_idx is not None and 0 <= target_msg_idx < len(fresh.messages):
+                cand = fresh.messages[target_msg_idx]
+                if cand.role == "assistant":
+                    target = cand
+            if target is None:
+                target = next(
+                    (m for m in reversed(fresh.messages) if m.role == "assistant"),
+                    None,
+                )
+            if target is not None:
                 tag = text.strip()
-                if tag and tag not in (last_assistant.text or ""):
-                    last_assistant.text = (last_assistant.text or "").rstrip() + "\n\n" + tag
+                if tag and tag not in (target.text or ""):
+                    target.text = (target.text or "").rstrip() + "\n\n" + tag
                     mgr.save(fresh)
         except Exception:
             log.exception("goal marker persist failed", extra={"session_id": fresh.id})
@@ -801,6 +810,25 @@ async def _run_turn(
             heartbeat_task.cancel()
         except Exception:
             pass
+        # When a goal is active but the writer returned empty text,
+        # still persist a placeholder so the evaluator chip lands on a
+        # bubble for THIS turn instead of the previous one.
+        if (
+            session
+            and not saved_assistant
+            and not state.full_reply
+            and (getattr(session, "goal", None) or "").strip()
+            and getattr(session, "goal_status", "") == "active"
+        ):
+            try:
+                msg = session.add_message("assistant", "_(empty reply)_")
+                msg.model = provider.current_model
+                msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
+                mgr.save(session)
+                saved_assistant = True
+            except Exception:
+                log.exception("empty-reply placeholder persist failed")
+
         # Always persist the assistant message if we got any text. This
         # covers all the failure modes: cancellation, provider crash,
         # mid-stream provider eviction, etc.
@@ -873,11 +901,26 @@ async def _run_turn(
                     except Exception:
                         pass
 
+                    # Capture the index of the assistant message that
+                    # represents THIS turn so the chip-emitter can
+                    # always target it — even after an auto-iter
+                    # follow-up adds a new user message.
+                    target_idx = len(session.messages) - 1
+                    if target_idx < 0 or session.messages[target_idx].role != "assistant":
+                        target_idx = next(
+                            (
+                                i
+                                for i in range(len(session.messages) - 1, -1, -1)
+                                if session.messages[i].role == "assistant"
+                            ),
+                            -1,
+                        )
                     goal_auto_iter_task = await _goal_followup(
                         session=session,
                         mgr=mgr,
                         subagent_runner=subagent_runner,
                         chat_runner=chat_runner,
+                        target_msg_idx=target_idx if target_idx >= 0 else None,
                     )
         except Exception:
             log.exception("goal auto-iteration scheduling failed")
