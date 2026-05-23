@@ -302,20 +302,30 @@ def scan_orphan_clis(dry_run: bool = False) -> list[dict]:
                 token_hit = basename
         if not token_hit:
             continue
+        # Skip one-shot CLI invocations from OTHER tools (Claude
+        # Desktop / Nara / external scripts). Arz only ever spawns
+        # claude via the persistent ACP protocol; it NEVER uses
+        # --print, --output-format text, or other one-shot flags.
+        # Killing those mid-execution breaks unrelated apps on the
+        # same machine.
+        if " --print" in cmd or "--output-format text" in cmd:
+            continue
         # Skip if parent is ourselves — that's a live child of THIS
         # gateway, not an orphan.
         if ppid == our_pid:
             continue
-        # Skip if parent is alive AND looks like a live gateway
-        # (python/uvicorn process owning this CLI). The simple check:
-        # ppid != 1 (init) and ppid alive and is python.
-        # Skip if the parent is alive at all. Real orphans have ppid=1
-        # (init reparenting after the spawner died) or ppid pointing
-        # at a now-dead pid. We previously also required the parent
-        # to look like "arz gateway", but that killed legitimate
-        # short-lived subagents whose immediate parent was a Python
-        # subprocess wrapper, not the gateway itself.
+        # Skip if parent is alive. Real orphans have ppid=1 (init
+        # reparenting after the spawner died) or a dead ppid.
         if ppid > 1 and _pid_alive(ppid):
+            continue
+        # Min-age guard: short-lived one-shots (typical 1-3s lifetime)
+        # frequently get reparented to init the instant before they
+        # exit. Killing them mid-final-write corrupts their output.
+        # Only reap processes whose age we can confirm AND that are
+        # ≥30s old. Unknown age (e.g. mocked test env, pid gone) →
+        # allow the kill, preserves existing test behavior.
+        age = _process_age_s(pid)
+        if age > 0.0 and age < 30.0:
             continue
         # Orphan. Kill it.
         killed = False
@@ -344,6 +354,58 @@ def scan_orphan_clis(dry_run: bool = False) -> list[dict]:
             }
         )
     return rows
+
+
+def _process_age_s(pid: int) -> float:
+    """Seconds since process start. Returns 0.0 when age is genuinely
+    unknown (mocked env, lookup failed, pid gone) — the caller treats
+    that as "skip the age guard" so existing reap logic still fires.
+    Real young procs return a small positive value.
+    """
+    import sys
+
+    try:
+        if sys.platform == "darwin":
+            import subprocess
+
+            out = subprocess.run(
+                ["ps", "-o", "etime=", "-p", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            return _parse_etime(out.stdout.strip())
+        if sys.platform == "linux":
+            stat = Path(f"/proc/{pid}/stat").read_text(errors="replace").split()
+            # field 22 = starttime in clock ticks since boot
+            if len(stat) >= 22:
+                clk_tck = os.sysconf("SC_CLK_TCK") or 100
+                start_ticks = int(stat[21])
+                with open("/proc/uptime") as f:
+                    uptime_s = float(f.read().split()[0])
+                start_s = uptime_s - (start_ticks / clk_tck)
+                return max(0.0, start_s)
+    except Exception:
+        pass
+    return 0.0
+
+
+def _parse_etime(s: str) -> float:
+    """Parse ps etime format: [[DD-]HH:]MM:SS → seconds."""
+    if not s:
+        return 0.0
+    try:
+        days = 0
+        if "-" in s:
+            d, s = s.split("-", 1)
+            days = int(d)
+        parts = [int(p) for p in s.split(":")]
+        while len(parts) < 3:
+            parts.insert(0, 0)
+        h, m, sec = parts[-3], parts[-2], parts[-1]
+        return float(days * 86400 + h * 3600 + m * 60 + sec)
+    except Exception:
+        return 0.0
 
 
 def _cmd_matches(pid: int, token: str) -> bool:
