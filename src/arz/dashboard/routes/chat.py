@@ -342,6 +342,8 @@ async def _goal_followup(
     when no follow-up turn should fire (goal met / cap reached /
     evaluator unavailable / user cleared the goal mid-eval).
     """
+    import time as _time
+
     from arz import goal as _goal
 
     log.info(
@@ -543,7 +545,25 @@ async def _goal_followup(
         )
         return None
 
-    # Not met — fire one more turn if budget remains.
+    # Not met — fire one more turn if budgets (iter + wall-clock) remain.
+    runtime_cap = int(getattr(fresh, "goal_max_runtime_s", 0) or 0)
+    if runtime_cap > 0:
+        elapsed = max(0.0, _time.time() - float(getattr(fresh, "goal_set_at", 0.0) or 0.0))
+        if elapsed >= runtime_cap:
+            log.warning(
+                "goal runtime cap reached without completion",
+                extra={
+                    "session_id": fresh.id,
+                    "elapsed_s": int(elapsed),
+                    "cap_s": runtime_cap,
+                },
+            )
+            _emit_marker(
+                f'<goal-marker variant="timeout" iter="{fresh.goal_iterations}" '
+                f'elapsed="{int(elapsed)}" cap_s="{runtime_cap}" '
+                f'reason="{safe_reason}" />\n\n'
+            )
+            return None
     new_iter = fresh.goal_iterations + 1
     if new_iter > fresh.goal_max_iterations:
         log.warning(

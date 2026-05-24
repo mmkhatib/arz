@@ -151,6 +151,10 @@ class Session:
     # show progress + so a gateway restart can resume mid-loop.
     goal_iterations: int = 0
     goal_max_iterations: int = 20
+    # Wall-clock budget for the auto-iter loop. 0 = no limit. Enforced
+    # in chat.py before scheduling the next follow-up turn; expiry
+    # emits a `timeout` goal marker and parks the loop.
+    goal_max_runtime_s: int = 0
     goal_last_reason: str = ""
     # Frustration tracker: how many consecutive iterations the evaluator
     # has rejected the writer for the SAME reason. When this hits the
@@ -221,6 +225,7 @@ class Session:
             "goal_set_at": self.goal_set_at,
             "goal_iterations": self.goal_iterations,
             "goal_max_iterations": self.goal_max_iterations,
+            "goal_max_runtime_s": self.goal_max_runtime_s,
             "goal_last_reason": self.goal_last_reason,
             "goal_same_reason_count": self.goal_same_reason_count,
             "goal_files_changed": self.goal_files_changed,
@@ -260,6 +265,7 @@ class Session:
             goal_set_at=float(d.get("goal_set_at") or 0.0),
             goal_iterations=int(d.get("goal_iterations") or 0),
             goal_max_iterations=int(d.get("goal_max_iterations") or 20),
+            goal_max_runtime_s=int(d.get("goal_max_runtime_s") or 0),
             goal_last_reason=str(d.get("goal_last_reason") or ""),
             goal_same_reason_count=int(d.get("goal_same_reason_count") or 0),
             goal_files_changed=list(d.get("goal_files_changed") or []),

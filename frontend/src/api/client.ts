@@ -25,6 +25,8 @@ export interface SessionSummary {
   goal_set_at?: number;
   goal_iterations?: number;
   goal_max_iterations?: number;
+  /** Wall-clock budget for the auto-iter loop in seconds. 0 = unlimited. */
+  goal_max_runtime_s?: number;
   goal_last_reason?: string;
   pinned?: boolean;
   archived?: boolean;
@@ -371,11 +373,16 @@ export const api = {
   setGoal: async (
     sessionId: string,
     goal: string,
+    opts?: { max_iterations?: number; max_runtime_s?: number; goal_judge_tools?: string },
   ): Promise<{ goal: string | null; kickoff_fired: boolean }> => {
+    const body: Record<string, unknown> = { goal };
+    if (opts?.max_iterations !== undefined) body.max_iterations = opts.max_iterations;
+    if (opts?.max_runtime_s !== undefined) body.max_runtime_s = opts.max_runtime_s;
+    if (opts?.goal_judge_tools !== undefined) body.goal_judge_tools = opts.goal_judge_tools;
     const res = await fetch(`${BASE}/sessions/${sessionId}/goal`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ goal }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
     return res.json();

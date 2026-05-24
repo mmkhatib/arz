@@ -131,6 +131,7 @@ def _session_to_dict(session: object) -> dict:
         "goal_set_at": getattr(session, "goal_set_at", 0.0),
         "goal_iterations": getattr(session, "goal_iterations", 0),
         "goal_max_iterations": getattr(session, "goal_max_iterations", 20),
+        "goal_max_runtime_s": getattr(session, "goal_max_runtime_s", 0),
         "goal_last_reason": getattr(session, "goal_last_reason", ""),
         "pinned": getattr(session, "pinned", False),
         "archived": getattr(session, "archived", False),
@@ -234,6 +235,15 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
             max_iter_override = max(1, min(200, int(v)))
     except (TypeError, ValueError):
         max_iter_override = None
+    # Optional wall-clock budget for the auto-iter loop (seconds).
+    # 0 = no limit; capped at 1h so a typo doesn't camp the queue.
+    max_runtime_override: int | None = None
+    try:
+        v = body.get("max_runtime_s")
+        if v is not None:
+            max_runtime_override = max(0, min(3600, int(v)))
+    except (TypeError, ValueError):
+        max_runtime_override = None
     # Optional judge tool-access override. "trust_reads" (default) =
     # read-only verification; "trust" = full power (Bash, Edit) needed
     # for run-tests/build-style goals; "none" = no tools.
@@ -259,6 +269,8 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         session.goal_blockers = []
         if max_iter_override is not None:
             session.goal_max_iterations = max_iter_override
+        if max_runtime_override is not None:
+            session.goal_max_runtime_s = max_runtime_override
         if judge_tools_override is not None:
             session.goal_judge_tools = judge_tools_override
         mgr.save(session)

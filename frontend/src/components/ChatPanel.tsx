@@ -14,6 +14,7 @@ import { stripInlineTags } from "@/utils/stripInline";
 import { segmentMessage } from "@/utils/segments";
 import Widget from "./Widget";
 import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
+import GoalModal from "./GoalModal";
 import { useDialog } from "@/components/Dialog";
 
 /* Preserved for revert: original three-dot bouncer. Was the only
@@ -625,21 +626,28 @@ function MoreMenu({
   autonudgeIdleS,
   goal,
   goalStatus,
+  goalMaxIterations,
+  goalMaxRuntimeS,
   onForked,
   onAutonudgeChange,
   onGoalChange,
+  onGoalBudgetChange,
 }: {
   sessionId: string;
   autonudgeGoal: string | null;
   autonudgeIdleS: number;
   goal: string | null;
   goalStatus: "active" | "done";
+  goalMaxIterations: number;
+  goalMaxRuntimeS: number;
   onForked: (id: string) => void;
   onAutonudgeChange: (goal: string | null, idle_s: number) => void;
   onGoalChange: (goal: string | null, status: "active" | "done") => void;
+  onGoalBudgetChange: (maxIter: number, maxRuntimeS: number) => void;
 }) {
   const dialog = useDialog();
   const [open, setOpen] = useState(false);
+  const [goalModalOpen, setGoalModalOpen] = useState(false);
   const isAutoOn = !!(autonudgeGoal && autonudgeIdleS > 0);
   const goalActive = !!(goal && goalStatus === "active");
 
@@ -693,25 +701,28 @@ function MoreMenu({
     onAutonudgeChange(goal, idle_s);
   };
 
-  const editGoal = async () => {
+  const editGoal = () => {
     setOpen(false);
-    const next = await dialog.prompt({
-      title: goalActive ? "Edit goal" : "Set goal",
-      body: "Persistent objective. Injected into every turn so the model keeps it in mind across restarts.",
-      defaultValue: goal ?? "",
-      placeholder: "Ship the auth refactor and document the API.",
-      okLabel: goalActive ? "Update" : "Set",
-      eyebrow: "goal",
-    });
-    if (next === null) return;
-    const trimmed = next.trim();
-    if (!trimmed) {
+    setGoalModalOpen(true);
+  };
+
+  const submitGoalFromModal = async (patch: {
+    goal: string;
+    max_iterations: number;
+    max_runtime_s: number;
+  }) => {
+    setGoalModalOpen(false);
+    if (!patch.goal) {
       await api.clearGoal(sessionId);
       onGoalChange(null, "active");
       return;
     }
-    await api.setGoal(sessionId, trimmed);
-    onGoalChange(trimmed, "active");
+    await api.setGoal(sessionId, patch.goal, {
+      max_iterations: patch.max_iterations,
+      max_runtime_s: patch.max_runtime_s,
+    });
+    onGoalChange(patch.goal, "active");
+    onGoalBudgetChange(patch.max_iterations, patch.max_runtime_s);
   };
 
   const completeGoal = async () => {
@@ -791,6 +802,14 @@ function MoreMenu({
           )}
         </div>
       )}
+      <GoalModal
+        open={goalModalOpen}
+        initialGoal={goal ?? ""}
+        initialMaxIterations={goalMaxIterations}
+        initialMaxRuntimeS={goalMaxRuntimeS}
+        onClose={() => setGoalModalOpen(false)}
+        onSubmit={submitGoalFromModal}
+      />
     </div>
   );
 }
@@ -916,6 +935,7 @@ export default function ChatPanel({
   const [goalStatus, setGoalStatus] = useState<"active" | "done">("active");
   const [goalIterations, setGoalIterations] = useState<number>(0);
   const [goalMaxIterations, setGoalMaxIterations] = useState<number>(20);
+  const [goalMaxRuntimeS, setGoalMaxRuntimeS] = useState<number>(0);
   const [goalLastReason, setGoalLastReason] = useState<string>("");
   const firstUserMsgRef = useRef<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -943,6 +963,7 @@ export default function ChatPanel({
         setGoalStatus((s.goal_status as "active" | "done") ?? "active");
         setGoalIterations(s.goal_iterations ?? 0);
         setGoalMaxIterations(s.goal_max_iterations ?? 20);
+        setGoalMaxRuntimeS(s.goal_max_runtime_s ?? 0);
         setGoalLastReason(s.goal_last_reason ?? "");
         // If a turn is currently running for this session (e.g. the user
         // navigated away and came back), attach to its detached stream and
@@ -1454,6 +1475,8 @@ export default function ChatPanel({
             autonudgeIdleS={autonudgeIdleS}
             goal={goal}
             goalStatus={goalStatus}
+            goalMaxIterations={goalMaxIterations}
+            goalMaxRuntimeS={goalMaxRuntimeS}
             onForked={(id) => onSessionForked?.(id)}
             onAutonudgeChange={(g, idle_s) => {
               setAutonudgeGoal(g);
@@ -1462,6 +1485,10 @@ export default function ChatPanel({
             onGoalChange={(g, status) => {
               setGoal(g);
               setGoalStatus(status);
+            }}
+            onGoalBudgetChange={(maxIter, maxRuntimeS) => {
+              setGoalMaxIterations(maxIter);
+              setGoalMaxRuntimeS(maxRuntimeS);
             }}
           />
         </div>

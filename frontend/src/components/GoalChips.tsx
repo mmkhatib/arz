@@ -31,6 +31,13 @@ export function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
     icon = "⨯";
     color = "#f87171";
     label = `goal · cap ${iter}/${cap}`;
+  } else if (variant === "timeout") {
+    const elapsed = attrs.elapsed || "";
+    const capS = attrs.cap_s || "";
+    const mins = capS ? Math.round(parseInt(capS, 10) / 60) : 0;
+    icon = "⏱";
+    color = "#f87171";
+    label = mins ? `goal · timeout (${elapsed}s / ${mins}m)` : "goal · timeout";
   } else if (verdict === "met") {
     icon = "✓";
     color = "#34d399";
