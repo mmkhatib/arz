@@ -264,6 +264,7 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         session.goal_iterations = 0
         session.goal_last_reason = ""
         session.goal_same_reason_count = 0
+        session.goal_unsat_count = 0
         session.goal_files_changed = []
         session.goal_decisions = []
         session.goal_blockers = []
@@ -355,6 +356,7 @@ async def set_session_goal(session_id: str, request: Request) -> dict:
         session.goal_iterations = 0
         session.goal_last_reason = ""
         session.goal_same_reason_count = 0
+        session.goal_unsat_count = 0
         mgr.save(session)
     return {"goal": session.goal, "kickoff_fired": fired}
 

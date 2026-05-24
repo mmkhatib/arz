@@ -203,7 +203,7 @@ wheels = [
 
 [[package]]
 name = "arz"
-version = "0.8.18"
+version = "0.8.19"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },

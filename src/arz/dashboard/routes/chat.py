@@ -545,6 +545,37 @@ async def _goal_followup(
         )
         return None
 
+    # Unsatisfiable-goal detector. When the judge keeps flagging the
+    # goal itself as gibberish / nonsensical / requiring user input,
+    # auto-iterating is pointless — the writer can't manufacture a goal
+    # out of typo. Halt after 2 consecutive hits and ask the user to
+    # rewrite the goal. Saves a 20-iter spin on "asdasd".
+    import re as _re
+
+    _UNSAT_RE = _re.compile(
+        r"\b(gibberish|nonsensical|uninterpretable|unsatisfiable|"
+        r"meaningless|keyboard mash|no actionable|no interpretable|"
+        r"no actual requirement|user must (provide|clarif)|"
+        r"user clarification required|cannot be satisfied|"
+        r"no real goal|requires? clarification)\b",
+        _re.IGNORECASE,
+    )
+    if _UNSAT_RE.search(decision.reason or ""):
+        fresh.goal_unsat_count = int(getattr(fresh, "goal_unsat_count", 0) or 0) + 1
+    else:
+        fresh.goal_unsat_count = 0
+    mgr.save(fresh)
+    if fresh.goal_unsat_count >= 2:
+        log.warning(
+            "goal unsatisfiable — judge flagged gibberish/needs-input twice; halting",
+            extra={"session_id": fresh.id, "reason": decision.reason},
+        )
+        _emit_marker(
+            f'<goal-marker variant="unsat" iter="{fresh.goal_iterations}" '
+            f'reason="{safe_reason}" />\n\n'
+        )
+        return None
+
     # Not met — fire one more turn if budgets (iter + wall-clock) remain.
     runtime_cap = int(getattr(fresh, "goal_max_runtime_s", 0) or 0)
     if runtime_cap > 0:

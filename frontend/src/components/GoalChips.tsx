@@ -31,6 +31,10 @@ export function GoalMarkerChip({ attrs }: { attrs: GoalAttrs }) {
     icon = "⨯";
     color = "#f87171";
     label = `goal · cap ${iter}/${cap}`;
+  } else if (variant === "unsat") {
+    icon = "⊘";
+    color = "#fbbf24";
+    label = "goal · unsatisfiable — rewrite goal";
   } else if (variant === "timeout") {
     const elapsed = attrs.elapsed || "";
     const capS = attrs.cap_s || "";

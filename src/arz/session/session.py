@@ -162,6 +162,12 @@ class Session:
     # discard its current approach — handles sticky-cache failure modes
     # where the writer keeps repeating the previous answer verbatim.
     goal_same_reason_count: int = 0
+    # Count of consecutive iterations whose evaluator reason carried
+    # unsatisfiable keywords (gibberish / no actionable / user must
+    # clarify). When this hits 2, chat.py halts the loop and emits an
+    # `unsat` marker asking the user to fix the goal text. Saves the
+    # user from watching a 20-iter loop churn on a typo.
+    goal_unsat_count: int = 0
     # Cross-iteration working memory for the goal loop. Each writer
     # turn appends recently-touched files + DECISION/BLOCKER lines.
     # Survives compaction because we own it; injected into every
@@ -228,6 +234,7 @@ class Session:
             "goal_max_runtime_s": self.goal_max_runtime_s,
             "goal_last_reason": self.goal_last_reason,
             "goal_same_reason_count": self.goal_same_reason_count,
+            "goal_unsat_count": self.goal_unsat_count,
             "goal_files_changed": self.goal_files_changed,
             "goal_decisions": self.goal_decisions,
             "goal_blockers": self.goal_blockers,
@@ -268,6 +275,7 @@ class Session:
             goal_max_runtime_s=int(d.get("goal_max_runtime_s") or 0),
             goal_last_reason=str(d.get("goal_last_reason") or ""),
             goal_same_reason_count=int(d.get("goal_same_reason_count") or 0),
+            goal_unsat_count=int(d.get("goal_unsat_count") or 0),
             goal_files_changed=list(d.get("goal_files_changed") or []),
             goal_decisions=list(d.get("goal_decisions") or []),
             goal_blockers=list(d.get("goal_blockers") or []),
