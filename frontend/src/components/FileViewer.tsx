@@ -9,6 +9,14 @@ import { api } from '@/api/client'
 import { highlight, langForPath } from '@/utils/hljs'
 import { CedarMarkdown } from './CedarMarkdown'
 import { HtmlSandbox } from './Widget'
+import { resolveSourcePos, findCoords } from '@/utils/sourcePos'
+import {
+  type InlineComment,
+  loadCommentDrafts,
+  saveCommentDrafts,
+  setCommentsForFile,
+} from '@/utils/commentDrafts'
+import { formatCommentsMessage } from '@/utils/formatCommentsMessage'
 
 /* ── File type detection ── */
 type FileType = 'image' | 'csv' | 'json' | 'html' | 'markdown' | 'code' | 'binary'
@@ -80,6 +88,8 @@ function CodeView({
       sessionId={sessionId ?? null}
       onSent={onSent}
       enabled={commentable}
+      content={content}
+      isMarkdown={false}
     >
       <div
         ref={surfaceRef}
@@ -122,12 +132,16 @@ function CodeView({
   )
 }
 
-/* ── CommentableSurface — drag-to-select + comment rail + send ── */
-interface PendingComment {
-  id: number
-  selection: string
-  comment: string
-}
+/* ── CommentableSurface — drag-to-select + comment rail + send ──
+ *
+ * Resolves each selection to a source (line, column) via either the
+ * rehypeSourcepos DOM walker (markdown render mode) or a substring
+ * lookup (code / raw text), then ships all pending comments to the
+ * LLM as a structured `[Document feedback on FILE]` message including
+ * line/col + a 20-char source window. Drafts persist across panel
+ * close, page reload, and crashes via localStorage with quota-safe
+ * LRU eviction.
+ */
 
 function CommentableSurface({
   children,
@@ -136,6 +150,8 @@ function CommentableSurface({
   sessionId,
   onSent,
   enabled,
+  content,
+  isMarkdown,
 }: {
   children: React.ReactNode
   surfaceRef: React.RefObject<HTMLElement | null>
@@ -143,13 +159,32 @@ function CommentableSurface({
   sessionId: string | null
   onSent?: () => void
   enabled: boolean
+  /** Raw source text — needed by sourcePos resolver / findCoords. */
+  content: string
+  /** True when children are CedarMarkdown render output (uses
+   *  data-sourcepos resolver). False for code / raw / json views which
+   *  use direct substring lookup. */
+  isMarkdown: boolean
 }) {
-  const [draftSelection, setDraftSelection] = useState<string>('')
+  const [draftAnchor, setDraftAnchor] = useState<string>('')
+  const [draftCoord, setDraftCoord] = useState<{ line?: number; column?: number }>({})
   const [draftText, setDraftText] = useState<string>('')
-  const [comments, setComments] = useState<PendingComment[]>([])
+  const [comments, setComments] = useState<InlineComment[]>(() => loadCommentDrafts()[path] ?? [])
   const [sending, setSending] = useState(false)
   const [sendErr, setSendErr] = useState<string | null>(null)
-  const nextId = useRef(1)
+
+  // Re-hydrate when the active file changes (panel navigates).
+  useEffect(() => {
+    setComments(loadCommentDrafts()[path] ?? [])
+  }, [path])
+
+  // Persist on every change. saveCommentDrafts() handles quota-exceeded
+  // by evicting oldest files and back-syncs only on a successful write.
+  useEffect(() => {
+    const drafts = loadCommentDrafts()
+    setCommentsForFile(drafts, path, comments)
+    saveCommentDrafts(drafts)
+  }, [comments, path])
 
   const handleSelection = () => {
     if (!enabled) return
@@ -159,24 +194,58 @@ function CommentableSurface({
     if (!text) return
     const node = sel.anchorNode
     if (!node || !surfaceRef.current.contains(node)) return
-    setDraftSelection(text)
+    const range = sel.getRangeAt(0)
+    // Reject selections that escape the surface in either direction.
+    if (
+      !surfaceRef.current.contains(range.startContainer) ||
+      !surfaceRef.current.contains(range.endContainer)
+    ) {
+      return
+    }
+    const raw = sel.toString()
+    // For markdown: walk DOM to the nearest data-sourcepos ancestor,
+    // align rendered text to source span. Fall back to substring
+    // search when DOM resolver bails (HTML entities, raw HTML).
+    // For code / raw: rendered text === source so findCoords is exact.
+    let coord: { line?: number; column?: number } = {}
+    if (isMarkdown) {
+      coord =
+        resolveSourcePos(range, surfaceRef.current as HTMLElement, content) ??
+        findCoords(content, raw) ??
+        findCoords(content, text) ??
+        {}
+    } else {
+      coord = findCoords(content, raw) ?? findCoords(content, text) ?? {}
+    }
+    setDraftAnchor(text)
+    setDraftCoord(coord)
     setDraftText('')
   }
 
   const cancelDraft = () => {
-    setDraftSelection('')
+    setDraftAnchor('')
+    setDraftCoord({})
     setDraftText('')
   }
+
   const addComment = () => {
     const t = draftText.trim()
     if (!t) return
     setComments((prev) => [
       ...prev,
-      { id: nextId.current++, selection: draftSelection, comment: t },
+      {
+        id: `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        anchor: draftAnchor,
+        text: t,
+        line: draftCoord.line,
+        column: draftCoord.column,
+        created_at: Date.now(),
+      },
     ])
     cancelDraft()
   }
-  const removeComment = (id: number) => {
+
+  const removeComment = (id: string) => {
     setComments((prev) => prev.filter((c) => c.id !== id))
   }
 
@@ -185,17 +254,16 @@ function CommentableSurface({
     setSending(true)
     setSendErr(null)
     try {
-      const blocks = comments.map((c, i) => {
-        if (c.selection) {
-          return `### Comment ${i + 1}\nOn this text:\n\`\`\`\n${c.selection}\n\`\`\`\nFeedback: ${c.comment}`
-        }
-        return `### Comment ${i + 1}\nGeneral feedback: ${c.comment}`
-      })
+      // Structured payload — the LLM gets line/col + a 20-char window
+      // of surrounding source for every comment, so repeating anchors
+      // are unambiguous and the model can verify it's editing the
+      // right span.
+      const feedback = formatCommentsMessage(path, comments, content)
       const prompt =
         `Please edit \`${path}\` in place per the inline comments below.\n` +
         `Make the smallest set of changes needed; preserve unrelated sections.\n` +
         `After editing, briefly summarise what you changed.\n\n` +
-        blocks.join('\n\n')
+        feedback
       const res = await api.sendMessage(sessionId, prompt)
       if (!res.ok) {
         const txt = await res.text().catch(() => '')
@@ -211,7 +279,7 @@ function CommentableSurface({
     }
   }
 
-  const railOpen = comments.length > 0 || !!draftSelection
+  const railOpen = comments.length > 0 || !!draftAnchor
 
   return (
     <div className="flex h-full">
@@ -224,7 +292,8 @@ function CommentableSurface({
       {enabled && railOpen && (
         <CommentRail
           comments={comments}
-          draftSelection={draftSelection}
+          draftAnchor={draftAnchor}
+          draftCoord={draftCoord}
           draftText={draftText}
           setDraftText={setDraftText}
           addComment={addComment}
@@ -241,7 +310,8 @@ function CommentableSurface({
 
 function CommentRail({
   comments,
-  draftSelection,
+  draftAnchor,
+  draftCoord,
   draftText,
   setDraftText,
   addComment,
@@ -251,13 +321,14 @@ function CommentRail({
   sending,
   sendErr,
 }: {
-  comments: PendingComment[]
-  draftSelection: string
+  comments: InlineComment[]
+  draftAnchor: string
+  draftCoord: { line?: number; column?: number }
   draftText: string
   setDraftText: (s: string) => void
   addComment: () => void
   cancelDraft: () => void
-  removeComment: (id: number) => void
+  removeComment: (id: string) => void
   sendAll: () => void
   sending: boolean
   sendErr: string | null
@@ -268,11 +339,19 @@ function CommentRail({
         <span className="text-[11px] font-semibold text-[var(--text)]">Comments</span>
         <span className="text-[10px] text-[var(--muted)] font-mono">{comments.length}</span>
       </div>
-      {draftSelection && (
+      {draftAnchor && (
         <div className="border-b border-[var(--border)] p-3 flex flex-col gap-2 bg-[var(--bg)]">
-          <div className="text-[10px] uppercase tracking-wider text-[var(--muted)]">On selection</div>
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-[var(--muted)]">On selection</span>
+            {draftCoord.line != null && (
+              <span className="text-[10px] font-mono text-[var(--cedar-glow)]">
+                L{draftCoord.line}
+                {draftCoord.column != null ? `:${draftCoord.column}` : ''}
+              </span>
+            )}
+          </div>
           <pre className="text-[11px] font-mono text-[var(--muted)] bg-[var(--surface)] rounded p-2 whitespace-pre-wrap max-h-[80px] overflow-y-auto border border-[var(--border)]">
-            {draftSelection.length > 200 ? draftSelection.slice(0, 200) + '…' : draftSelection}
+            {draftAnchor.length > 200 ? draftAnchor.slice(0, 200) + '…' : draftAnchor}
           </pre>
           <textarea
             autoFocus
@@ -301,7 +380,7 @@ function CommentRail({
         </div>
       )}
       <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2">
-        {comments.length === 0 && !draftSelection && (
+        {comments.length === 0 && !draftAnchor && (
           <div className="text-[11px] text-[var(--muted)]/60 italic text-center py-8">
             Highlight text in the file to leave a comment.
           </div>
@@ -309,9 +388,17 @@ function CommentRail({
         {comments.map((c) => (
           <div key={c.id} className="border border-[var(--border)] rounded p-2 bg-[var(--bg)]">
             <div className="flex items-start justify-between gap-2 mb-1">
-              <pre className="flex-1 text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap max-h-[60px] overflow-hidden break-words">
-                {c.selection.length > 80 ? c.selection.slice(0, 80) + '…' : c.selection}
-              </pre>
+              <div className="flex-1 min-w-0">
+                {c.line != null && (
+                  <div className="text-[10px] font-mono text-[var(--cedar-glow)] mb-0.5">
+                    L{c.line}
+                    {c.column != null ? `:${c.column}` : ''}
+                  </div>
+                )}
+                <pre className="text-[10px] font-mono text-[var(--muted)] whitespace-pre-wrap max-h-[60px] overflow-hidden break-words">
+                  {c.anchor.length > 80 ? c.anchor.slice(0, 80) + '…' : c.anchor}
+                </pre>
+              </div>
               <button
                 onClick={() => removeComment(c.id)}
                 className="text-[var(--muted)] hover:text-red-400 shrink-0"
@@ -319,7 +406,7 @@ function CommentRail({
                 <X size={11} />
               </button>
             </div>
-            <div className="text-[12px] text-[var(--text)]">{c.comment}</div>
+            <div className="text-[12px] text-[var(--text)]">{c.text}</div>
           </div>
         ))}
       </div>
@@ -484,6 +571,8 @@ function MarkdownView({
       sessionId={sessionId ?? null}
       onSent={onSent}
       enabled={enabled}
+      content={content}
+      isMarkdown={mode === 'rendered'}
     >
       {/* Mode toggle */}
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 border-b border-[var(--border)] bg-[var(--surface)]/60">
@@ -520,7 +609,7 @@ function MarkdownView({
       <div className="flex-1 overflow-auto">
         {mode === 'rendered' ? (
           <div ref={surfaceRef} className="p-4">
-            <CedarMarkdown text={content} />
+            <CedarMarkdown text={content} sourcePos />
           </div>
         ) : (
           <pre className="p-4 text-[12px] font-mono text-[var(--text)] whitespace-pre-wrap break-words">

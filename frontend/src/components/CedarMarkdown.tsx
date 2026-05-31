@@ -13,6 +13,36 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import "highlight.js/styles/atom-one-dark.css";
 
+// Copy HAST `position` onto a `data-sourcepos="L:C-L:C"` HTML attribute
+// so a DOM Range can be mapped back to a source line/column. Gated by
+// the `sourcePos` prop — only used by the inline-comment file viewer
+// pathway; chat / channel renders don't need the extra attribute spam.
+function rehypeSourcepos() {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (tree: any) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const walk = (node: any) => {
+      if (node && node.type === "element" && node.position && node.position.start) {
+        const s = node.position.start;
+        const e = node.position.end || s;
+        node.properties = node.properties || {};
+        node.properties["data-sourcepos"] = `${s.line}:${s.column}-${e.line}:${e.column}`;
+      }
+      if (node && node.children) for (const c of node.children) walk(c);
+    };
+    walk(tree);
+  };
+}
+
+// Pluck the data-sourcepos attribute out of an override's props so we
+// can spread it onto the rendered element without listing every other
+// HTMLAttribute by hand.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const sp = (p: any) => {
+  const v = p && p["data-sourcepos"];
+  return v ? { "data-sourcepos": v } : {};
+};
+
 // remark plugin: split text nodes on @mentions of known names and
 // replace each match with a synthetic `link` node carrying an
 // `#arz-mention:<name>` href. The `a` component override below
@@ -90,15 +120,23 @@ export function CedarMarkdown({
   text,
   onTaskToggle,
   mentions,
+  sourcePos,
 }: {
   text: string;
   onTaskToggle?: (lineIdx: number, checked: boolean) => void;
   /** Member agent names whose @mentions should be highlighted inline. */
   mentions?: string[];
+  /** When true, attach a rehype plugin that copies HAST positions onto a
+   *  `data-sourcepos` attribute on every element. Required by the
+   *  FileViewer inline-comment pathway so a DOM selection can map back
+   *  to a source line/column. Off by default — adds attribute spam to
+   *  every chat render otherwise. */
+  sourcePos?: boolean;
 }) {
   const components = useMemo(
     () => ({
-      code({ className, children, ...props }: { inline?: boolean; className?: string; children?: React.ReactNode }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      code({ className, children, ...props }: any) {
         const inline = !className;
         if (inline) {
           return (
@@ -112,21 +150,23 @@ export function CedarMarkdown({
                 padding: "0.05em 0.35em",
                 color: "var(--cedar-glow)",
               }}
-              {...props}
+              {...sp(props)}
             >
               {children}
             </code>
           );
         }
         return (
-          <code className={className} {...props}>
+          <code className={className} {...sp(props)}>
             {children}
           </code>
         );
       },
-      pre({ children }: { children?: React.ReactNode }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      pre({ children, ...props }: any) {
         return (
           <pre
+            {...sp(props)}
             style={{
               background: "var(--bg)",
               border: "1px solid var(--border)",
@@ -175,10 +215,12 @@ export function CedarMarkdown({
           </a>
         );
       },
-      ul({ children, className }: { children?: React.ReactNode; className?: string }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ul({ children, className, ...rest }: any) {
         const isTaskList = className?.includes("contains-task-list");
         return (
           <ul
+            {...sp(rest)}
             style={{
               paddingLeft: isTaskList ? 0 : "1.4em",
               margin: "6px 0",
@@ -189,13 +231,20 @@ export function CedarMarkdown({
           </ul>
         );
       },
-      ol({ children }: { children?: React.ReactNode }) {
-        return <ol style={{ paddingLeft: "1.4em", margin: "6px 0" }}>{children}</ol>;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ol({ children, ...rest }: any) {
+        return (
+          <ol {...sp(rest)} style={{ paddingLeft: "1.4em", margin: "6px 0" }}>
+            {children}
+          </ol>
+        );
       },
-      li({ children, className, ...rest }: { children?: React.ReactNode; className?: string }) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      li({ children, className, ...rest }: any) {
         const isTask = className?.includes("task-list-item");
         return (
           <li
+            {...sp(rest)}
             className={className}
             style={{
               margin: "3px 0",
@@ -205,7 +254,6 @@ export function CedarMarkdown({
               alignItems: isTask ? "flex-start" : undefined,
               gap: isTask ? 8 : undefined,
             }}
-            {...rest}
           >
             {children}
           </li>
@@ -227,20 +275,26 @@ export function CedarMarkdown({
           />
         );
       },
-      h1: (p: { children?: React.ReactNode }) => (
-        <h1 style={{ fontFamily: "var(--fd)", fontSize: 22, margin: "12px 0 8px", color: "var(--text)" }}>{p.children}</h1>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      h1: (p: any) => (
+        <h1 {...sp(p)} style={{ fontFamily: "var(--fd)", fontSize: 22, margin: "12px 0 8px", color: "var(--text)" }}>{p.children}</h1>
       ),
-      h2: (p: { children?: React.ReactNode }) => (
-        <h2 style={{ fontFamily: "var(--fd)", fontSize: 18, margin: "10px 0 6px", color: "var(--text)" }}>{p.children}</h2>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      h2: (p: any) => (
+        <h2 {...sp(p)} style={{ fontFamily: "var(--fd)", fontSize: 18, margin: "10px 0 6px", color: "var(--text)" }}>{p.children}</h2>
       ),
-      h3: (p: { children?: React.ReactNode }) => (
-        <h3 style={{ fontSize: 14.5, fontWeight: 600, margin: "8px 0 4px", color: "var(--text)" }}>{p.children}</h3>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      h3: (p: any) => (
+        <h3 {...sp(p)} style={{ fontSize: 14.5, fontWeight: 600, margin: "8px 0 4px", color: "var(--text)" }}>{p.children}</h3>
       ),
-      p: (p: { children?: React.ReactNode }) => (
-        <p style={{ margin: "6px 0", lineHeight: 1.6, color: "var(--text)" }}>{p.children}</p>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      p: (p: any) => (
+        <p {...sp(p)} style={{ margin: "6px 0", lineHeight: 1.6, color: "var(--text)" }}>{p.children}</p>
       ),
-      blockquote: (p: { children?: React.ReactNode }) => (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      blockquote: (p: any) => (
         <blockquote
+          {...sp(p)}
           style={{
             margin: "8px 0",
             padding: "6px 12px",
@@ -252,13 +306,16 @@ export function CedarMarkdown({
           {p.children}
         </blockquote>
       ),
-      table: (p: { children?: React.ReactNode }) => (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      table: (p: any) => (
         <div style={{ overflowX: "auto", margin: "8px 0" }}>
-          <table style={{ borderCollapse: "collapse", fontSize: 12.5, width: "100%" }}>{p.children}</table>
+          <table {...sp(p)} style={{ borderCollapse: "collapse", fontSize: 12.5, width: "100%" }}>{p.children}</table>
         </div>
       ),
-      th: (p: { children?: React.ReactNode }) => (
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      th: (p: any) => (
         <th
+          {...sp(p)}
           style={{
             border: "1px solid var(--border)",
             padding: "6px 10px",
@@ -270,8 +327,9 @@ export function CedarMarkdown({
           {p.children}
         </th>
       ),
-      td: (p: { children?: React.ReactNode }) => (
-        <td style={{ border: "1px solid var(--border)", padding: "6px 10px", color: "var(--text)" }}>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      td: (p: any) => (
+        <td {...sp(p)} style={{ border: "1px solid var(--border)", padding: "6px 10px", color: "var(--text)" }}>
           {p.children}
         </td>
       ),
@@ -295,7 +353,7 @@ export function CedarMarkdown({
             ? [remarkGfm, remarkMentions(mentions)]
             : [remarkGfm]
         }
-        rehypePlugins={[rehypeHighlight]}
+        rehypePlugins={sourcePos ? [rehypeHighlight, rehypeSourcepos] : [rehypeHighlight]}
         components={components as never}
       >
         {text}
