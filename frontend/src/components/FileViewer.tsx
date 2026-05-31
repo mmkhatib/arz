@@ -17,6 +17,7 @@ import {
   setCommentsForFile,
 } from '@/utils/commentDrafts'
 import { formatCommentsMessage } from '@/utils/formatCommentsMessage'
+import { useFileWatch } from '@/hooks/useFileWatch'
 
 /* ── File type detection ── */
 type FileType = 'image' | 'csv' | 'json' | 'html' | 'markdown' | 'code' | 'binary'
@@ -815,19 +816,15 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
     load()
   }, [path])
 
-  // Live refresh: while a markdown file is open, poll every 3s so
-  // comment-driven edits show up without the user clicking refresh.
-  useEffect(() => {
-    if (type !== 'markdown') return
-    const id = window.setInterval(() => {
-      if (document.hidden) return
-      api
-        .readFile(path)
-        .then((r) => setContent((cur) => (cur === r.content ? cur : r.content)))
-        .catch(() => {})
-    }, 3000)
-    return () => window.clearInterval(id)
-  }, [path, type])
+  // Live reload via SSE. Backend polls mtime once per second and pushes
+  // the new content only when it changes — much cheaper than the
+  // 3-second whole-file poll this replaces. Pauses for binary/image
+  // types (nothing to watch) and could be extended to pause for dirty
+  // Monaco buffers once edit mode lands.
+  const watchEnabled = type !== 'binary' && type !== 'image'
+  const { status: watchStatus } = useFileWatch(watchEnabled ? path : null, watchEnabled, (next) => {
+    setContent((cur) => (cur === next ? cur : next))
+  })
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -871,6 +868,31 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
         >
           {copied ? 'Copied!' : <Copy size={11} />}
         </button>
+      )}
+      {watchEnabled && (
+        <span
+          title={
+            watchStatus === 'open'
+              ? 'Live: watching for external changes'
+              : watchStatus === 'connecting'
+              ? 'Connecting…'
+              : watchStatus === 'error'
+              ? 'Live reload offline — refresh manually'
+              : 'Idle'
+          }
+          className="shrink-0 inline-block w-1.5 h-1.5 rounded-full"
+          style={{
+            background:
+              watchStatus === 'open'
+                ? '#34d399'
+                : watchStatus === 'connecting'
+                ? '#fbbf24'
+                : watchStatus === 'error'
+                ? '#f87171'
+                : 'var(--muted)',
+            animation: watchStatus === 'open' ? 'arz-pulse 2s ease-in-out infinite' : undefined,
+          }}
+        />
       )}
       <button
         onClick={handleRefresh}

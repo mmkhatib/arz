@@ -1110,6 +1110,13 @@ export const api = {
     );
   },
 
+  async writeFile(path: string, content: string): Promise<{ path: string; size: number }> {
+    return request<{ path: string; size: number }>("/files/write", {
+      method: "POST",
+      body: JSON.stringify({ path, content }),
+    });
+  },
+
   revealPath: (path: string) =>
     request<{ opened: string }>("/files/reveal", {
       method: "POST",

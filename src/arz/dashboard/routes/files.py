@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from arz.dashboard.token_auth import require_token
@@ -106,6 +110,121 @@ async def read_file(path: str = Query(...)) -> dict:
         "name": p.name,
         "size": size,
     }
+
+
+_WATCH_POLL_S = 1.0
+_WATCH_MAX_BYTES = _MAX_BYTES
+
+
+@router.get("/api/files/watch")
+async def watch_file(path: str = Query(...)) -> StreamingResponse:
+    """SSE stream that re-emits the file's contents whenever its mtime
+    changes. Powers the FileViewer live-reload: user can run a tool
+    that rewrites the file and watch the panel update without
+    refreshing.
+
+    Symlink discipline: snapshot the resolved target on connect and
+    re-check on every tick. If the symlink swaps after we validated
+    the path, bail rather than serving content from an unexpected
+    file (TOCTOU defense).
+    """
+    if not os.path.isabs(path):
+        raise HTTPException(status_code=400, detail="path must be absolute")
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail="file not found")
+
+    async def stream() -> AsyncIterator[bytes]:
+        try:
+            initial_resolved = await asyncio.to_thread(os.path.realpath, str(p))
+        except OSError:
+            return
+        last_mtime = 0.0
+        last_content: str | None = None
+        # Emit a hello so the client can flip its status to "connected".
+        yield b"event: open\ndata: {}\n\n"
+
+        while True:
+            try:
+                stat = await asyncio.to_thread(os.stat, str(p))
+            except FileNotFoundError:
+                await asyncio.sleep(_WATCH_POLL_S)
+                continue
+            except OSError:
+                return
+            if stat.st_mtime != last_mtime:
+                last_mtime = stat.st_mtime
+                # Re-validate target — symlink swap defense.
+                try:
+                    current = await asyncio.to_thread(os.path.realpath, str(p))
+                except OSError:
+                    return
+                if current != initial_resolved:
+                    return
+                if stat.st_size > _WATCH_MAX_BYTES:
+                    # File too big to ship — emit a truncate hint so the
+                    # client can drop back to manual refresh.
+                    yield (
+                        f"event: truncated\ndata: {json.dumps({'size': stat.st_size})}\n\n"
+                    ).encode()
+                else:
+                    try:
+                        content = await asyncio.to_thread(_read_text, current, _WATCH_MAX_BYTES)
+                    except OSError:
+                        await asyncio.sleep(_WATCH_POLL_S)
+                        continue
+                    if content != last_content:
+                        last_content = content
+                        payload = json.dumps({"content": content, "mtime": stat.st_mtime})
+                        yield f"data: {payload}\n\n".encode()
+            # Heartbeat comment keeps the connection alive through
+            # idle proxies even when no change has fired.
+            else:
+                yield b": tick\n\n"
+            await asyncio.sleep(_WATCH_POLL_S)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _read_text(path: str, cap: int) -> str:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        return f.read(cap)
+
+
+class WriteBody(BaseModel):
+    path: str
+    content: str
+
+
+@router.post("/api/files/write")
+async def write_file(body: WriteBody) -> dict:
+    """Overwrite a file in place. Used by the FileViewer's Monaco
+    edit-and-save flow. Refuses non-absolute paths + enforces the
+    same 2MB cap as read.
+    """
+    raw = (body.path or "").strip()
+    if not raw or not os.path.isabs(raw):
+        raise HTTPException(status_code=422, detail="path must be absolute")
+    if len(body.content.encode("utf-8")) > _MAX_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"content too large (max {_MAX_BYTES} bytes)",
+        )
+    p = Path(raw)
+    if not p.parent.exists():
+        raise HTTPException(status_code=404, detail="parent directory not found")
+    try:
+        p.write_text(body.content, encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"write failed: {exc}") from exc
+    return {"path": str(p), "size": p.stat().st_size}
 
 
 @router.post("/api/files/edit")
