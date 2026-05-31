@@ -15,6 +15,7 @@ import { segmentMessage } from "@/utils/segments";
 import Widget from "./Widget";
 import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
 import GoalModal from "./GoalModal";
+import { saveDraft } from "@/utils/draftStorage";
 import { useDialog } from "@/components/Dialog";
 
 /* Preserved for revert: original three-dot bouncer. Was the only
@@ -1570,10 +1571,9 @@ export default function ChatPanel({
             onAgentChange={handleAgentChange}
             onPickSuggestion={(text) => {
               // Seed the composer draft + nudge focus. InputBar reads
-              // arz:draft:<sessionId> on focusSignal change.
-              try {
-                if (sessionId) localStorage.setItem(`arz:draft:${sessionId}`, text);
-              } catch { /* localStorage full / quota */ }
+              // the saved draft on focusSignal change. saveDraft handles
+              // quota-exceeded by evicting oldest drafts and retrying.
+              if (sessionId) saveDraft(sessionId, text);
               bumpFocusSignal();
             }}
           />

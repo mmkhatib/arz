@@ -19,6 +19,7 @@ import { api } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
+import { loadDraft, saveDraft } from "@/utils/draftStorage";
 import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
 
 export type ApprovalMode = "normal" | "trust_reads" | "trust" | "yolo";
@@ -158,27 +159,22 @@ export default function InputBar({
     setPendingFiles((prev) => prev.filter((f) => f.path !== path));
   };
 
-  const _draftStorageKey = draftKey ? `arz:draft:${draftKey}` : null;
-  const [value, setValue] = useState<string>(() => {
-    if (!_draftStorageKey) return "";
-    try { return localStorage.getItem(_draftStorageKey) ?? ""; } catch { return ""; }
-  });
+  const [value, setValue] = useState<string>(() => (draftKey ? loadDraft(draftKey) : ""));
 
   // Re-hydrate when the active session changes (key swap).
   useEffect(() => {
-    if (!_draftStorageKey) { setValue(""); return; }
-    try { setValue(localStorage.getItem(_draftStorageKey) ?? ""); } catch { setValue(""); }
+    setValue(draftKey ? loadDraft(draftKey) : "");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
-  // Persist on every keystroke (light-write; localStorage handles fine).
+  // Persist on every keystroke. saveDraft() handles quota-exceeded by
+  // evicting oldest drafts and retrying — and only back-syncs the LRU
+  // sidecar after a SUCCESSFUL setItem, so a failed save can't silently
+  // drop the in-memory draft.
   useEffect(() => {
-    if (!_draftStorageKey) return;
-    try {
-      if (value) localStorage.setItem(_draftStorageKey, value);
-      else localStorage.removeItem(_draftStorageKey);
-    } catch {}
-  }, [value, _draftStorageKey]);
+    if (!draftKey) return;
+    saveDraft(draftKey, value);
+  }, [value, draftKey]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
@@ -198,11 +194,9 @@ export default function InputBar({
     // Re-read draft on focus bump too — lets parent components (e.g.
     // suggestion-pill click) seed the composer by writing to
     // localStorage and bumping focusSignal.
-    if (_draftStorageKey) {
-      try {
-        const fresh = localStorage.getItem(_draftStorageKey) ?? "";
-        if (fresh && fresh !== value) setValue(fresh);
-      } catch { /* ignore */ }
+    if (draftKey) {
+      const fresh = loadDraft(draftKey);
+      if (fresh && fresh !== value) setValue(fresh);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, isRunning, focusSignal]);
