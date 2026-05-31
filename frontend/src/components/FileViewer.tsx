@@ -18,6 +18,7 @@ import {
 } from '@/utils/commentDrafts'
 import { formatCommentsMessage } from '@/utils/formatCommentsMessage'
 import { useFileWatch } from '@/hooks/useFileWatch'
+import { MarkdownToc } from './MarkdownToc'
 
 /* ── File type detection ── */
 type FileType = 'image' | 'csv' | 'json' | 'html' | 'markdown' | 'code' | 'binary'
@@ -563,6 +564,7 @@ function MarkdownView({
 }) {
   const [mode, setMode] = useState<'rendered' | 'raw'>('rendered')
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
   const enabled = !!sessionId && mode === 'rendered'
 
   return (
@@ -607,16 +609,19 @@ function MarkdownView({
           </span>
         )}
       </div>
-      <div className="flex-1 overflow-auto">
-        {mode === 'rendered' ? (
-          <div ref={surfaceRef} className="p-4">
-            <CedarMarkdown text={content} sourcePos />
-          </div>
-        ) : (
-          <pre className="p-4 text-[12px] font-mono text-[var(--text)] whitespace-pre-wrap break-words">
-            {content}
-          </pre>
-        )}
+      <div className="flex-1 flex min-h-0">
+        {mode === 'rendered' && <MarkdownToc surfaceRef={surfaceRef} scrollRoot={scrollRef} />}
+        <div ref={scrollRef} className="flex-1 overflow-auto">
+          {mode === 'rendered' ? (
+            <div ref={surfaceRef} className="p-4">
+              <CedarMarkdown text={content} sourcePos />
+            </div>
+          ) : (
+            <pre className="p-4 text-[12px] font-mono text-[var(--text)] whitespace-pre-wrap break-words">
+              {content}
+            </pre>
+          )}
+        </div>
       </div>
     </CommentableSurface>
   )
