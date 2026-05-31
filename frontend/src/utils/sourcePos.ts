@@ -56,16 +56,20 @@ export function resolveSourcePos(
   const eLine = parseInt(m[3], 10) + lineOffset;
   const eCol = parseInt(m[4], 10);
 
-  // Rendered-text offset from element start to selection start.
-  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+  // Rendered-text offset from element start to selection start. Use a
+  // Range that spans [el start, selection start] and read its
+  // .toString().length — more reliable than walking descendant text
+  // nodes (happy-dom's TreeWalker, for instance, skips nested text
+  // under inline elements like <strong>).
   let offset = 0;
-  let node: Node | null;
-  while ((node = walker.nextNode())) {
-    if (node === range.startContainer) {
-      offset += range.startOffset;
-      break;
-    }
-    offset += (node as Text).data.length;
+  try {
+    const r = el.ownerDocument!.createRange();
+    r.setStart(el, 0);
+    r.setEnd(range.startContainer, range.startOffset);
+    offset = r.toString().length;
+  } catch {
+    // Range API failure (cross-document or detached node) — keep
+    // offset at 0 and let the caller align to the span start.
   }
 
   // Extract the source span this element covers.

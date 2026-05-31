@@ -38,6 +38,13 @@ step "pytest"
 uv run pytest -q || fail "tests failed"
 ok "tests pass"
 
+# Frontend vitest — only if any test files exist + node_modules is set up.
+if [ -d "frontend/src/test" ] && [ -x "frontend/node_modules/.bin/vitest" ]; then
+  step "frontend vitest"
+  (cd frontend && ./node_modules/.bin/vitest run > /dev/null 2>&1) || fail "frontend tests failed"
+  ok "frontend tests pass"
+fi
+
 # Frontend: rebuild only if any frontend source is newer than the bundled
 # index.html. Vite writes straight to src/arz/static/ so the gateway picks
 # up the new bundle on next start. Caught us multiple times — UI changes
