@@ -4,7 +4,7 @@
  */
 import { memo, useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Copy, ChevronRight, ChevronDown, RefreshCw, Maximize2, Minimize2 } from 'lucide-react'
+import { X, Copy, ChevronRight, ChevronDown, RefreshCw, Maximize2, Minimize2, Pencil, Save } from 'lucide-react'
 import { api } from '@/api/client'
 import { highlight, langForPath } from '@/utils/hljs'
 import { CedarMarkdown } from './CedarMarkdown'
@@ -19,6 +19,7 @@ import {
 import { formatCommentsMessage } from '@/utils/formatCommentsMessage'
 import { useFileWatch } from '@/hooks/useFileWatch'
 import { MarkdownToc } from './MarkdownToc'
+import { FileEditor } from './FileEditor'
 
 /* ── File type detection ── */
 type FileType = 'image' | 'csv' | 'json' | 'html' | 'markdown' | 'code' | 'binary'
@@ -735,6 +736,14 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   const [copied, setCopied] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [fullscreen, setFullscreen] = useState(false)
+  // Edit mode — Monaco lazy-loads when entered. `editBuffer` is null
+  // when not editing; non-null = active edit session whose dirty flag
+  // is buffer !== content.
+  const [editBuffer, setEditBuffer] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [saveErr, setSaveErr] = useState<string | null>(null)
+  const editing = editBuffer !== null
+  const dirty = editing && editBuffer !== content
   const overlayRef = useRef<HTMLDivElement | null>(null)
   const bodyRef = useRef<HTMLDivElement | null>(null)
 
@@ -826,7 +835,9 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   // 3-second whole-file poll this replaces. Pauses for binary/image
   // types (nothing to watch) and could be extended to pause for dirty
   // Monaco buffers once edit mode lands.
-  const watchEnabled = type !== 'binary' && type !== 'image'
+  // Pause watch while an edit buffer is dirty so an external rewrite
+  // can't clobber the user's in-progress changes.
+  const watchEnabled = type !== 'binary' && type !== 'image' && !editing
   const { status: watchStatus } = useFileWatch(watchEnabled ? path : null, watchEnabled, (next) => {
     setContent((cur) => (cur === next ? cur : next))
   })
@@ -835,6 +846,45 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
     setRefreshing(true)
     await load()
     setRefreshing(false)
+  }
+
+  const enterEdit = () => {
+    if (type === 'binary' || type === 'image' || content == null) return
+    setEditBuffer(content)
+    setSaveErr(null)
+  }
+
+  const exitEdit = (force = false) => {
+    if (dirty && !force) {
+      const ok = window.confirm("Discard unsaved changes?")
+      if (!ok) return
+    }
+    setEditBuffer(null)
+    setSaveErr(null)
+  }
+
+  const handleSave = useCallback(async () => {
+    if (editBuffer == null || saving) return
+    setSaving(true)
+    setSaveErr(null)
+    try {
+      await api.writeFile(path, editBuffer)
+      // Adopt the saved buffer as the new content so dirty resets.
+      setContent(editBuffer)
+    } catch (e: unknown) {
+      setSaveErr(e instanceof Error ? e.message : 'Save failed')
+    } finally {
+      setSaving(false)
+    }
+  }, [editBuffer, saving, path])
+
+  // Refuse to close while dirty without confirmation.
+  const guardedClose = () => {
+    if (dirty) {
+      const ok = window.confirm("Discard unsaved changes and close?")
+      if (!ok) return
+    }
+    onClose()
   }
 
   const copy = async () => {
@@ -849,14 +899,30 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   // double-instantiate.
   const renderBody = () => (
     <div ref={bodyRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
-      <FileBody
-        path={path}
-        content={content}
-        loading={loading}
-        error={error}
-        sessionId={sessionId ?? null}
-        onSent={() => { void load() }}
-      />
+      {editing ? (
+        <>
+          {saveErr && (
+            <div className="text-[10px] text-red-300 bg-red-900/30 border-b border-red-900/50 px-3 py-1">
+              {saveErr}
+            </div>
+          )}
+          <FileEditor
+            value={editBuffer ?? ''}
+            language={langForPath(path)}
+            onChange={setEditBuffer}
+            onSave={handleSave}
+          />
+        </>
+      ) : (
+        <FileBody
+          path={path}
+          content={content}
+          loading={loading}
+          error={error}
+          sessionId={sessionId ?? null}
+          onSent={() => { void load() }}
+        />
+      )}
     </div>
   )
 
@@ -899,9 +965,46 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
           }}
         />
       )}
+      {dirty && (
+        <span
+          className="text-[10px] text-amber-400 font-mono shrink-0"
+          title="Unsaved changes"
+        >
+          •
+        </span>
+      )}
+      {editing ? (
+        <>
+          <button
+            onClick={handleSave}
+            disabled={saving || !dirty}
+            className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)] hover:bg-[var(--s2)] shrink-0 disabled:opacity-40"
+            title="Save (⌘S)"
+          >
+            <Save size={11} />
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={() => exitEdit()}
+            className="text-[10px] text-[var(--muted)] hover:text-[var(--text)] shrink-0"
+            title="Exit edit mode"
+          >
+            Done
+          </button>
+        </>
+      ) : (
+        <button
+          onClick={enterEdit}
+          disabled={type === 'binary' || type === 'image' || content == null}
+          className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 disabled:opacity-30 transition-colors"
+          title="Edit"
+        >
+          <Pencil size={12} />
+        </button>
+      )}
       <button
         onClick={handleRefresh}
-        disabled={refreshing || type === 'binary' || type === 'image'}
+        disabled={refreshing || type === 'binary' || type === 'image' || editing}
         className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 disabled:opacity-30 transition-colors"
         title="Refresh"
       >
@@ -914,7 +1017,7 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
       >
         {isFs ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
       </button>
-      <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors">
+      <button onClick={guardedClose} className="text-[var(--muted)] hover:text-[var(--text)] shrink-0 transition-colors">
         <X size={14} />
       </button>
     </div>
