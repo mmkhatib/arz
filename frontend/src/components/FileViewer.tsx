@@ -742,6 +742,11 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   const [editBuffer, setEditBuffer] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState<string | null>(null)
+  // "history" = file isn't on this machine's disk; backend recovered
+  // the content from a Write/Edit tool_call in the session log. Lets
+  // us surface a banner so the user knows the panel won't reflect any
+  // post-tool-call edits made on the originating machine.
+  const [contentSource, setContentSource] = useState<'disk' | 'history' | null>(null)
   const editing = editBuffer !== null
   const dirty = editing && editBuffer !== content
   const overlayRef = useRef<HTMLDivElement | null>(null)
@@ -816,8 +821,9 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   const load = async () => {
     setLoading(true); setError(null)
     try {
-      const r = await api.readFile(path)
+      const r = await api.readFile(path, sessionId)
       setContent(r.content)
+      setContentSource(r.source ?? 'disk')
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to read file')
     } finally {
@@ -835,9 +841,11 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   // 3-second whole-file poll this replaces. Pauses for binary/image
   // types (nothing to watch) and could be extended to pause for dirty
   // Monaco buffers once edit mode lands.
-  // Pause watch while an edit buffer is dirty so an external rewrite
-  // can't clobber the user's in-progress changes.
-  const watchEnabled = type !== 'binary' && type !== 'image' && !editing
+  // Pause watch while an edit buffer is dirty (so an external rewrite
+  // can't clobber unsaved changes) AND while content was recovered
+  // from chat history (no file to watch on this machine's disk).
+  const watchEnabled =
+    type !== 'binary' && type !== 'image' && !editing && contentSource !== 'history'
   const { status: watchStatus } = useFileWatch(watchEnabled ? path : null, watchEnabled, (next) => {
     setContent((cur) => (cur === next ? cur : next))
   })
@@ -871,6 +879,10 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
       await api.writeFile(path, editBuffer)
       // Adopt the saved buffer as the new content so dirty resets.
       setContent(editBuffer)
+      // First save of a history-recovered file materialized it on disk
+      // (write_file auto-mkdirs the parent), so future reads + live
+      // watch should treat it as a real on-disk file.
+      setContentSource('disk')
     } catch (e: unknown) {
       setSaveErr(e instanceof Error ? e.message : 'Save failed')
     } finally {
@@ -899,6 +911,15 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
   // double-instantiate.
   const renderBody = () => (
     <div ref={bodyRef} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+      {contentSource === 'history' && !editing && (
+        <div
+          className="px-3 py-1.5 border-b border-amber-500/30 bg-amber-500/10 text-amber-200"
+          style={{ fontSize: 11, fontFamily: 'var(--fm, ui-monospace, monospace)' }}
+          title="The file isn't present on this machine's disk. Content shown was captured from a Write/Edit tool call in this session's history. Save once to materialise the file locally."
+        >
+          ⓘ Loaded from chat history — file not on disk on this machine. Edit + Save will create it here.
+        </div>
+      )}
       {editing ? (
         <>
           {saveErr && (

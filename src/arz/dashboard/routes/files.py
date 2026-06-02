@@ -84,32 +84,109 @@ def _ensure_unique(target_dir: Path, name: str) -> Path:
 
 
 @router.get("/api/files/read")
-async def read_file(path: str = Query(...)) -> dict:
-    """Return the content of a local file as a JSON payload."""
+async def read_file(
+    request: Request,
+    path: str = Query(...),
+    session_id: str | None = Query(None),
+) -> dict:
+    """Return the content of a local file as a JSON payload.
+
+    Cross-machine fallback: when the file isn't on the local disk but
+    ``session_id`` is provided, scan that session's message history for
+    a Write/Edit tool_call against the same path and return its
+    captured content. Lets users re-open a file generated on another
+    machine when only the session record (not the workspace) synced.
+    Response carries ``source: "history"`` so the client can label it.
+    """
     if not os.path.isabs(path):
         raise HTTPException(status_code=400, detail="path must be absolute")
 
     p = Path(path)
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="File not found")
-    if not p.is_file():
-        raise HTTPException(status_code=404, detail="Not a file")
+    if p.exists() and p.is_file():
+        size = p.stat().st_size
+        if size > _MAX_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large ({size} bytes, max 2 MB)",
+            )
+        try:
+            content = p.read_text(errors="replace")
+        except OSError as exc:
+            raise HTTPException(status_code=404, detail=f"Cannot read file: {exc}") from exc
+        return {
+            "content": content,
+            "path": str(p),
+            "name": p.name,
+            "size": size,
+            "source": "disk",
+        }
 
-    size = p.stat().st_size
-    if size > _MAX_BYTES:
-        raise HTTPException(status_code=413, detail=f"File too large ({size} bytes, max 2 MB)")
+    # Disk miss — try chat history before giving up.
+    if session_id:
+        recovered = _recover_from_history(request, session_id, path)
+        if recovered is not None:
+            return {
+                "content": recovered,
+                "path": str(p),
+                "name": p.name,
+                "size": len(recovered.encode("utf-8")),
+                "source": "history",
+            }
 
-    try:
-        content = p.read_text(errors="replace")
-    except OSError as exc:
-        raise HTTPException(status_code=404, detail=f"Cannot read file: {exc}") from exc
+    raise HTTPException(status_code=404, detail="File not found")
 
-    return {
-        "content": content,
-        "path": str(p),
-        "name": p.name,
-        "size": size,
-    }
+
+def _recover_from_history(request: Request, session_id: str, path: str) -> str | None:
+    """Walk the session's assistant turns for the most recent Write /
+    Edit / MultiEdit / Create tool_call whose input targets *path* and
+    return whatever content was captured. Returns None when nothing
+    matches.
+
+    The writer captures tool calls with a stringified JSON ``input``
+    (see chat.py turn_tool_calls accumulator); we parse leniently and
+    accept any of: ``content``, ``new_string``, ``text`` as the body.
+    """
+    mgr = getattr(request.app.state, "session_manager", None)
+    if mgr is None:
+        return None
+    session = mgr.get(session_id)
+    if session is None:
+        return None
+
+    artifact_tools = {"Write", "Edit", "MultiEdit", "Create", "fs_write", "fs_edit", "fs_create"}
+    target = os.path.normpath(path)
+
+    # Walk newest first so the latest write wins.
+    for msg in reversed(getattr(session, "messages", []) or []):
+        calls = getattr(msg, "tool_calls", None) or []
+        for call in reversed(calls):
+            if not isinstance(call, dict):
+                continue
+            name = call.get("name") or ""
+            if name not in artifact_tools:
+                continue
+            raw_input = call.get("input")
+            parsed: dict | None = None
+            if isinstance(raw_input, dict):
+                parsed = raw_input
+            elif isinstance(raw_input, str):
+                try:
+                    parsed = json.loads(raw_input)
+                except (ValueError, TypeError):
+                    parsed = None
+            if not isinstance(parsed, dict):
+                continue
+            call_path = (
+                parsed.get("file_path") or parsed.get("path") or parsed.get("filename") or ""
+            )
+            if not call_path:
+                continue
+            if os.path.normpath(str(call_path)) != target:
+                continue
+            content = parsed.get("content") or parsed.get("new_string") or parsed.get("text")
+            if isinstance(content, str):
+                return content
+    return None
 
 
 _WATCH_POLL_S = 1.0
@@ -218,8 +295,17 @@ async def write_file(body: WriteBody) -> dict:
             detail=f"content too large (max {_MAX_BYTES} bytes)",
         )
     p = Path(raw)
+    # Auto-create missing parents so saving a history-recovered file
+    # (file existed on another machine but not this one) materializes
+    # the directory tree on first save instead of erroring.
     if not p.parent.exists():
-        raise HTTPException(status_code=404, detail="parent directory not found")
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"could not create parent dir: {exc}",
+            ) from exc
     try:
         p.write_text(body.content, encoding="utf-8")
     except OSError as exc:

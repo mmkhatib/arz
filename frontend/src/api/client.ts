@@ -1104,9 +1104,15 @@ export const api = {
     });
   },
 
-  async readFile(path: string): Promise<{ content: string; path: string; name: string; size: number }> {
-    return request<{ content: string; path: string; name: string; size: number }>(
-      `/files/read?path=${encodeURIComponent(path)}`
+  async readFile(
+    path: string,
+    sessionId?: string | null,
+  ): Promise<{ content: string; path: string; name: string; size: number; source?: "disk" | "history" }> {
+    const qs = sessionId
+      ? `?path=${encodeURIComponent(path)}&session_id=${encodeURIComponent(sessionId)}`
+      : `?path=${encodeURIComponent(path)}`;
+    return request<{ content: string; path: string; name: string; size: number; source?: "disk" | "history" }>(
+      `/files/read${qs}`,
     );
   },
 
