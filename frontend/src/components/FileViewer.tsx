@@ -267,14 +267,32 @@ function CommentableSurface({
         `Make the smallest set of changes needed; preserve unrelated sections.\n` +
         `After editing, briefly summarise what you changed.\n\n` +
         feedback
-      const res = await api.sendMessage(sessionId, prompt)
-      if (!res.ok) {
+      // Pre-flight: if the session already has a turn in flight, the
+      // POST will 409. Poll briefly with a backoff so the user isn't
+      // bounced by a transient mid-reply state.
+      let attempt = 0
+      while (attempt < 4) {
+        const res = await api.sendMessage(sessionId, prompt)
+        if (res.ok) {
+          res.body?.cancel().catch(() => {})
+          setComments([])
+          onSent?.()
+          return
+        }
+        if (res.status === 409) {
+          attempt += 1
+          if (attempt >= 4) {
+            res.body?.cancel().catch(() => {})
+            throw new Error(
+              "The current assistant turn is still running. Wait for the reply to finish, then click Send to chat again.",
+            )
+          }
+          await new Promise((r) => setTimeout(r, 1500 * attempt))
+          continue
+        }
         const txt = await res.text().catch(() => '')
         throw new Error(`HTTP ${res.status} ${txt}`)
       }
-      res.body?.cancel().catch(() => {})
-      setComments([])
-      onSent?.()
     } catch (e) {
       setSendErr(e instanceof Error ? e.message : String(e))
     } finally {

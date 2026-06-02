@@ -54,6 +54,7 @@ class CloudModel:
 
 
 _CLOUD_MODELS: list[CloudModel] = [
+    CloudModel("claude-opus-4-8", "claude-code", "frontier", 200, "deep reasoning, agentic"),
     CloudModel("claude-opus-4-7", "claude-code", "frontier", 200, "deep reasoning, agentic"),
     CloudModel("claude-haiku-4-5", "claude-code", "cheap", 200, "fast & inexpensive"),
     CloudModel("gpt-5", "codex", "frontier", 400, "long-doc, structured output"),

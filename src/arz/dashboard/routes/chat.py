@@ -53,9 +53,17 @@ _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
 
 _APPROVAL_TO_CLAUDE = {
-    "normal": None,  # default behavior
-    "trust_reads": "acceptEdits",  # auto-accept edits, ask for risky
-    "trust": "bypassPermissions",  # never ask
+    # IMPORTANT: claude CLI's default (None == no --permission-mode flag)
+    # is interactive ask — which silently fails every Write/Edit when
+    # we're driving it headlessly via ACP, because there's no TTY to
+    # prompt and the CLI's stream-json output channel doesn't emit a
+    # permission_request event we can hook. Until a proper MCP-backed
+    # permission server lands (which would surface real prompts in
+    # the dashboard SSE feed), "normal" maps to acceptEdits so file
+    # writes actually go through. "trust_reads" matches behaviour.
+    "normal": "acceptEdits",
+    "trust_reads": "acceptEdits",
+    "trust": "bypassPermissions",
     "yolo": "bypassPermissions",
 }
 

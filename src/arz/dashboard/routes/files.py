@@ -153,8 +153,31 @@ def _recover_from_history(request: Request, session_id: str, path: str) -> str |
     if session is None:
         return None
 
+    import ast
+
     artifact_tools = {"Write", "Edit", "MultiEdit", "Create", "fs_write", "fs_edit", "fs_create"}
     target = os.path.normpath(path)
+
+    def _coerce(raw: object) -> dict | None:
+        """Tool inputs are persisted in several shapes depending on
+        provider — sometimes JSON, sometimes Python repr, sometimes a
+        wrapper like ``{'raw': '<inner json>'}`` (claude-code). Try
+        each in turn and return the unwrapped dict, or None."""
+        if isinstance(raw, dict):
+            inner = raw.get("raw") if "raw" in raw and isinstance(raw.get("raw"), str) else None
+            if inner is not None:
+                return _coerce(inner)
+            return raw
+        if not isinstance(raw, str):
+            return None
+        try:
+            return _coerce(json.loads(raw))
+        except (ValueError, TypeError):
+            pass
+        try:
+            return _coerce(ast.literal_eval(raw))
+        except (ValueError, SyntaxError, MemoryError):
+            return None
 
     # Walk newest first so the latest write wins.
     for msg in reversed(getattr(session, "messages", []) or []):
@@ -165,15 +188,7 @@ def _recover_from_history(request: Request, session_id: str, path: str) -> str |
             name = call.get("name") or ""
             if name not in artifact_tools:
                 continue
-            raw_input = call.get("input")
-            parsed: dict | None = None
-            if isinstance(raw_input, dict):
-                parsed = raw_input
-            elif isinstance(raw_input, str):
-                try:
-                    parsed = json.loads(raw_input)
-                except (ValueError, TypeError):
-                    parsed = None
+            parsed = _coerce(call.get("input"))
             if not isinstance(parsed, dict):
                 continue
             call_path = (
