@@ -31,6 +31,7 @@ Public surface used by the consolidator + build_prefix:
 
 from __future__ import annotations
 
+import math
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -509,29 +510,79 @@ def _keyword_score(query_tokens: set[str], fact: Fact) -> float:
     return min(1.0, raw)
 
 
-def _cosine_score(query: str, fact: Fact) -> float:
-    """Vector cosine similarity via the shared VectorStore embedder, when
-    one is wired. Falls back to 0 when not — caller should treat absence
-    as "keyword-only ranking", not as "irrelevant".
-    """
+# Fact vectors are cached across queries. With the hash fingerprint an encode
+# was microseconds and re-encoding per fact was free; a real ONNX model costs
+# milliseconds, so scoring N facts used to mean 2N encodes per query. Now the
+# query is encoded once per ranking pass and fact vectors are memoised until
+# the fact changes or the embedder does.
+_VEC_CACHE_MAX = 2048
+_vec_cache: dict[tuple[str, str, float], list[float]] = {}
+
+
+def _shared_embedder():
+    """The embedder the VectorStore is wired with, or None."""
     try:
         from arz.memory.context import _vector_store
 
         store = _vector_store(None)
         if store is None or not hasattr(store, "_embedder"):
-            return 0.0
-        emb = store._embedder  # noqa: SLF001
-        fn = getattr(emb, "encode", None) or getattr(emb, "embed", None)
-        if fn is None:
-            return 0.0
-        q_vec = fn(query)
-        f_vec = fn(f"{fact.key} {fact.value}")
-        # Cosine similarity. Both vectors expected unit-norm-ish; we
-        # don't normalise here because the hash embedder already does.
-        dot = sum(a * b for a, b in zip(q_vec, f_vec, strict=False))
-        return max(0.0, min(1.0, dot))
+            return None
+        return store._embedder  # noqa: SLF001
     except Exception:
+        return None
+
+
+def _encode(text: str) -> list[float] | None:
+    """Encode via the shared embedder. None when unavailable or still warming."""
+    emb = _shared_embedder()
+    if emb is None:
+        return None
+    fn = getattr(emb, "encode", None) or getattr(emb, "embed", None)
+    if fn is None:
+        return None
+    try:
+        return list(fn(text))
+    except Exception:
+        # Includes EmbedderNotReady — ranking degrades to keyword-only.
+        return None
+
+
+def _fact_vector(fact: Fact) -> list[float] | None:
+    emb = _shared_embedder()
+    if emb is None:
+        return None
+    from arz.memory.embedder import embedder_id
+
+    ck = (embedder_id(emb), fact.key, fact.updated_at)
+    hit = _vec_cache.get(ck)
+    if hit is not None:
+        return hit
+    vec = _encode(f"{fact.key} {fact.value}")
+    if vec is None:
+        return None
+    if len(_vec_cache) >= _VEC_CACHE_MAX:
+        _vec_cache.clear()
+    _vec_cache[ck] = vec
+    return vec
+
+
+def _cosine_between(a: list[float] | None, b: list[float] | None) -> float:
+    if not a or not b or len(a) != len(b):
         return 0.0
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return max(0.0, min(1.0, dot / (na * nb)))
+
+
+def _cosine_score(query: str, fact: Fact) -> float:
+    """Vector cosine similarity via the shared VectorStore embedder, when
+    one is wired. Falls back to 0 when not — caller should treat absence
+    as "keyword-only ranking", not as "irrelevant".
+    """
+    return _cosine_between(_encode(query), _fact_vector(fact))
 
 
 _DAY_SECONDS = 86400.0
@@ -583,10 +634,12 @@ def _hybrid_score(query: str, facts: list[Fact]) -> list[tuple[float, Fact]]:
     """
     q_tokens = {t for t in _tokens(query) if len(t) >= 3}
     now = time.time()
+    # One encode per ranking pass, not one per fact.
+    q_vec = _encode(query)
     out: list[tuple[float, Fact]] = []
     for f in facts:
         kw = _keyword_score(q_tokens, f)
-        cos = _cosine_score(query, f)
+        cos = _cosine_between(q_vec, _fact_vector(f)) if q_vec else 0.0
         base = 0.6 * cos + 0.4 * kw
         rec = _recency_factor(f.updated_at, now=now)
         freq = _frequency_factor(f.hit_count)

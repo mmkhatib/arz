@@ -1,8 +1,21 @@
 """VectorStore — semantic search via sqlite-vec.
 
 Stores documents alongside their dense embedding vectors and uses sqlite-vec's
-vec0 virtual table for ANN search. The embedder is pluggable; the default
-``HashEmbedder`` gives deterministic local search without external deps.
+vec0 virtual table for ANN search. The embedder is pluggable — see
+``arz.memory.embedder``.
+
+Two invariants this module enforces:
+
+1. **Vectors from different embedders are never mixed.** The active embedder's
+   id is persisted in ``vector_meta``. When it changes (hash → local, model
+   swap, dim change) the vec0 table is rebuilt at the new dimension and every
+   document is queued for re-embedding. Without this a backend switch silently
+   corrupts every cosine score — old rows either fail to insert or score
+   against a different vector space.
+
+2. **A cold embedder never blocks or loses a write.** While a local model is
+   still downloading, ``add()`` stores the document with a NULL ``embedder_id``
+   and ``reembed_pending()`` picks it up once the model is ready.
 """
 
 from __future__ import annotations
@@ -15,7 +28,13 @@ from pathlib import Path
 
 import sqlite_vec
 
-from arz.memory.embedder import DEFAULT_DIM, Embedder, HashEmbedder
+from arz.memory.embedder import (
+    DEFAULT_DIM,
+    Embedder,
+    EmbedderNotReady,
+    HashEmbedder,
+    embedder_id,
+)
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +59,7 @@ class VectorStore:
         self._db.parent.mkdir(parents=True, exist_ok=True)
         self._embedder = embedder or HashEmbedder(dim=dim or DEFAULT_DIM)
         self._dim = self._embedder.dim
+        self._eid = embedder_id(self._embedder)
         self._lock = threading.Lock()
         self._init_schema()
 
@@ -60,36 +80,73 @@ class VectorStore:
                 "  meta TEXT NOT NULL DEFAULT '{}'"
                 ")"
             )
+            # Added after first release — older databases lack it.
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(vector_docs)")}
+            if "embedder_id" not in cols:
+                conn.execute("ALTER TABLE vector_docs ADD COLUMN embedder_id TEXT")
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS vector_meta (  k TEXT PRIMARY KEY,  v TEXT NOT NULL)"
+            )
+            row = conn.execute("SELECT v FROM vector_meta WHERE k = 'embedder_id'").fetchone()
+            stored = row[0] if row else None
+
+            if stored is not None and stored != self._eid:
+                log.warning(
+                    "embedder changed (%s → %s) — rebuilding vector index and "
+                    "queueing %s documents for re-embedding",
+                    stored,
+                    self._eid,
+                    conn.execute("SELECT COUNT(*) FROM vector_docs").fetchone()[0],
+                )
+                conn.execute("DROP TABLE IF EXISTS vector_embeddings")
+                conn.execute("UPDATE vector_docs SET embedder_id = NULL")
+
             conn.execute(
                 f"CREATE VIRTUAL TABLE IF NOT EXISTS vector_embeddings USING vec0("
                 f"  emb float[{self._dim}]"
                 f")"
             )
+            conn.execute(
+                "INSERT INTO vector_meta (k, v) VALUES ('embedder_id', ?) "
+                "ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+                (self._eid,),
+            )
 
     def add(self, key: str, content: str, meta: dict | None = None) -> None:
-        """Insert or replace a document and its embedding."""
-        emb = sqlite_vec.serialize_float32(self._embedder.encode(content))
+        """Insert or replace a document and its embedding.
+
+        If the embedder is not ready yet the document is still stored, with a
+        NULL ``embedder_id``, and picked up by :meth:`reembed_pending` later.
+        """
+        try:
+            vec = self._embedder.encode(content)
+            emb = sqlite_vec.serialize_float32(vec)
+            eid: str | None = self._eid
+        except EmbedderNotReady as e:
+            log.debug("deferring embedding for %r: %s", key, e)
+            emb, eid = None, None
+        except Exception:
+            log.exception("embedding failed for %r — storing document unembedded", key)
+            emb, eid = None, None
+
         with self._lock, self._connect() as conn:
             cur = conn.execute("SELECT id FROM vector_docs WHERE key = ?", (key,))
             row = cur.fetchone()
             meta_json = json.dumps(meta or {})
             if row is None:
                 cur = conn.execute(
-                    "INSERT INTO vector_docs (key, content, meta) VALUES (?, ?, ?)",
-                    (key, content, meta_json),
+                    "INSERT INTO vector_docs (key, content, meta, embedder_id) VALUES (?, ?, ?, ?)",
+                    (key, content, meta_json, eid),
                 )
                 doc_id = cur.lastrowid
-                conn.execute(
-                    "INSERT INTO vector_embeddings (rowid, emb) VALUES (?, ?)",
-                    (doc_id, emb),
-                )
             else:
                 doc_id = row[0]
                 conn.execute(
-                    "UPDATE vector_docs SET content = ?, meta = ? WHERE id = ?",
-                    (content, meta_json, doc_id),
+                    "UPDATE vector_docs SET content = ?, meta = ?, embedder_id = ? WHERE id = ?",
+                    (content, meta_json, eid, doc_id),
                 )
                 conn.execute("DELETE FROM vector_embeddings WHERE rowid = ?", (doc_id,))
+            if emb is not None:
                 conn.execute(
                     "INSERT INTO vector_embeddings (rowid, emb) VALUES (?, ?)",
                     (doc_id, emb),
@@ -105,11 +162,74 @@ class VectorStore:
             conn.execute("DELETE FROM vector_docs WHERE id = ?", (row[0],))
             return True
 
+    def pending_count(self) -> int:
+        """Documents with no vector for the active embedder."""
+        with self._connect() as conn:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM vector_docs "
+                    "WHERE embedder_id IS NULL OR embedder_id != ?",
+                    (self._eid,),
+                ).fetchone()[0]
+            )
+
+    def reembed_pending(self, *, batch: int = 256) -> int:
+        """Embed documents that have no vector for the active embedder.
+
+        Safe to call repeatedly. Returns the number of documents embedded.
+        Stops early — without raising — if the embedder is still warming up.
+        """
+        embedded = 0
+        while True:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT id, content FROM vector_docs "
+                    "WHERE embedder_id IS NULL OR embedder_id != ? "
+                    "LIMIT ?",
+                    (self._eid, batch),
+                ).fetchall()
+            if not rows:
+                return embedded
+            for doc_id, content in rows:
+                try:
+                    emb = sqlite_vec.serialize_float32(self._embedder.encode(content))
+                except EmbedderNotReady:
+                    if embedded:
+                        log.info("re-embedded %d documents before backend went cold", embedded)
+                    return embedded
+                except Exception:
+                    log.exception("re-embed failed for doc %s — skipping", doc_id)
+                    continue
+                with self._lock, self._connect() as conn:
+                    conn.execute("DELETE FROM vector_embeddings WHERE rowid = ?", (doc_id,))
+                    conn.execute(
+                        "INSERT INTO vector_embeddings (rowid, emb) VALUES (?, ?)",
+                        (doc_id, emb),
+                    )
+                    conn.execute(
+                        "UPDATE vector_docs SET embedder_id = ? WHERE id = ?",
+                        (self._eid, doc_id),
+                    )
+                embedded += 1
+            if len(rows) < batch:
+                return embedded
+
     def search(self, query: str, k: int = 5) -> list[tuple[str, str, float]]:
-        """Return up to k (key, content, similarity) tuples; higher score is better."""
+        """Return up to k (key, content, similarity) tuples; higher score is better.
+
+        Returns [] when the embedder is not ready — the caller's FTS/keyword
+        path serves the query instead.
+        """
         if not query.strip():
             return []
-        emb = sqlite_vec.serialize_float32(self._embedder.encode(query))
+        try:
+            emb = sqlite_vec.serialize_float32(self._embedder.encode(query))
+        except EmbedderNotReady as e:
+            log.debug("vector search skipped, embedder warming: %s", e)
+            return []
+        except Exception:
+            log.exception("query embedding failed for %r", query)
+            return []
         try:
             with self._connect() as conn:
                 # sqlite-vec requires an explicit `k = N` clause on MATCH queries.
