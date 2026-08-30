@@ -20,6 +20,7 @@ Schema lives in the same ``~/.arz/memory.db`` (sqlite, no extra deps):
     created_at  REAL NOT NULL
     is_deleted  INTEGER NOT NULL DEFAULT 0
     embedding   BLOB                       -- float32[]
+    embedder_id TEXT                       -- which embedder produced it
 
 For now the embedding column is stored alongside the row rather than
 in a vec0 virtual table — keeps the schema portable and lets us start
@@ -39,6 +40,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import structlog
+
+from arz.memory.embedder import EmbedderNotReady
 
 log = structlog.get_logger(__name__)
 
@@ -79,6 +82,12 @@ def _connect() -> sqlite3.Connection:
         "CREATE INDEX IF NOT EXISTS idx_episodic_alive ON episodic_memories(is_deleted, importance DESC)"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_episodic_created ON episodic_memories(created_at)")
+    # Added after first release. Vectors from different embedders are not
+    # comparable, so every row records which one produced it; rows from a
+    # stale embedder are ignored by search() and rebuilt by reembed_pending().
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(episodic_memories)")}
+    if "embedder_id" not in cols:
+        conn.execute("ALTER TABLE episodic_memories ADD COLUMN embedder_id TEXT")
     return conn
 
 
@@ -96,6 +105,17 @@ def _embedder():
         return None
 
 
+def _active_embedder_id() -> str | None:
+    """Stable id of the embedder currently wired up, or None when there isn't
+    one. Keeps incomparable vector spaces apart."""
+    emb = _embedder()
+    if emb is None:
+        return None
+    from arz.memory.embedder import embedder_id
+
+    return embedder_id(emb)
+
+
 def _embed(text: str) -> list[float] | None:
     emb = _embedder()
     if emb is None:
@@ -107,6 +127,10 @@ def _embed(text: str) -> list[float] | None:
         return None
     try:
         return list(fn(text))
+    except EmbedderNotReady:
+        # Model still downloading — degrade to FTS rather than store a vector
+        # we could never compare against.
+        return None
     except Exception as e:
         log.warning(
             "episodic embed failed",
@@ -152,11 +176,13 @@ def add(
     now = time.time()
     vec = _embed(text)
     blob = _pack(vec) if vec else None
+    eid = _active_embedder_id() if blob is not None else None
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO episodic_memories(text, tags, importance, created_at, embedding) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (text, tags_json, importance, now, blob),
+            "INSERT INTO episodic_memories"
+            "(text, tags, importance, created_at, embedding, embedder_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (text, tags_json, importance, now, blob, eid),
         )
         rid = int(cur.lastrowid or 0)
     enforce_cap()
@@ -172,17 +198,28 @@ def search(query: str, *, k: int = 5) -> list[tuple[Episode, float]]:
     q_vec = _embed(query)
     if not q_vec:
         return []
+    eid = _active_embedder_id()
+    # Gates are per-embedder: cosine distributions are not comparable across
+    # models, so a fixed threshold silently starves recall on some backends.
+    gate_short, gate_long = _RELEVANCE_SHORT, _RELEVANCE_LONG
+    emb = _embedder()
+    if emb is not None:
+        from arz.memory.embedder import relevance_gates
+
+        gate_short, gate_long = relevance_gates(emb)
     with _connect() as conn:
         rows = conn.execute(
             "SELECT id, text, tags, importance, created_at, embedding "
-            "FROM episodic_memories WHERE is_deleted = 0 AND embedding IS NOT NULL"
+            "FROM episodic_memories WHERE is_deleted = 0 AND embedding IS NOT NULL "
+            "AND embedder_id IS ?",
+            (eid,),
         ).fetchall()
     scored: list[tuple[Episode, float]] = []
     for rid, text, tags_json, importance, created_at, blob in rows:
         if blob is None:
             continue
         sim = _cosine(q_vec, _unpack(blob))
-        threshold = _RELEVANCE_LONG if len(text) > _LONG_TEXT_THRESHOLD else _RELEVANCE_SHORT
+        threshold = gate_long if len(text) > _LONG_TEXT_THRESHOLD else gate_short
         if sim < threshold:
             continue
         scored.append(
@@ -218,6 +255,41 @@ def render_for_prompt(query: str, *, k: int = 5, cap_chars: int = 3000) -> str:
     if not out:
         return ""
     return "<episodic-memory>\n" + "\n".join(out) + "\n</episodic-memory>"
+
+
+def reembed_pending(*, batch: int = 256) -> int:
+    """Re-embed rows whose vector came from a different embedder (or none).
+
+    Safe to call repeatedly; stops early without raising if the embedder is
+    still warming up. Returns the number of rows re-embedded.
+    """
+    eid = _active_embedder_id()
+    if eid is None:
+        return 0
+    done = 0
+    while True:
+        with _connect() as conn:
+            rows = conn.execute(
+                "SELECT id, text FROM episodic_memories "
+                "WHERE is_deleted = 0 AND (embedder_id IS NULL OR embedder_id != ?) "
+                "LIMIT ?",
+                (eid, batch),
+            ).fetchall()
+        if not rows:
+            return done
+        for rid, text in rows:
+            vec = _embed(text)
+            if not vec:
+                # Embedder went cold — leave the rest for the next sweep.
+                return done
+            with _connect() as conn:
+                conn.execute(
+                    "UPDATE episodic_memories SET embedding = ?, embedder_id = ? WHERE id = ?",
+                    (_pack(vec), eid, rid),
+                )
+            done += 1
+        if len(rows) < batch:
+            return done
 
 
 def enforce_cap(*, cap: int = _DEFAULT_CAP) -> int:

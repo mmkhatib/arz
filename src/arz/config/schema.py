@@ -37,9 +37,14 @@ class DashboardConfig(BaseModel):
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
     auto_recall: bool = True
     recall_k: int = 8
-    # Embedder spec: "hash" (no deps) | "ollama[:model][@url]"
-    # Picking "ollama" without a model defaults to qwen3-embedding:0.6b.
-    embedding_model: str = "hash"
+    # Embedder spec:
+    #   "auto"                  — local → ollama → hash (recommended)
+    #   "local[:model]"         — in-process ONNX via the `arz[embeddings]` extra
+    #   "ollama[:model][@url]"  — local Ollama server; default qwen3-embedding:0.6b
+    #   "hash"                  — char-n-gram fingerprint. NOT semantic search;
+    #                             a paraphrase sharing no n-grams scores ~0.
+    # Switching backends rebuilds the vector index — see memory/vector.py.
+    embedding_model: str = "auto"
     heartbeat_interval_s: int = 300
     # Warm pool: pre-spawn N providers at startup so the first user
     # message doesn't pay the 3-10s cold-start cost. 0 = disabled.

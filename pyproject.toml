@@ -1,6 +1,6 @@
 [project]
 name = "arz"
-version = "0.8.27"
+version = "0.8.28"
 description = "Personal AI agent runtime — your cedar in the cloud."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -40,6 +40,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Real in-process semantic embeddings (ONNX Runtime, no torch). Without this
+# arz falls back to Ollama if it is running, then to a char-n-gram fingerprint
+# that is lexical-only. `GET /api/memory/embedder` reports which is live.
+embeddings = [
+    "fastembed>=0.4",
+]
 dev = [
     "ruff>=0.7",
     "mypy>=1.13",

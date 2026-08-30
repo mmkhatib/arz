@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -73,6 +73,22 @@ async def memory_stats(request: Request) -> dict:
     except Exception:
         vec_count = 0
     return {"markdown": len(md), "lessons": lessons, "vectors": vec_count}
+
+
+@router.get("/api/memory/embedder")
+async def embedder_status() -> dict[str, Any]:
+    """Which embedding backend is actually live, and whether recall is degraded.
+
+    The old behaviour fell back to the hash fingerprint with only a log line,
+    so an install could run lexical-only retrieval forever without anyone
+    noticing. This endpoint is what makes that visible.
+    """
+    from arz.memory.embedder import active_status
+    from arz.memory.warmup import status as warmup_status
+
+    st = active_status()
+    st["warmup"] = warmup_status()
+    return st
 
 
 @router.get("/api/memory/markdown/{key}", response_model=MarkdownEntry)

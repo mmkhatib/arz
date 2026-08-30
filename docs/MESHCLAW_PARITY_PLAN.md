@@ -1,5 +1,9 @@
 # Arz ⇄ MeshClaw Parity — Execution Plan
 
+> **Status: complete — superseded.** All 10 phases below have shipped.
+> MeshClaw is now public as [KiroCrew](https://github.com/kirodotdev/KiroCrew);
+> the current gap analysis lives in [`specs/`](specs/README.md).
+
 Goal: bring the seven differentiating MeshClaw subsystems into arz, generic across
 every installed LLM provider (claude-code, codex, anthropic, kiro-cli, ollama, …).
 Drop everything Amazon/Kiro-specific.

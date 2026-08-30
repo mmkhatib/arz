@@ -349,9 +349,9 @@ def _vector_store(config: Any | None):
         from arz.memory.embedder import embedder_from_config
         from arz.memory.vector import VectorStore
 
-        spec = "hash"
+        spec = "auto"
         if config is not None and hasattr(config, "dashboard"):
-            spec = getattr(config.dashboard, "embedding_model", "hash") or "hash"
+            spec = getattr(config.dashboard, "embedding_model", "auto") or "auto"
         emb = embedder_from_config(spec)
         _vector_singleton = VectorStore(embedder=emb)
         return _vector_singleton

@@ -286,6 +286,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.idle_sweep_task = asyncio.create_task(_idle_sweep_loop())
     log.info("Consolidator idle-sweep task started")
+    # Embedder warm-up: load the local model and backfill any vectors left
+    # over from a cold start or a backend switch. Runs on its own thread —
+    # retrieval falls back to FTS until it lands, and never blocks a turn.
+    try:
+        from arz.memory import warmup as _embed_warmup
+
+        _embed_warmup.start(getattr(app.state, "config", None))
+        log.info("Embedder warm-up started")
+    except Exception:
+        log.warning("Could not start embedder warm-up", exc_info=True)
     # Watchdog: 30s sweep that detects active-session stalls (no event
     # for 60min → notify, 2h → force-cancel). Stay-on-task layer 6.
     try:
@@ -356,7 +366,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.8.27", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.8.28", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
