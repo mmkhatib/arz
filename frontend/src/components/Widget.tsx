@@ -20,7 +20,7 @@
 // dashboard" output just works. Agents can include their own <script
 // src="…cdn…"> tags for Chart.js / D3 / Alpine / etc.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Code, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 
 const BOOTSTRAP = `
@@ -52,6 +52,25 @@ const BOOTSTRAP = `
       );
       parent.postMessage({ __arzwidget: true, id: ${JSON.stringify("__ID__")}, h: h }, "*");
     }
+    // Talk back to the chat. A widget is otherwise a dead end: the agent
+    // can draw a table of options and the user still has to retype their
+    // choice. arz.send(text) — or any element carrying data-arz-send —
+    // posts that text out, and the parent sends it as the user's next
+    // message (steering it into the running turn when one is live).
+    function postAction(text) {
+      parent.postMessage(
+        { __arzwidget: true, id: ${JSON.stringify("__ID__")}, action: String(text == null ? "" : text) },
+        "*"
+      );
+    }
+    window.arz = { send: postAction };
+    document.addEventListener("click", function (e) {
+      var el = e.target && e.target.closest ? e.target.closest("[data-arz-send]") : null;
+      if (!el) return;
+      e.preventDefault();
+      postAction(el.getAttribute("data-arz-send"));
+    });
+
     var ro = new ResizeObserver(postHeight);
     document.addEventListener("DOMContentLoaded", function () {
       ro.observe(document.documentElement);
@@ -85,6 +104,7 @@ export function HtmlSandbox({
   fill = false,
   reloadKey = 0,
   title,
+  onAction,
 }: {
   html: string;
   id?: string;
@@ -92,6 +112,8 @@ export function HtmlSandbox({
   fill?: boolean;
   reloadKey?: number;
   title?: string;
+  /** Text the embedded page asked to send back to the chat. */
+  onAction?: (text: string) => void;
 }) {
   const sandboxId = useMemo(() => id || `w_${Math.random().toString(36).slice(2, 10)}`, [id]);
   const [height, setHeight] = useState(120);
@@ -121,19 +143,32 @@ export function HtmlSandbox({
     return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${normalizedHtml}</body></html>`;
   }, [normalizedHtml, sandboxId, reloadKey]);
 
+  // Throttle: the page inside is agent-authored, so a scripted loop must
+  // not be able to machine-gun the chat. One action per second is well
+  // past what a human clicking can produce.
+  const lastActionRef = useRef(0);
+
   useEffect(() => {
-    if (fill) return; // fill mode ignores postMessage heights
     const onMessage = (e: MessageEvent) => {
       const d = e.data;
       if (!d || typeof d !== "object") return;
       if (d.__arzwidget !== true) return;
       if (d.id !== sandboxId) return;
+      if (typeof d.action === "string") {
+        const text = d.action.trim().slice(0, 2000);
+        const now = Date.now();
+        if (!text || !onAction || now - lastActionRef.current < 1000) return;
+        lastActionRef.current = now;
+        onAction(text);
+        return;
+      }
+      if (fill) return; // fill mode ignores postMessage heights
       const h = Math.max(60, Math.min(maxHeight, Number(d.h) || 0));
       setHeight(h);
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [sandboxId, maxHeight, fill]);
+  }, [sandboxId, maxHeight, fill, onAction]);
 
   return (
     <iframe
@@ -164,14 +199,19 @@ interface WidgetProps {
   html: string;
   id?: string;
   maxHeight?: number;
+  /** Send text from inside the widget as the user's next message. */
+  onAction?: (text: string) => void;
 }
 
-export default function Widget({ title, html, id, maxHeight = 800 }: WidgetProps) {
+export default function Widget({ title, html, id, maxHeight = 800, onAction }: WidgetProps) {
   const widgetId = useMemo(() => id || `w_${Math.random().toString(36).slice(2, 10)}`, [id]);
   // maxHeight forwards into the embedded HtmlSandbox so callers can clamp
   // a runaway widget from blowing out the chat row.
   const _maxH = maxHeight;
   const [showSource, setShowSource] = useState(false);
+  // Brief header confirmation — a click inside the iframe otherwise gives
+  // no sign the message left the widget.
+  const [sentText, setSentText] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -231,6 +271,14 @@ export default function Widget({ title, html, id, maxHeight = 800 }: WidgetProps
         <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {title || "widget"}
         </span>
+        {sentText && (
+          <span
+            style={{ color: "var(--cedar-glow)", textTransform: "none", letterSpacing: 0 }}
+            title={sentText}
+          >
+            sent ✓
+          </span>
+        )}
         <IconBtn title="Reload" onClick={() => setReloadKey((k) => k + 1)}>
           <RefreshCw size={11} />
         </IconBtn>
@@ -248,6 +296,15 @@ export default function Widget({ title, html, id, maxHeight = 800 }: WidgetProps
           maxHeight={_maxH}
           reloadKey={reloadKey}
           title={title}
+          onAction={
+            onAction
+              ? (text) => {
+                  setSentText(text);
+                  setTimeout(() => setSentText(null), 2000);
+                  onAction(text);
+                }
+              : undefined
+          }
         />
       )}
       {!collapsed && showSource && (

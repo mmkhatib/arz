@@ -58,6 +58,8 @@ export interface MessageRecord {
   /** Regenerate archive — alternate texts the user can browse with ◀▶. */
   versions?: string[];
   version_index?: number;
+  /** True when this user turn was steered into an already-running turn. */
+  steer?: boolean;
 }
 
 export interface SessionDetail extends SessionSummary {
@@ -307,7 +309,20 @@ export interface Settings {
 }
 
 export interface SSEChunk {
-  type: "text_chunk" | "complete" | "error" | "tool_call" | "tool_result" | "permission_request";
+  // Mirrors `arz.dashboard.sse` — keep in lockstep when an emitter lands.
+  type:
+    | "text_chunk"
+    | "thinking_chunk"
+    | "complete"
+    | "error"
+    | "tool_call"
+    | "tool_result"
+    | "permission_request"
+    | "compaction_status"
+    | "chat_segment"
+    | "heartbeat"
+    | "writer_done"
+    | "steer";
   text?: string;
   stop_reason?: string;
   context_pct?: number;
@@ -319,6 +334,8 @@ export interface SSEChunk {
   content?: string;
   request_id?: string;
   title?: string;
+  status?: string;
+  detail?: string;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -464,9 +481,22 @@ export const api = {
   reattachStream: (sessionId: string, signal?: AbortSignal): Promise<Response> =>
     fetch(`${BASE}/chat/${sessionId}/stream`, { method: "GET", signal }),
 
-  /** Cheap snapshot — is a turn currently in flight for this session? */
+  /** Cheap snapshot — is a turn currently in flight for this session?
+   *  ``supports_steer`` reports whether the live provider can take a
+   *  mid-turn injection, which gates the Steer control in the input bar. */
   getStreamingStatus: (sessionId: string) =>
-    request<{ streaming: boolean; snapshot: any }>(`/chat/${sessionId}/streaming`),
+    request<{ streaming: boolean; snapshot: any; supports_steer?: boolean }>(
+      `/chat/${sessionId}/streaming`,
+    ),
+
+  /** Inject a message into the turn already running. Falls back to the send
+   *  queue when the answer is ``{ steered: false }`` — the provider has no
+   *  mid-turn path, or the turn ended while the request was in flight. */
+  steerChat: (sessionId: string, message: string) =>
+    request<{ steered: boolean; reason?: string }>(`/chat/${sessionId}/steer`, {
+      method: "POST",
+      body: JSON.stringify({ message }),
+    }),
 
   /** Cooperative stop. Backend tries graceful cancel first, then hard kills. */
   stopChat: (sessionId: string) =>

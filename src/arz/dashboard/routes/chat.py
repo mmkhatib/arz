@@ -31,6 +31,7 @@ from arz.dashboard.sse import (
     sse_heartbeat,
     sse_permission_request,
     sse_segment,
+    sse_steer,
     sse_thinking,
     sse_tool_call,
     sse_tool_result,
@@ -39,10 +40,11 @@ from arz.dashboard.sse import (
 from arz.dashboard.stream_registry import get_stream_registry
 from arz.dashboard.token_auth import require_token
 from arz.hooks import get_hook_manager
-from arz.prompts.loader import resolve_system_prompt
+from arz.prompts.loader import build_turn_message, resolve_system_prompt
 from arz.providers.base import LLMProvider
 from arz.providers.pool import ProviderPool
 from arz.session.manager import SessionManager
+from arz.session.session import Message
 from arz.session.session_map import SessionMap
 from arz.subagents import get_subagent_manager
 
@@ -1370,6 +1372,13 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     except Exception:
         log.exception("Subagent injection failed; continuing without it")
 
+    # Re-state the suggestion contract on the turn itself. base.md carries the
+    # full rule, but it was stated once at session start: deep into a long
+    # conversation — or right after a compaction drops it — the model quietly
+    # stops emitting the `[OPTIONS:]` line and the chip row disappears with no
+    # other symptom. Cheap enough to pay every turn.
+    message = build_turn_message(message)
+
     history: list[dict] | None = None
     if session and session.messages:
         history = [{"role": m.role, "text": m.text} for m in session.messages]
@@ -1585,10 +1594,69 @@ async def chat_stream(session_id: str) -> StreamingResponse:
 
 
 @router.get("/api/chat/{session_id}/streaming")
-async def chat_streaming(session_id: str) -> dict:
-    """Cheap snapshot — is a turn currently running for this session?"""
+async def chat_streaming(session_id: str, request: Request) -> dict:
+    """Cheap snapshot — is a turn currently running for this session?
+
+    Also reports whether the live provider can take a mid-turn steer, so the
+    input bar only offers Steer when the backend actually implements it.
+    """
     snap = get_stream_registry().snapshot(session_id)
-    return {"streaming": bool(snap and snap.get("status") == "running"), "snapshot": snap}
+    pool: ProviderPool = request.app.state.provider_pool
+    provider = pool._pool.get(session_id)  # noqa: SLF001
+    return {
+        "streaming": bool(snap and snap.get("status") == "running"),
+        "snapshot": snap,
+        "supports_steer": bool(provider is not None and provider.supports_steer),
+    }
+
+
+@router.post("/api/chat/{session_id}/steer")
+async def chat_steer(session_id: str, request: Request) -> dict:
+    """Inject a message into the turn that is ALREADY running.
+
+    Unlike the send queue — which waits for the turn to end and then fires a
+    fresh one — a steer reaches the model inside the current turn and is
+    picked up at its next safe point, so a correction lands before the work
+    it corrects is finished.
+
+    Every failure mode returns ``{"steered": False, "reason": ...}`` rather
+    than an error status: the caller's fallback is the queue, and a 4xx would
+    make it look like the message was lost.
+    """
+    body = await request.json()
+    text: str = (body.get("message") or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="message is required")
+
+    registry = get_stream_registry()
+    if not registry.is_streaming(session_id):
+        return {"steered": False, "reason": "no_turn"}
+
+    pool: ProviderPool = request.app.state.provider_pool
+    provider = pool._pool.get(session_id)  # noqa: SLF001
+    if provider is None or not provider.supports_steer:
+        return {"steered": False, "reason": "unsupported"}
+
+    try:
+        accepted = await provider.steer(text)
+    except Exception:
+        log.warning("provider.steer() raised", exc_info=True)
+        accepted = False
+    if not accepted:
+        return {"steered": False, "reason": "refused"}
+
+    # Persist as a user turn so a reload replays it in the right place, and
+    # publish so every attached client renders it live — the reply arrives
+    # inside the running stream, with no send of its own to echo it.
+    mgr: SessionManager = request.app.state.session_manager
+    session = mgr.get(session_id)
+    if session is not None:
+        session.messages.append(
+            Message(role="user", text=text, steer=True, source_surface="dashboard")
+        )
+        mgr.save(session)
+    await registry.publish(session_id, sse_steer(text))
+    return {"steered": True}
 
 
 # Cooperative-stop budget. Provider gets this long to honor a graceful

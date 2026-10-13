@@ -163,3 +163,11 @@ class KiroCliProvider(LLMProvider):
 
     async def cancel(self) -> None:
         await self._client.cancel()
+
+    async def steer(self, message: str) -> bool:
+        """Forward a mid-turn steer to kiro-cli's ``_session/steer``."""
+        return await self._client.steer(message)
+
+    @property
+    def supports_steer(self) -> bool:
+        return self._client.supports_steer

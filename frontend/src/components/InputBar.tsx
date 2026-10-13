@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2, Target } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2, Target, Crosshair } from "lucide-react";
 import { useDialog } from "@/components/Dialog";
 
 // Per-provider accent — matches the chat badges + analytics legend.
@@ -60,6 +60,12 @@ interface Props {
   /** Preview of the next message that will fire once the current turn ends. */
   queuedPreview?: string | null;
   onCancelQueued?: () => void;
+  /** True when the live provider can take a mid-turn steer. Gates the
+   *  Steer/Queue toggle — without it every send while running is queued. */
+  canSteer?: boolean;
+  /** Steer is armed: a send during a running turn is injected into it. */
+  steerMode?: boolean;
+  onToggleSteerMode?: () => void;
   /** Session id is needed so the "improve with AI" rewrite mirrors the
    *  active session's provider/model. */
   sessionId?: string | null;
@@ -91,6 +97,9 @@ export default function InputBar({
   draftKey,
   queuedPreview = null,
   onCancelQueued,
+  canSteer = false,
+  steerMode = false,
+  onToggleSteerMode,
   sessionId = null,
   goal = null,
   goalStatus = "active",
@@ -301,6 +310,13 @@ export default function InputBar({
       void handleImprove();
       return;
     }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && isRunning && canSteer) {
+      // Same toggle key kiro-cli uses — flip between injecting into the
+      // running turn and queueing a fresh one behind it.
+      e.preventDefault();
+      onToggleSteerMode?.();
+      return;
+    }
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       submit();
@@ -334,6 +350,9 @@ export default function InputBar({
   }, [effectiveModel, model, onModelChange]);
 
   const hasInput = value.trim().length > 0;
+  // Steering is only real while a turn is actually running on a provider
+  // that can take the injection — otherwise a send is a plain send.
+  const steering = isRunning && canSteer && steerMode;
 
   return (
     <div className="px-4 pb-3 pt-0 max-w-[900px] mx-auto w-full flex flex-col">
@@ -400,6 +419,40 @@ export default function InputBar({
           manualHeight !== null ? "flex flex-col min-h-0" : "",
         ].join(" ")}
       >
+        {isRunning && canSteer && !queuedPreview && (
+          <div className="px-3 pt-2 flex items-center gap-1.5">
+            <span className="text-[9px] font-mono uppercase tracking-wider text-[var(--muted)] shrink-0">
+              While running
+            </span>
+            <div className="flex rounded-lg border border-[var(--border)] overflow-hidden">
+              <button
+                onClick={() => { if (!steerMode) onToggleSteerMode?.(); }}
+                title="Inject into the turn already running"
+                className={[
+                  "flex items-center gap-1 px-2 py-0.5 text-[10px] transition-colors",
+                  steerMode
+                    ? "bg-[var(--cedar)] text-white"
+                    : "text-[var(--muted)] hover:text-[var(--text2)]",
+                ].join(" ")}
+              >
+                <Crosshair size={10} /> Steer
+              </button>
+              <button
+                onClick={() => { if (steerMode) onToggleSteerMode?.(); }}
+                title="Hold until this turn ends, then send as a new one"
+                className={[
+                  "flex items-center gap-1 px-2 py-0.5 text-[10px] transition-colors",
+                  !steerMode
+                    ? "bg-amber-500 text-white"
+                    : "text-[var(--muted)] hover:text-[var(--text2)]",
+                ].join(" ")}
+              >
+                <ArrowUpFromLine size={10} /> Queue
+              </button>
+            </div>
+            <span className="text-[9px] font-mono text-[var(--text3)] ml-auto shrink-0">⌘S</span>
+          </div>
+        )}
         {queuedPreview && (
           <div className="px-3 pt-2.5 flex items-start gap-2">
             <span className="text-[9px] font-mono uppercase tracking-wider text-[var(--cedar-glow)] mt-0.5 shrink-0">
@@ -430,6 +483,8 @@ export default function InputBar({
           placeholder={
             queuedPreview
               ? "One queued — waiting for the current reply…"
+              : steering
+              ? "Steer the running turn…"
               : isRunning
               ? "Arzeh is thinking… (you can queue one)"
               : "Message Arzeh…"
@@ -764,11 +819,16 @@ export default function InputBar({
             {isRunning && onStop ? (
               hasInput ? (
                 <button
-                  className="w-8 h-8 rounded-full bg-amber-500 text-white flex items-center justify-center hover:bg-amber-400 transition-all"
+                  className={[
+                    "w-8 h-8 rounded-full text-white flex items-center justify-center transition-all",
+                    steering
+                      ? "bg-[var(--cedar)] hover:bg-[var(--cedar-lt)]"
+                      : "bg-amber-500 hover:bg-amber-400",
+                  ].join(" ")}
                   onClick={submit}
-                  title="Queue message"
+                  title={steering ? "Steer into the running turn" : "Queue message"}
                 >
-                  <ArrowUpFromLine size={16} />
+                  {steering ? <Crosshair size={16} /> : <ArrowUpFromLine size={16} />}
                 </button>
               ) : (
                 <button

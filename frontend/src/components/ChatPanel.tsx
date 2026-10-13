@@ -11,7 +11,7 @@ import CompareModal from "./CompareModal";
 import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon, Target, Check, X as XIcon } from "lucide-react";
 import { formatTokens } from "@/utils/tokens";
 import { stripInlineTags } from "@/utils/stripInline";
-import { segmentMessage } from "@/utils/segments";
+import { extractOptions, segmentMessage, stripPartialOptions } from "@/utils/segments";
 import Widget from "./Widget";
 import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
 import GoalModal from "./GoalModal";
@@ -883,6 +883,21 @@ export default function ChatPanel({
   const [messages, setMessages] = useState<MessageRecord[]>([]);
   const [title, setTitle] = useState<string>("New session");
   const [streaming, setStreaming] = useState(false);
+  // Mid-turn steer. `canSteer` is answered by the server per live provider
+  // (claude-code writes to its stream-json stdin, kiro-cli has
+  // `_session/steer`); everything else falls back to the queue. The armed
+  // flag is a user preference, so it outlives the session.
+  const [canSteer, setCanSteer] = useState(false);
+  const [steerMode, setSteerMode] = useState<boolean>(() => {
+    try { return localStorage.getItem("arz-steer-mode") !== "0"; } catch { return true; }
+  });
+  const toggleSteerMode = () => {
+    setSteerMode((v) => {
+      const next = !v;
+      try { localStorage.setItem("arz-steer-mode", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  };
   // Single-slot send queue. While a turn is in flight, one more user
   // message can sit here; it fires automatically when the turn ends.
   // Held in a ref + state so doSend's finally can read it synchronously
@@ -1025,6 +1040,18 @@ export default function ChatPanel({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamBuffer]);
 
+  // Ask the server whether the live provider can take a mid-turn steer.
+  // Only meaningful while a turn runs, and the answer can change between
+  // turns (provider switch), so it is re-read on every start.
+  useEffect(() => {
+    if (!streaming) return;
+    let cancelled = false;
+    api.getStreamingStatus(sessionId)
+      .then((st) => { if (!cancelled) setCanSteer(!!st.supports_steer); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [streaming, sessionId]);
+
   // While a turn is in flight (locally OR detached on the server), poll
   // the session every 3s to pull in messages saved by _run_turn's
   // background task. This is a defensive backstop to the SSE reattach —
@@ -1116,12 +1143,33 @@ export default function ChatPanel({
     }
   };
 
+  // A button inside a rendered widget speaks as the user: same path as
+  // typing, so it steers into a running turn or queues behind one exactly
+  // like a typed message would.
+  const handleWidgetAction = (text: string) => {
+    const t = text.trim();
+    if (t) void handleSend(t);
+  };
+
   const handleSend = async (message: string, files?: import("@/api/client").UploadedFile[]) => {
-    // While a turn is streaming, hold the user's next message in a
-    // single-slot queue rather than firing it and getting a 409 from
-    // the gateway. Drop earlier queued messages — the most recent
-    // intent wins.
+    // While a turn is streaming there are two ways in. Steer injects the
+    // text into the turn already running so a correction lands before the
+    // work it corrects is done; the server answers `steered: false` when
+    // the provider has no mid-turn path or the turn ended underneath us,
+    // and we fall through to the queue. Queue holds the message in a
+    // single slot and fires it as a fresh turn once this one ends — drop
+    // earlier queued messages, the most recent intent wins.
     if (streaming) {
+      if (canSteer && steerMode && message.trim() && !files?.length) {
+        try {
+          const res = await api.steerChat(sessionId, message);
+          // The steer bubble arrives over SSE (`type: "steer"`), which
+          // every attached client sees — no optimistic append here.
+          if (res.steered) return;
+        } catch {
+          // Network hiccup — the queue still gets the message.
+        }
+      }
       setQueued({ text: message, files });
       return;
     }
@@ -1197,6 +1245,16 @@ export default function ChatPanel({
           detail: String((chunk as { detail?: string }).detail || ""),
         });
         onSseEvent?.("compaction_status");
+      } else if (chunk.type === "steer" && chunk.text) {
+        // A message injected into THIS turn — by us or by another attached
+        // client. Server already persisted it, so the 3s session poll
+        // replaces this optimistic row rather than duplicating it.
+        const steerText = chunk.text;
+        setMessages((prev) => [
+          ...prev,
+          { role: "user" as const, text: steerText, created_at: new Date().toISOString(), steer: true },
+        ]);
+        onSseEvent?.("steer", steerText.slice(0, 60));
       } else if (chunk.type === "chat_segment") {
         onSseEvent?.("chat_segment");
       } else if (chunk.type === "writer_done") {
@@ -1594,6 +1652,7 @@ export default function ChatPanel({
               key={i}
               message={msg}
               onFileOpen={onFileOpen}
+              onSendText={handleWidgetAction}
               isLastUser={isLastUser}
               isLastAssistant={isLastAssistant}
               onEditResend={isLastUser ? (text) => doSend(text, { replaceLastUser: true }) : undefined}
@@ -1714,9 +1773,14 @@ export default function ChatPanel({
                 </div>
               )}
               {streamBuffer ? (
-                segmentMessage(stripInlineTags(streamBuffer)).map((seg, i) =>
+                segmentMessage(
+                  // A complete marker becomes buttons at turn end; an
+                  // unterminated one is still being typed and must not
+                  // flash as prose on the way there.
+                  stripPartialOptions(extractOptions(stripInlineTags(streamBuffer)).cleanedText),
+                ).map((seg, i) =>
                   seg.kind === "widget" ? (
-                    <Widget key={i} title={seg.title} html={seg.html} />
+                    <Widget key={i} title={seg.title} html={seg.html} onAction={handleWidgetAction} />
                   ) : seg.kind === "goal-marker" ? (
                     <GoalMarkerChip key={i} attrs={seg.attrs} />
                   ) : seg.kind === "goal-auto" ? (
@@ -1805,6 +1869,9 @@ export default function ChatPanel({
         draftKey={sessionId}
         queuedPreview={queuedMessage?.text ?? null}
         onCancelQueued={() => setQueued(null)}
+        canSteer={canSteer}
+        steerMode={steerMode}
+        onToggleSteerMode={toggleSteerMode}
         sessionId={sessionId}
         goal={goal}
         goalStatus={goalStatus}

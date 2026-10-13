@@ -776,9 +776,23 @@ async def set_session_model(session_id: str, request: Request) -> None:
     from arz.session.session import Session
 
     assert isinstance(session, Session)
-    session.model = model or None
+    new_model = model or None
+    if session.model == new_model:
+        # No-op PATCH. The input bar re-sends the resolved default whenever a
+        # session has no model of its own, so this arrives unprompted — and it
+        # used to tear down the provider every time, killing whatever turn was
+        # running underneath.
+        return
+    session.model = new_model
     mgr.save(session)
-    # Drop the existing provider so the next message rebuilds with the new model.
+    # Drop the existing provider so the next message rebuilds with the new
+    # model — but never mid-turn: the model applies from the next spawn, and
+    # deactivating now would kill the reply the user is watching.
+    from arz.dashboard.stream_registry import get_stream_registry
+
+    if get_stream_registry().is_streaming(session_id):
+        log.info("model changed during a turn — provider swap deferred", session_id=session_id)
+        return
     pool = getattr(request.app.state, "provider_pool", None)
     if pool is not None:
         await pool.deactivate(session_id)

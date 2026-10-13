@@ -62,10 +62,12 @@ export default function MessageContent({
   text,
   mentions,
   onTaskToggle,
+  onSendText,
 }: {
   text: string;
   mentions?: string[];
   onTaskToggle?: (lineIdx: number, checked: boolean) => void;
+  onSendText?: (text: string) => void;
 }) {
   const segments = useMemo(() => parseSegments(text), [text]);
   return (
@@ -76,7 +78,7 @@ export default function MessageContent({
             <CedarMarkdown key={i} text={seg.value} mentions={mentions} onTaskToggle={onTaskToggle} />
           ) : null
         ) : (
-          <Widget key={i} title={seg.title} html={seg.html} />
+          <Widget key={i} title={seg.title} html={seg.html} onAction={onSendText} />
         ),
       )}
     </>

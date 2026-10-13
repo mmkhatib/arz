@@ -10,8 +10,10 @@ import type { MessageRecord } from "@/api/client";
 import MermaidBlock from "./MermaidBlock";
 import { formatTokens } from "@/utils/tokens";
 import Widget from "./Widget";
+import { Crosshair } from "lucide-react";
 import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
-import { segmentMessage, splitGoalTags } from "@/utils/segments";
+import SuggestedActions from "./SuggestedActions";
+import { extractOptions, segmentMessage, splitGoalTags } from "@/utils/segments";
 
 /* Path-shaped tokens we want to make click-to-open. Catches:
  *   /abs/posix/path.ext
@@ -85,6 +87,9 @@ function shortModel(model: string): string {
 interface Props {
   message: MessageRecord;
   onFileOpen?: (path: string) => void;
+  /** Send text as the user's next message — a widget button, or a choice
+   *  the assistant offered with a trailing `[OPTIONS: A | B | C]`. */
+  onSendText?: (text: string) => void;
   onCompare?: () => void;
   /** Last-user-message gets a pencil for in-place edit + resend. */
   isLastUser?: boolean;
@@ -420,6 +425,7 @@ function CodeBlock({ children, className }: { children?: React.ReactNode; classN
 export default function MessageBubble({
   message,
   onFileOpen,
+  onSendText,
   onCompare,
   isLastUser,
   isLastAssistant,
@@ -436,7 +442,13 @@ export default function MessageBubble({
     () => (isUser ? message.text : stripInlineTags(message.text)),
     [message.text, isUser],
   );
-  const segments = useMemo(() => segmentMessage(displayText), [displayText]);
+  // A trailing `[OPTIONS: A | B | C]` becomes buttons, not literal text —
+  // the choice the assistant offered is one click instead of a retype.
+  const { cleanedText, choices } = useMemo(
+    () => (isUser ? { cleanedText: displayText, choices: [] } : extractOptions(displayText)),
+    [displayText, isUser],
+  );
+  const segments = useMemo(() => segmentMessage(cleanedText), [cleanedText]);
   const [editing, setEditing] = useState(false);
   const [editDraft, setEditDraft] = useState(message.text);
 
@@ -456,6 +468,13 @@ export default function MessageBubble({
         className="flex flex-col gap-0.5"
         style={{ maxWidth: isUser ? "72%" : "calc(100% - 36px)" }}
       >
+        {/* A steered turn never started a turn of its own — say so, or it
+            reads as an ordinary message the agent silently ignored. */}
+        {isUser && message.steer && (
+          <span className="flex items-center gap-1 self-end px-1 text-[9.5px] font-mono uppercase tracking-wider text-[var(--cedar-glow)]">
+            <Crosshair size={10} /> steered into the running turn
+          </span>
+        )}
         <div
           className={[
             "text-[14px] break-words",
@@ -550,7 +569,7 @@ export default function MessageBubble({
               )}
               {segments.map((seg, segIdx) =>
                 seg.kind === "widget" ? (
-                  <Widget key={segIdx} title={seg.title} html={seg.html} />
+                  <Widget key={segIdx} title={seg.title} html={seg.html} onAction={onSendText} />
                 ) : seg.kind === "goal-marker" ? (
                   <GoalMarkerChip key={segIdx} attrs={seg.attrs} />
                 ) : seg.kind === "goal-auto" ? (
@@ -645,6 +664,11 @@ export default function MessageBubble({
             </>
           )}
         </div>
+
+        {/* Ranked next-actions, newest reply only — see SuggestedActions. */}
+        {isLastAssistant && onSendText && (
+          <SuggestedActions choices={choices} onPick={onSendText} />
+        )}
 
         {/* Footer: timestamp + model + usage. Always visible — usage is
             information users want to see at a glance, not on hover. */}

@@ -26,6 +26,10 @@ METHOD_PROMPT = "session/prompt"
 METHOD_CANCEL = "session/cancel"
 METHOD_REQUEST_PERMISSION = "session/request_permission"
 METHOD_SESSION_UPDATE = "session/update"
+# Vendor extension (kiro-cli): inject a message into the RUNNING turn instead
+# of starting a new one. Backends without it answer method-not-found, which
+# the steer path treats as "not steerable" and falls back to the send queue.
+METHOD_STEER = "_session/steer"
 
 # ── session/update sub-types ───────────────────────────────────────────────────
 

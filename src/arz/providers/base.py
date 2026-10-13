@@ -71,6 +71,20 @@ class LLMProvider(ABC):
     async def cancel(self) -> None:
         """Cancel the in-flight operation. No-op for providers without native support."""
 
+    async def steer(self, message: str) -> bool:
+        """Inject *message* into the turn that is CURRENTLY running.
+
+        Returns True when the backend accepted the injection. Default False —
+        a provider with no mid-turn steer path makes the caller fall back to
+        the single-slot send queue, which fires the message as a fresh turn.
+        """
+        return False
+
+    @property
+    def supports_steer(self) -> bool:
+        """True when this provider implements mid-turn steer."""
+        return False
+
     async def compact(self, context: str = "") -> None:
         """Trigger context compaction. No-op for providers without native support."""
 

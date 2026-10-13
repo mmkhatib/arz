@@ -40,6 +40,7 @@ from arz.acp.types import (
     METHOD_SESSION_NEW,
     METHOD_SESSION_UPDATE,
     METHOD_SET_MODEL,
+    METHOD_STEER,
     OPTION_ALLOW_ONCE,
     OUTCOME_SELECTED,
     PROTOCOL_VERSION,
@@ -58,7 +59,7 @@ _STDOUT_LIMIT = 10 * 1024 * 1024  # 10 MB — tool outputs can be large
 _INIT_TIMEOUT = 60.0
 _PROMPT_TIMEOUT = 7200.0  # 2 hours
 _CLIENT_NAME = "arz"
-_CLIENT_VERSION = "0.8.28"
+_CLIENT_VERSION = "0.8.32"
 
 
 class AcpError(Exception):
@@ -239,6 +240,37 @@ class AcpClient:
             )
         except Exception:
             logger.warning("ACP cancel failed", exc_info=True)
+
+    async def steer(self, message: str) -> bool:
+        """Inject a mid-turn steer via kiro-cli's ``_session/steer`` extension.
+
+        Fire-and-forget: the request is written but its response is NOT
+        awaited, because the in-flight prompt's read loop is the only consumer
+        of stdout and a concurrent wait would steal that turn's messages. The
+        loop ignores the stray response; the steered reply streams back inside
+        the SAME prompt. Returns False when there is nothing to steer into.
+        """
+        text = (message or "").strip()
+        if not text or not self._session_id or not self.is_alive():
+            return False
+        wrapped = f"<user_message>\n{text}\n</user_message>"
+        try:
+            await self._send(
+                JsonRpcRequest(
+                    method=METHOD_STEER,
+                    params={"sessionId": self._session_id, "message": wrapped},
+                    id=self._next_req_id(),
+                )
+            )
+        except Exception:
+            logger.warning("ACP steer failed", exc_info=True)
+            return False
+        return True
+
+    @property
+    def supports_steer(self) -> bool:
+        """True while a session is live — kiro-cli implements ``_session/steer``."""
+        return bool(self._session_id) and self.is_alive()
 
     def is_alive(self) -> bool:
         return self._process is not None and self._process.returncode is None

@@ -90,6 +90,14 @@ class ClaudeCodeProvider(LLMProvider):
     async def reject_tool(self, request_id: str | int) -> None:
         await self._client.reject_tool(str(request_id))
 
+    async def steer(self, message: str) -> bool:
+        """Write a mid-turn steer onto the persistent stream-json stdin."""
+        return await self._client.steer(message)
+
+    @property
+    def supports_steer(self) -> bool:
+        return self._client.supports_steer
+
     @property
     def pid(self) -> int | None:
         proc = getattr(self._client, "_process", None)

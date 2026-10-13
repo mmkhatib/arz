@@ -36,6 +36,11 @@ def sse_complete(
     return sse_event(payload)
 
 
+def sse_steer(text: str) -> str:
+    """A user message injected into the turn already running."""
+    return sse_event({"type": "steer", "text": text})
+
+
 def sse_error(message: str) -> str:
     return sse_event({"type": "error", "message": message})
 

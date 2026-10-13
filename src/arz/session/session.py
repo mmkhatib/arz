@@ -68,6 +68,9 @@ class Message:
     source_user: str | None = None
     source_thread: str | None = None
     source_surface: str | None = None  # "dashboard" | "slack" | "cli" | etc.
+    # True when this user turn was injected into an already-running turn
+    # (mid-turn steer) rather than starting one. Renders as a steer chip.
+    steer: bool = False
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -92,6 +95,8 @@ class Message:
             d["source_thread"] = self.source_thread
         if self.source_surface:
             d["source_surface"] = self.source_surface
+        if self.steer:
+            d["steer"] = True
         return d
 
     @classmethod
@@ -109,6 +114,7 @@ class Message:
             source_user=d.get("source_user"),
             source_thread=d.get("source_thread"),
             source_surface=d.get("source_surface"),
+            steer=bool(d.get("steer", False)),
         )
 
 

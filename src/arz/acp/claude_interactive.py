@@ -111,6 +111,15 @@ class ClaudeInteractiveClient:
             "--input-format",
             "stream-json",
         ]
+        if self._system_prompt:
+            # The steering prompt has to ride the CLI flag. A `{type:
+            # "system"}` frame on stdin is silently dropped — stream-json
+            # input takes user messages only — so for a long time base.md
+            # never reached the model at all: it could not answer questions
+            # about its own instructions, and ignored anything they asked
+            # for. Append rather than replace, so Claude Code keeps its own
+            # tool guidance underneath ours.
+            argv += ["--append-system-prompt", self._system_prompt]
         if self._model:
             argv += ["--model", self._model]
         if getattr(self, "_permission_mode", None):
@@ -180,6 +189,17 @@ class ClaudeInteractiveClient:
     # ── Streaming ─────────────��──────────────────────────────���───────────────
 
     async def stream_events(self, message: str) -> AsyncIterator[AcpEvent]:
+        """Run one turn, transparently absorbing any steer injected into it."""
+        self._turn_active = True
+        self._steer_pending = 0
+        try:
+            async for event in self._stream_events_inner(message):
+                yield event
+        finally:
+            self._turn_active = False
+            self._steer_pending = 0
+
+    async def _stream_events_inner(self, message: str) -> AsyncIterator[AcpEvent]:
         if not self.is_alive():
             raise RuntimeError("Claude interactive process is not running")
 
@@ -262,6 +282,15 @@ class ClaudeInteractiveClient:
                         )
 
             elif event_type == "result":
+                if self._steer_pending > 0:
+                    # A steer went in during this turn. The CLI finishes the
+                    # work it was already doing, closes it with this result,
+                    # then answers the steer as a SEPARATE result on the same
+                    # stdout. Both belong to this turn — returning here would
+                    # leave the steered reply in the pipe for the next turn to
+                    # read, answering the wrong question.
+                    self._steer_pending -= 1
+                    continue
                 stop = "error" if obj.get("is_error") else "end_turn"
                 from arz.acp.types import Usage
 
@@ -317,6 +346,52 @@ class ClaudeInteractiveClient:
                 }
             )
 
+    async def steer(self, message: str) -> bool:
+        """Inject a mid-turn steer into the running turn.
+
+        The CLI runs with ``--input-format stream-json`` and keeps reading
+        stdin while it works, so an extra user frame written now is picked up
+        at the next safe point of the turn instead of starting a new one. The
+        text is wrapped so the model can tell a steer apart from a tool reply
+        arriving on the same channel.
+
+        Fire-and-forget: the steered reply streams back inside the SAME
+        in-flight turn, so there is nothing to await. Returns False when the
+        process is gone — the caller then falls back to the send queue.
+        """
+        text = (message or "").strip()
+        if not text or not self.is_alive() or not self._turn_active:
+            return False
+        wrapped = f"<user_message>\n{text}\n</user_message>"
+        try:
+            await self._write_json(
+                {
+                    "type": "user",
+                    "message": {
+                        "role": "user",
+                        "content": [{"type": "text", "text": wrapped}],
+                    },
+                }
+            )
+        except (BrokenPipeError, ConnectionResetError, AssertionError, AttributeError):
+            logger.info("steer write failed — claude process gone")
+            return False
+        # Counted AFTER the successful write so a failed write never leaves
+        # the reader waiting for a result that will not come.
+        self._steer_pending += 1
+        return True
+
+    @property
+    def supports_steer(self) -> bool:
+        """True while the persistent stdin process is up to take the write."""
+        return self.is_alive()
+
+    # Set for the duration of a turn. A steer outside one has nothing to be
+    # picked up by, and its reply would land in whichever turn reads next.
+    _turn_active: bool = False
+    # Extra `result` frames this turn still owes, one per accepted steer.
+    _steer_pending: int = 0
+
     # ── Private ───���──────────────────────────────────────────────────────────
 
     async def _write_json(self, obj: dict) -> None:
@@ -348,32 +423,19 @@ class ClaudeInteractiveClient:
     async def _inject_system_context(self) -> None:
         """Rehydrate a fresh claude-code process with our prior turns.
 
-        Two layers:
+        The steering prompt itself goes in on the command line
+        (``--append-system-prompt``, see ``start()``); this replays history:
 
-        1. ``{type: "system"}`` carrying the steered system prompt. Claude
-           treats this as part of its setup — the place for "you are arz,
-           emit `<arzwidget>` for visual asks, etc."
-        2. Each prior conversation turn replayed as a native
-           ``{type: "user"}`` / ``{type: "assistant"}`` ACP message. This
-           is what the bug fix is for: previously we bundled history into
-           ONE ``type: system`` text blob with ``<USER>...</USER>`` tags,
-           and Claude read it as "instructions describing turns" rather
-           than as its own conversation history. Result: after a gateway
-           restart, the model would claim "this is the first exchange
-           between us" even though we'd injected all prior content.
-
-           Sending each turn natively makes Claude carry the prior code
-           it wrote, prior tool calls' results, etc., as genuine memory
-           of the conversation.
+        Each prior conversation turn is replayed as a native
+        ``{type: "user"}`` / ``{type: "assistant"}`` message. Previously we
+        bundled history into ONE ``type: system`` text blob with
+        ``<USER>...</USER>`` tags, and Claude read it as "instructions
+        describing turns" rather than as its own conversation history:
+        after a gateway restart the model would claim "this is the first
+        exchange between us" even though we had injected all prior content.
+        Sending each turn natively makes Claude carry the prior code it
+        wrote, prior tool results, etc., as genuine memory.
         """
-        if self._system_prompt:
-            await self._write_json(
-                {
-                    "type": "system",
-                    "content": [{"type": "text", "text": self._system_prompt}],
-                }
-            )
-
         if not self._history_messages:
             return
 

@@ -177,3 +177,117 @@ def test_load_config_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.provider.name == "kiro-cli"
     # port comes in as string from env, pydantic coerces to int
     assert config.dashboard.port == 8888
+
+
+# ── Mid-turn steer ─────────────────────────────────────────────────────────────
+
+
+def test_every_provider_answers_the_steer_contract() -> None:
+    """Conformance: `steer` / `supports_steer` exist on every implementation.
+
+    A provider without a native mid-turn path must say so rather than raise —
+    the chat route reads the flag to decide between steering and queueing.
+    """
+    from arz.providers.claude_code import ClaudeCodeProvider
+    from arz.providers.codex import CodexProvider
+    from arz.providers.gemini import GeminiProvider
+    from arz.providers.kiro_cli import KiroCliProvider
+    from arz.providers.ollama import OllamaProvider
+
+    for cls in (
+        ClaudeCodeProvider,
+        KiroCliProvider,
+        CodexProvider,
+        GeminiProvider,
+        OllamaProvider,
+    ):
+        assert callable(getattr(cls, "steer", None)), f"{cls.__name__} has no steer()"
+        assert isinstance(getattr(cls, "supports_steer", None), property)
+
+
+@pytest.mark.asyncio
+async def test_claude_interactive_steer_refused_outside_a_turn() -> None:
+    """A steer with no turn running would be answered as a fresh turn, whose
+    reply the next turn's reader would then mistake for its own."""
+    from arz.acp.claude_interactive import ClaudeInteractiveClient
+
+    client = ClaudeInteractiveClient.__new__(ClaudeInteractiveClient)
+    client._process = MagicMock(returncode=None)  # noqa: SLF001
+    client._turn_active = False  # noqa: SLF001
+
+    assert await client.steer("change course") is False
+    assert client._steer_pending == 0  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_claude_interactive_steer_writes_and_owes_a_result() -> None:
+    """An accepted steer wraps the text and books the extra `result` frame the
+    turn now owes, so the reader keeps going instead of closing early."""
+    from arz.acp.claude_interactive import ClaudeInteractiveClient
+
+    client = ClaudeInteractiveClient.__new__(ClaudeInteractiveClient)
+    client._process = MagicMock(returncode=None)  # noqa: SLF001
+    client._turn_active = True  # noqa: SLF001
+    client._steer_pending = 0  # noqa: SLF001
+    written: list[dict] = []  # type: ignore[type-arg]
+
+    async def _capture(obj: dict) -> None:  # type: ignore[type-arg]
+        written.append(obj)
+
+    client._write_json = _capture  # type: ignore[method-assign]  # noqa: SLF001
+
+    assert await client.steer("stop at 10") is True
+    assert client._steer_pending == 1  # noqa: SLF001
+    text = written[0]["message"]["content"][0]["text"]
+    assert text == "<user_message>\nstop at 10\n</user_message>"
+
+
+@pytest.mark.asyncio
+async def test_steered_reply_stays_inside_the_same_turn() -> None:
+    """The CLI closes the pre-steer work with its own `result`, then answers the
+    steer with a second one. Both are this turn's — one COMPLETE, no leftovers
+    in the pipe for the next turn to read."""
+    from arz.acp.claude_interactive import ClaudeInteractiveClient
+
+    client = ClaudeInteractiveClient.__new__(ClaudeInteractiveClient)
+    client._session_id = "s1"  # noqa: SLF001
+    client._resumed = False  # noqa: SLF001
+
+    lines = [
+        json.dumps(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "1..40"}]}}
+        ).encode()
+        + b"\n",
+        json.dumps({"type": "result", "is_error": False}).encode() + b"\n",
+        json.dumps(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "STEERED"}]}}
+        ).encode()
+        + b"\n",
+        json.dumps({"type": "result", "is_error": False}).encode() + b"\n",
+    ]
+    proc = MagicMock(returncode=None)
+    proc.stdout = AsyncMock()
+    proc.stdout.readline = AsyncMock(side_effect=lines + [b""])
+    proc.stdin = MagicMock()
+    client._process = proc  # noqa: SLF001
+
+    async def _noop(obj: dict) -> None:  # type: ignore[type-arg]
+        return None
+
+    client._write_json = _noop  # type: ignore[method-assign]  # noqa: SLF001
+
+    events: list[LLMEvent] = []
+    steered = False
+    async for ev in client.stream_events("list 1..40"):
+        if not steered:
+            # Injected while the first result is still ahead of the reader.
+            await client.steer("stop at 10")
+            steered = True
+        events.append(ev)
+
+    texts = [e.text for e in events if e.kind == EVENT_TEXT_CHUNK]
+    assert texts == ["1..40", "STEERED"]
+    assert sum(1 for e in events if e.kind == EVENT_COMPLETE) == 1
+    # Turn state is released so the next turn starts from a clean slate.
+    assert client._turn_active is False  # noqa: SLF001
+    assert client._steer_pending == 0  # noqa: SLF001

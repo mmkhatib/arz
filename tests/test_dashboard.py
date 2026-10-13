@@ -111,3 +111,51 @@ def test_delete_session(client: TestClient) -> None:
 def test_delete_session_not_found(client: TestClient) -> None:
     r = client.delete("/api/sessions/nonexistent-id")
     assert r.status_code == 404
+
+
+# ── Model PATCH must not tear down a live turn ─────────────────────────────────
+
+
+def _record_deactivations(client: TestClient) -> list[str]:
+    """Swap the app's pool teardown for a recorder."""
+    pool = client.app.state.provider_pool  # type: ignore[attr-defined]
+    seen: list[str] = []
+
+    async def _deactivate(session_id: str) -> None:
+        seen.append(session_id)
+
+    pool.deactivate = _deactivate  # type: ignore[method-assign]
+    return seen
+
+
+def test_model_patch_is_a_noop_when_the_model_is_unchanged(client: TestClient) -> None:
+    """The input bar re-sends the resolved default whenever a session has no
+    model of its own. That PATCH used to drop the provider every time, killing
+    whatever turn was running underneath it."""
+    sid = client.post("/api/sessions").json()["id"]
+    seen = _record_deactivations(client)
+
+    assert client.patch(f"/api/sessions/{sid}/model", json={"model": "m1"}).status_code == 204
+    assert seen == [sid]  # a real change still swaps the provider
+
+    seen.clear()
+    assert client.patch(f"/api/sessions/{sid}/model", json={"model": "m1"}).status_code == 204
+    assert seen == []
+
+
+def test_model_patch_defers_the_swap_while_a_turn_runs(client: TestClient) -> None:
+    """A model change mid-turn applies from the next spawn. Dropping the
+    provider now would kill the reply the user is watching."""
+    from arz.dashboard.stream_registry import StreamState, get_stream_registry
+
+    sid = client.post("/api/sessions").json()["id"]
+    seen = _record_deactivations(client)
+    registry = get_stream_registry()
+    registry._states[sid] = StreamState(session_id=sid, status="running")  # noqa: SLF001
+    try:
+        assert client.patch(f"/api/sessions/{sid}/model", json={"model": "m2"}).status_code == 204
+        assert seen == []
+        # The choice is still recorded — only the teardown is deferred.
+        assert client.get(f"/api/sessions/{sid}").json()["model"] == "m2"
+    finally:
+        registry._states.pop(sid, None)  # noqa: SLF001
