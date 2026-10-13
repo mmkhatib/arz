@@ -30,6 +30,10 @@ export interface SessionSummary {
   goal_last_reason?: string;
   pinned?: boolean;
   archived?: boolean;
+  /** New messages since the user last viewed this session. */
+  unread?: boolean;
+  /** A tool approval is waiting on the user. */
+  needs_input?: boolean;
 }
 
 export interface UsageRecord {
@@ -43,12 +47,22 @@ export interface UsageRecord {
   turn_duration_ms?: number;
 }
 
+export interface ToolCallRecord {
+  name: string;
+  input: string;
+  /** Tool output stitched on by the server (capped at 32k). */
+  output?: string;
+  tool_call_id?: string;
+}
+
 export interface MessageRecord {
   role: "user" | "assistant" | "system";
   text: string;
   created_at: string;
   /** Tool calls made during this message (assistant only) */
-  tool_calls?: { name: string; input: string }[];
+  tool_calls?: ToolCallRecord[];
+  /** Reasoning the model emitted during this turn (assistant only). */
+  thinking?: string;
   /** Wall time in milliseconds from send to complete (assistant only) */
   elapsed_ms?: number;
   /** Token usage reported by the provider on EVENT_COMPLETE (assistant only) */
@@ -336,6 +350,54 @@ export interface SSEChunk {
   title?: string;
   status?: string;
   detail?: string;
+}
+
+export type GitFileStatus = "M" | "A" | "D" | "U";
+
+export interface WorkspaceEntry {
+  name: string;
+  path: string;
+  rel_path: string;
+  is_dir: boolean;
+  size: number;
+  status: GitFileStatus | null;
+  hidden: boolean;
+}
+
+export interface WorkspaceTree {
+  root: string;
+  rel: string;
+  entries: WorkspaceEntry[];
+  is_repo: boolean;
+}
+
+export interface GrepHit {
+  path: string;
+  rel_path: string;
+  line: number;
+  text: string;
+}
+
+export interface GitStatus {
+  is_repo: boolean;
+  branch: string | null;
+  files: { path: string; rel_path: string; status: GitFileStatus }[];
+}
+
+export interface FileDiff {
+  path: string;
+  is_repo: boolean;
+  original: string;
+  modified: string;
+  diff: string;
+}
+
+export interface ContextTraceTurn {
+  ts: number;
+  /** Char size per injected block: user, memory, recall, goal, subagents, reminder, history, system. */
+  blocks: Record<string, number>;
+  context_pct: number | null;
+  usage: UsageRecord | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -1126,6 +1188,16 @@ export const api = {
     });
   },
 
+  async markSessionRead(sessionId: string): Promise<void> {
+    await fetch(`${BASE}/sessions/${sessionId}/read`, { method: "POST" });
+  },
+
+  cleanupSessions: (maxInactiveDays: number, dryRun: boolean) =>
+    request<{ dry_run: boolean; count: number; sessions: { id: string; title: string; updated_at: string }[] }>(
+      "/sessions/cleanup",
+      { method: "POST", body: JSON.stringify({ max_inactive_days: maxInactiveDays, dry_run: dryRun }) },
+    ),
+
   async setSessionArchive(sessionId: string, archived: boolean): Promise<void> {
     await fetch(`${BASE}/sessions/${sessionId}/archive`, {
       method: "PATCH",
@@ -1163,6 +1235,18 @@ export const api = {
     request<{ path: string; rel_path: string; name: string; ext: string; size: number }[]>(
       `/sessions/${id}/files`
     ),
+
+  // ── Side panel: workspace tree / grep / git / context trace ──
+  fetchWorkspaceTree: (id: string, rel = "") =>
+    request<WorkspaceTree>(`/sessions/${id}/tree?rel=${encodeURIComponent(rel)}`),
+  grepWorkspace: (id: string, q: string, caseSensitive = false) =>
+    request<{ hits: GrepHit[]; truncated: boolean }>(
+      `/sessions/${id}/grep?q=${encodeURIComponent(q)}${caseSensitive ? "&case=true" : ""}`,
+    ),
+  fetchGitStatus: (id: string) => request<GitStatus>(`/sessions/${id}/git-status`),
+  fetchFileDiff: (path: string) => request<FileDiff>(`/files/diff?path=${encodeURIComponent(path)}`),
+  fetchContextTrace: (id: string) =>
+    request<{ turns: ContextTraceTurn[] }>(`/sessions/${id}/context-trace`),
 
   async generateTitle(sessionId: string, userMsg?: string, assistantMsg?: string): Promise<string> {
     const body: Record<string, string> = {};

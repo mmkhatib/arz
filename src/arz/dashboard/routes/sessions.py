@@ -135,13 +135,80 @@ def _session_to_dict(session: object) -> dict:
         "goal_last_reason": getattr(session, "goal_last_reason", ""),
         "pinned": getattr(session, "pinned", False),
         "archived": getattr(session, "archived", False),
+        "unread": len(session.messages) > getattr(session, "last_read_count", 0),
     }
+
+
+def _sessions_awaiting_approval(request: Request) -> set[str]:
+    """Session ids with a tool approval still waiting on the user."""
+    meta: dict[str, dict] = getattr(request.app.state, "pending_approval_meta", {}) or {}
+    pending = getattr(request.app.state, "pending_approvals", {}) or {}
+    return {m.get("session_id", "") for rid, m in meta.items() if rid in pending}
 
 
 @router.get("/api/sessions")
 async def list_sessions(request: Request) -> list[dict]:
     mgr: SessionManager = _get_manager(request)
-    return [_session_to_dict(s) for s in mgr.list_active()]
+    waiting = _sessions_awaiting_approval(request)
+    out = []
+    for s in mgr.list_active():
+        d = _session_to_dict(s)
+        d["needs_input"] = s.id in waiting
+        out.append(d)
+    return out
+
+
+@router.post("/api/sessions/{session_id}/read", status_code=status.HTTP_204_NO_CONTENT)
+async def mark_session_read(session_id: str, request: Request) -> None:
+    """Mark every message currently in the session as seen."""
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    from arz.session.session import Session
+
+    assert isinstance(session, Session)
+    if session.last_read_count != len(session.messages):
+        session.last_read_count = len(session.messages)
+        mgr.save(session)
+
+
+@router.post("/api/sessions/cleanup")
+async def cleanup_sessions(request: Request) -> dict:
+    """Archive sessions idle for more than ``max_inactive_days``.
+
+    Pinned, streaming, and already-archived sessions are skipped. With
+    ``dry_run`` (default true) nothing changes — the caller gets the
+    candidate list to confirm first.
+    """
+    from datetime import datetime, timedelta
+
+    from arz.dashboard.stream_registry import get_stream_registry
+    from arz.session.session import Session
+
+    body = await request.json() if request.headers.get("content-type") == "application/json" else {}
+    try:
+        days = float(body.get("max_inactive_days", 14))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="max_inactive_days must be a number")
+    if days < 0:
+        raise HTTPException(status_code=400, detail="max_inactive_days must be >= 0")
+    dry_run = bool(body.get("dry_run", True))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    registry = get_stream_registry()
+    mgr: SessionManager = _get_manager(request)
+    candidates: list[dict] = []
+    for s in mgr.list_active():
+        assert isinstance(s, Session)
+        if s.pinned or s.archived or registry.is_streaming(s.id):
+            continue
+        if s.updated_at.replace(tzinfo=None) >= cutoff:
+            continue
+        candidates.append({"id": s.id, "title": s.title, "updated_at": s.updated_at.isoformat()})
+        if not dry_run:
+            s.archived = True
+            mgr.save(s)
+    return {"dry_run": dry_run, "count": len(candidates), "sessions": candidates}
 
 
 @router.post("/api/sessions", status_code=status.HTTP_201_CREATED)

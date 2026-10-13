@@ -1,9 +1,20 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File } from "lucide-react";
+import { splitLineRef, type PathRef } from "@/utils/pathRefs";
+import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File, GitCompare, ListTodo, Gauge, Plus, X } from "lucide-react";
 import { api } from "@/api/client";
 import SegmentedControl from "./SegmentedControl";
 import { useTouchedFiles } from "@/hooks/useTouchedFiles";
+import {
+  usePanelTabs, isPinned, tabPath, PINNED_VIEWS, MENU_VIEWS,
+  type PanelTabId, type PanelView,
+} from "@/hooks/usePanelTabs";
+import { collectFileChanges, latestTodos, todoProgress, type FileChange } from "@/utils/panelData";
 import { FileViewer } from "./FileViewer";
+import DiffTab from "./DiffTab";
+import ChangesView from "./ChangesView";
+import TasksView from "./TasksView";
+import WorkspaceTree from "./WorkspaceTree";
+import ContextBreakdown from "./ContextBreakdown";
 import TerminalView, { isShellTool } from "./TerminalView";
 import { hasAnsi } from "@/utils/ansi";
 
@@ -464,8 +475,6 @@ function formatSize(bytes: number): string {
 }
 
 /* ── Types ── */
-type Tab = "tools" | "files" | "subagents" | "logs";
-
 interface SseLogEntry { type: string; time: string; summary?: string; }
 
 interface Props {
@@ -475,20 +484,64 @@ interface Props {
   seedPaths?: string[];
   requestedFile?: string | null;
   onFileOpenHandled?: () => void;
+  /** Tab to surface on mount / when it changes (e.g. ContextRing click). */
+  requestedTab?: PanelTabId | null;
+  onTabRequestHandled?: () => void;
   onClose: () => void;
   width: number;
   onWidthChange: (w: number) => void;
   onSpawnSession?: (prompt: string) => void;
 }
 
+export const PANEL_MIN_WIDTH = 220;
+export const PANEL_MAX_WIDTH = 900;
+
+const VIEW_META: Record<PanelView, { label: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
+  files: { label: "Files", icon: FileText },
+  changes: { label: "Changes", icon: GitCompare },
+  tools: { label: "Tools", icon: Wrench },
+  tasks: { label: "Tasks", icon: ListTodo },
+  context: { label: "Context", icon: Gauge },
+  subagents: { label: "Agents", icon: Bot },
+  logs: { label: "Logs", icon: ScrollText },
+};
+
+type FilesMode = "session" | "workspace";
+
 /* ── Main component ── */
-export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seedPaths, requestedFile, onFileOpenHandled, onClose, width, onWidthChange, onSpawnSession }: Props) {
-  const [tab, setTab] = useState<Tab>("files");
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+export default function ActivityPane({
+  sessionId, toolEntries, sseLog = [], seedPaths, requestedFile, onFileOpenHandled,
+  requestedTab, onTabRequestHandled, onClose, width, onWidthChange, onSpawnSession,
+}: Props) {
+  const tabs = usePanelTabs(sessionId);
+  const { open: openTab, add: addTab, close: closeTab, activate } = tabs;
+  const active = tabs.state.active;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [filesMode, setFilesMode] = useState<FilesMode>(() => {
+    try { return localStorage.getItem("arz:files-mode") === "workspace" ? "workspace" : "session"; }
+    catch { return "session"; }
+  });
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const touchedFiles = useTouchedFiles(sessionId, toolEntries, seedPaths);
+  const changes = useMemo(() => collectFileChanges(toolEntries), [toolEntries]);
+  const changeByPath = useMemo(() => new Map(changes.map((c) => [c.path, c])), [changes]);
+  const todos = useMemo(() => latestTodos(toolEntries), [toolEntries]);
+
+  useEffect(() => {
+    try { localStorage.setItem("arz:files-mode", filesMode); } catch { /* ignore */ }
+  }, [filesMode]);
+
+  // Chat links can carry a line (`path:42`, `path:10-20`); the tab is keyed
+  // by path alone and the viewer scrolls to the remembered line.
+  const [fileLines, setFileLines] = useState<Record<string, PathRef>>({});
+  const openFile = useCallback((raw: string) => {
+    const ref = splitLineRef(raw);
+    if (ref.line != null) setFileLines((prev) => ({ ...prev, [ref.path]: ref }));
+    openTab(`file:${ref.path}`);
+  }, [openTab]);
+  const openDiff = useCallback((p: string) => openTab(`diff:${p}`), [openTab]);
 
   // Build merged file list: workspace scan + tool-touched
   const allFiles = useMemo<WorkspaceFile[]>(() => {
@@ -515,9 +568,9 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
     return merged;
   }, [workspaceFiles, touchedFiles]);
 
-  // Fetch workspace files when Files tab is active; auto-refresh every 5s
+  // Fetch the session file list while the Files tab shows it; refresh every 5s
   useEffect(() => {
-    if (tab !== "files") return;
+    if (active !== "files" || filesMode !== "session") return;
     let cancelled = false;
     const fetch = () => {
       api.fetchSessionFiles(sessionId)
@@ -527,16 +580,22 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
     fetch();
     const id = setInterval(fetch, 5000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [tab, sessionId]);
+  }, [active, filesMode, sessionId]);
 
   // Handle file open requested from outside (e.g., clicking a path in chat)
   useEffect(() => {
     if (requestedFile) {
-      setTab("files");
-      setSelectedFile(requestedFile);
+      openFile(requestedFile);
       onFileOpenHandled?.();
     }
-  }, [requestedFile, onFileOpenHandled]);
+  }, [requestedFile, onFileOpenHandled, openFile]);
+
+  useEffect(() => {
+    if (requestedTab) {
+      openTab(requestedTab);
+      onTabRequestHandled?.();
+    }
+  }, [requestedTab, onTabRequestHandled, openTab]);
 
   // Track when each subagent callId first appeared
   const startTimesRef = useRef<Map<string, number>>(new Map());
@@ -545,25 +604,18 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
     if (!startTimesRef.current.has(e.callId)) startTimesRef.current.set(e.callId, Date.now());
   });
 
-  // Auto-switch to Subagents tab when first subagent appears
+  // Surface the Agents tab when the first subagent appears
   const hadSubagents = useRef(false);
   useEffect(() => {
-    if (subagentEntries.length > 0 && !hadSubagents.current) { setTab("subagents"); }
+    if (subagentEntries.length > 0 && !hadSubagents.current) openTab("subagents");
     hadSubagents.current = subagentEntries.length > 0;
-  }, [subagentEntries.length]);
+  }, [subagentEntries.length, openTab]);
 
-  // Auto-switch to Files tab when the agent first touches a file — but
-  // do NOT auto-open the file in the viewer. Per design intent the list
-  // updates live; the viewer only takes over when the user clicks a row.
-  const lastSeenTouchedPath = useRef<string | null>(null);
+  // Surface (but don't focus) the Tasks tab once the agent writes a plan.
+  const hasTodos = !!todos && todos.length > 0;
   useEffect(() => {
-    if (touchedFiles.length === 0) return;
-    const latest = touchedFiles[touchedFiles.length - 1];
-    if (latest.path === lastSeenTouchedPath.current) return;
-    lastSeenTouchedPath.current = latest.path;
-    if (tab !== "files") setTab("files");
-    // selectedFile intentionally left alone — open on click, not on touch.
-  }, [touchedFiles, tab]);
+    if (hasTodos) addTab("tasks");
+  }, [hasTodos, addTab]);
 
   const lastToolIdx = toolEntries.reduce((last, e, i) => (!e.done ? i : last), -1);
   const activeIdx = toolEntries.findIndex((e) => !e.done);
@@ -593,32 +645,35 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
   };
 
   useEffect(() => {
+    const clamp = (w: number) => Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, w));
     const onMove = (e: MouseEvent) => {
       if (!dragging.current) return;
-      const delta = dragStartX.current - e.clientX;
-      const w = Math.min(600, Math.max(220, dragStartW.current + delta));
-      onWidthChange(w);
+      onWidthChange(clamp(dragStartW.current + dragStartX.current - e.clientX));
     };
     const onUp = (e: MouseEvent) => {
       if (!dragging.current) return;
       dragging.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      const delta = dragStartX.current - e.clientX;
-      const w = Math.min(600, Math.max(220, dragStartW.current + delta));
-      localStorage.setItem("arz:activity-width", String(Math.round(w)));
+      const w = clamp(dragStartW.current + dragStartX.current - e.clientX);
+      try { localStorage.setItem("arz:activity-width", String(Math.round(w))); } catch { /* ignore */ }
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
     return () => { window.removeEventListener("mousemove", onMove); window.removeEventListener("mouseup", onUp); };
   }, [onWidthChange]);
 
-  const TABS = [
-    { key: "tools" as Tab,     label: "Tools",   icon: <Wrench size={12} />,     count: toolEntries.length },
-    { key: "files" as Tab,     label: "Files",   icon: <FileText size={12} />,   count: allFiles.length },
-    { key: "subagents" as Tab, label: "Agents",  icon: <Bot size={12} />,        count: subagentEntries.length },
-    { key: "logs" as Tab,      label: "Logs",    icon: <ScrollText size={12} />, count: sseLog.length },
-  ];
+  const counts: Partial<Record<PanelView, string | number>> = {
+    files: allFiles.length || undefined,
+    changes: changes.length || undefined,
+    tools: toolEntries.length || undefined,
+    subagents: subagentEntries.length || undefined,
+    logs: sseLog.length || undefined,
+    tasks: hasTodos ? `${todoProgress(todos!).done}/${todos!.length}` : undefined,
+  };
+
+  const docTabs = tabs.state.open.filter((t) => tabPath(t) !== null);
+  const isDoc = tabPath(active) !== null;
 
   return (
     <aside className="shrink-0 flex h-full" style={{ width }}>
@@ -626,88 +681,231 @@ export default function ActivityPane({ sessionId, toolEntries, sseLog = [], seed
       <div
         className="w-1 shrink-0 cursor-col-resize hover:bg-[var(--cedar)]/40 active:bg-[var(--cedar)] transition-colors"
         onMouseDown={handleResizeStart}
+        onDoubleClick={() => { onWidthChange(300); try { localStorage.setItem("arz:activity-width", "300"); } catch { /* ignore */ } }}
+        title="Drag to resize · double-click to reset"
       />
 
       <div className="flex-1 flex flex-col border-l border-[var(--border)] bg-[var(--surface)] min-w-0">
-        {/* FileViewer takes over the full pane when a file is selected */}
-        {selectedFile ? (
-          <FileViewer path={selectedFile} onClose={() => setSelectedFile(null)} sessionId={sessionId} />
-        ) : (
-          <>
-            {/* Header */}
-            <div className="flex items-center justify-between px-3 py-2 border-b border-[var(--border)] shrink-0">
-              <span className="text-[12px] font-medium text-[var(--text)]">Activity</span>
-              {activeIdx !== -1 && (
-                <span className="flex items-center gap-1 text-[10px] text-[var(--cedar)] truncate max-w-[100px]">
-                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" />
-                  {toolEntries[activeIdx].name}
-                </span>
-              )}
-              <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-[18px] leading-none ml-2 shrink-0">×</button>
-            </div>
-
-            {/* Tab bar */}
-            <div className="px-2 py-2 shrink-0 border-b border-[var(--border)] overflow-x-auto">
-              <SegmentedControl segments={TABS} value={tab} onChange={setTab} />
-            </div>
-
-            {/* Content */}
-            <div ref={scrollRef} onScroll={onScroll} className="flex-1 overflow-y-auto py-2">
-              {/* Tools tab */}
-              {tab === "tools" && (
-                toolEntries.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                    <Wrench size={24} /><span className="text-[13px]">Waiting for activity…</span>
-                  </div>
-                ) : (
-                  [...toolEntries].reverse().map((entry, ri) => {
-                    const origIdx = toolEntries.length - 1 - ri;
+        {/* Tab strip — pinned views, then opened views/documents, then "+" */}
+        <div className="flex items-stretch border-b border-[var(--border)] shrink-0 min-w-0">
+          <div className="flex-1 flex items-stretch overflow-x-auto min-w-0" style={{ scrollbarWidth: "none" }}>
+            {[...PINNED_VIEWS, ...tabs.state.open].map((id) => (
+              <PanelTab
+                key={id}
+                id={id}
+                active={active === id}
+                count={(VIEW_META as Record<string, unknown>)[id] ? counts[id as PanelView] : undefined}
+                busy={id === "tools" && activeIdx !== -1}
+                change={changeByPath.get(tabPath(id) ?? "")}
+                onActivate={() => activate(id)}
+                onClose={isPinned(id) ? undefined : () => closeTab(id)}
+              />
+            ))}
+          </div>
+          <div className="relative shrink-0 flex items-center">
+            <button
+              onClick={() => setMenuOpen((v) => !v)}
+              title="Open a view"
+              className="w-7 h-full flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)]"
+            >
+              <Plus size={13} />
+            </button>
+            {menuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
+                <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg py-1">
+                  {MENU_VIEWS.map((v) => {
+                    const M = VIEW_META[v];
                     return (
-                      <ToolEntryCard
-                        key={entry.callId + ri}
-                        entry={entry}
-                        isLast={origIdx === lastToolIdx}
-                        isActive={origIdx === activeIdx}
-                        onOpenFile={(p) => { setTab("files"); setSelectedFile(p); }}
-                      />
+                      <button
+                        key={v}
+                        onClick={() => { openTab(v); setMenuOpen(false); }}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-[var(--text2)] hover:bg-[var(--s2)] hover:text-[var(--text)]"
+                      >
+                        <M.icon size={12} />
+                        <span className="flex-1 text-left">{M.label}</span>
+                        {counts[v] !== undefined && (
+                          <span className="text-[10px] font-mono text-[var(--muted)]">{counts[v]}</span>
+                        )}
+                      </button>
                     );
-                  })
-                )
-              )}
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            title="Close panel"
+            className="w-7 shrink-0 flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] border-l border-[var(--hairline)]"
+          >
+            <X size={13} />
+          </button>
+        </div>
 
-              {/* Files tab */}
-              {tab === "files" && (
-                <ActivityFilesView
-                  files={allFiles}
-                  onOpen={(p) => setSelectedFile(p)}
+        {/* Document tabs stay mounted so viewer/editor state (scroll, unsaved
+            edits) survives switching tabs; only the active one is shown. */}
+        {docTabs.map((id) => {
+          const p = tabPath(id)!;
+          return (
+            <div key={id} className={active === id ? "flex-1 min-h-0 flex flex-col" : "hidden"}>
+              {id.startsWith("file:") ? (
+                <FileViewer
+                  path={p}
+                  onClose={() => closeTab(id)}
+                  sessionId={sessionId}
+                  line={fileLines[p]?.line}
+                  endLine={fileLines[p]?.endLine}
+                />
+              ) : (
+                <DiffTab
+                  path={p}
+                  change={changeByPath.get(p)}
+                  onOpenFile={openFile}
+                  onClose={() => closeTab(id)}
                 />
               )}
-
-              {/* Subagents tab */}
-              {tab === "subagents" && (
-                subagentEntries.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-                    <Bot size={24} /><span className="text-[13px]">No subagents yet</span>
-                  </div>
-                ) : (
-                  subagentEntries.map((e) => (
-                    <SubagentCard
-                      key={e.callId}
-                      entry={e}
-                      startedAt={startTimesRef.current.get(e.callId) ?? Date.now()}
-                      onSpawnSession={onSpawnSession}
-                    />
-                  ))
-                )
-              )}
-
-              {/* Logs tab */}
-              {tab === "logs" && <ActivityLogView entries={sseLog} />}
             </div>
-          </>
+          );
+        })}
+
+        {!isDoc && (
+          <div ref={scrollRef} onScroll={onScroll} className={["flex-1 overflow-y-auto", active === "tools" || active === "subagents" ? "py-2" : ""].join(" ")}>
+            {/* Tools tab */}
+            {active === "tools" && (
+              toolEntries.length === 0 ? (
+                <EmptyState icon={Wrench} text="Waiting for activity…" />
+              ) : (
+                [...toolEntries].reverse().map((entry, ri) => {
+                  const origIdx = toolEntries.length - 1 - ri;
+                  return (
+                    <ToolEntryCard
+                      key={entry.callId + ri}
+                      entry={entry}
+                      isLast={origIdx === lastToolIdx}
+                      isActive={origIdx === activeIdx}
+                      onOpenFile={openFile}
+                    />
+                  );
+                })
+              )
+            )}
+
+            {/* Files tab — files this session touched, or the whole workspace tree */}
+            {active === "files" && (
+              <>
+                <div className="px-2 py-1.5 border-b border-[var(--hairline)]">
+                  <SegmentedControl
+                    segments={[
+                      { key: "session" as FilesMode, label: "Session", count: allFiles.length },
+                      { key: "workspace" as FilesMode, label: "Workspace" },
+                    ]}
+                    value={filesMode}
+                    onChange={setFilesMode}
+                  />
+                </div>
+                {filesMode === "session" ? (
+                  <ActivityFilesView files={allFiles} onOpen={openFile} />
+                ) : (
+                  <WorkspaceTree sessionId={sessionId} onOpen={openFile} fileIcon={fileIcon} />
+                )}
+              </>
+            )}
+
+            {active === "changes" && (
+              <ChangesView sessionId={sessionId} changes={changes} onOpenDiff={openDiff} />
+            )}
+
+            {active === "tasks" && <TasksView todos={todos} />}
+
+            {active === "context" && <ContextBreakdown sessionId={sessionId} refreshKey={toolEntries.length} />}
+
+            {/* Subagents tab */}
+            {active === "subagents" && (
+              subagentEntries.length === 0 ? (
+                <EmptyState icon={Bot} text="No subagents yet" />
+              ) : (
+                subagentEntries.map((e) => (
+                  <SubagentCard
+                    key={e.callId}
+                    entry={e}
+                    startedAt={startTimesRef.current.get(e.callId) ?? Date.now()}
+                    onSpawnSession={onSpawnSession}
+                  />
+                ))
+              )
+            )}
+
+            {/* Logs tab */}
+            {active === "logs" && <ActivityLogView entries={sseLog} />}
+          </div>
         )}
       </div>
     </aside>
+  );
+}
+
+function EmptyState({ icon: Icon, text }: { icon: React.ComponentType<{ size?: number }>; text: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
+      <Icon size={24} /><span className="text-[13px]">{text}</span>
+    </div>
+  );
+}
+
+function PanelTab({
+  id, active, count, busy, change, onActivate, onClose,
+}: {
+  id: PanelTabId;
+  active: boolean;
+  count?: string | number;
+  busy?: boolean;
+  change?: FileChange;
+  onActivate: () => void;
+  onClose?: () => void;
+}) {
+  const path = tabPath(id);
+  const view = path ? null : VIEW_META[id as PanelView];
+  const Icon = view ? view.icon : id.startsWith("diff:") ? GitCompare : fileIcon(path!);
+  const label = view ? view.label : path!.split("/").pop() || path!;
+  return (
+    <div
+      role="tab"
+      aria-selected={active}
+      tabIndex={0}
+      onClick={onActivate}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(); } }}
+      onAuxClick={(e) => { if (e.button === 1 && onClose) { e.preventDefault(); onClose(); } }}
+      title={path ? `${id.startsWith("diff:") ? "Diff · " : ""}${path}` : label}
+      className={[
+        "group shrink-0 flex items-center gap-1.5 pl-2.5 pr-1.5 h-8 cursor-pointer text-[11.5px] border-r border-[var(--hairline)] transition-colors select-none",
+        active
+          ? "bg-[var(--bg)] text-[var(--text)] shadow-[inset_0_-2px_0_var(--cedar-glow)]"
+          : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)]",
+      ].join(" ")}
+    >
+      <Icon size={12} className={id.startsWith("diff:") ? "text-[var(--dawn)]" : undefined} />
+      <span className={["truncate max-w-[140px]", path ? "font-mono text-[11px]" : ""].join(" ")}>{label}</span>
+      {busy && <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse" />}
+      {count !== undefined && <span className="text-[9.5px] font-mono opacity-60">{count}</span>}
+      {change && id.startsWith("diff:") && (
+        <span className="text-[9.5px] font-mono" style={{ color: "var(--pine)" }}>+{change.added}</span>
+      )}
+      {onClose ? (
+        <button
+          onClick={(e) => { e.stopPropagation(); onClose(); }}
+          title="Close tab"
+          className={[
+            "w-4 h-4 flex items-center justify-center rounded hover:bg-[var(--border)] hover:text-[var(--text)]",
+            active ? "opacity-70" : "opacity-0 group-hover:opacity-70",
+          ].join(" ")}
+        >
+          <X size={10} />
+        </button>
+      ) : (
+        <span className="w-0.5" />
+      )}
+    </div>
   );
 }
 

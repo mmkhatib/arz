@@ -53,6 +53,10 @@ router = APIRouter(dependencies=[Depends(require_token)])
 
 _WORKSPACE_ROOT = Path.home() / ".arz" / "workspace"
 
+# Reasoning text persisted per assistant message. Long chains of thought
+# bloat the session JSON for little benefit — the tail is rarely read.
+_MAX_SAVED_THINKING = 20_000
+
 
 _APPROVAL_TO_CLAUDE = {
     # IMPORTANT: claude CLI's default (None == no --permission-mode flag)
@@ -676,6 +680,7 @@ async def _run_turn(
     chat_runner=None,  # (session_id, message) -> awaitable, posts to /api/chat
     subagent_runner=None,  # (agent_name, prompt) -> awaitable[str], cheap model
     is_goal_auto: bool = False,  # True when fired by the auto-iteration loop
+    is_recovery: bool = False,  # True when this turn is an automatic continuation
 ) -> None:
     """Background task: drive the provider, persist the assistant turn,
     publish events to the StreamRegistry. NOT tied to any HTTP connection
@@ -687,6 +692,23 @@ async def _run_turn(
     state = registry._states.get(session_id)
     if state is None:
         return  # caller didn't allocate state
+
+    async def note_policy_refusal(tool_name: str, reason: str) -> None:
+        """The model sees a policy reject as a generic "denied" and assumes
+        the user cancelled. Hand it the real reason — in-band via steer when
+        the provider supports it, else via one continuation at turn end."""
+        from arz.recovery import build_refusal_notice
+
+        try:
+            if await provider.steer(build_refusal_notice(tool_name, reason)):
+                return
+        except Exception:
+            log.debug("refusal steer failed", exc_info=True)
+        refusals = getattr(state, "recovery_refusals", None)
+        if refusals is None:
+            refusals = []
+            state.recovery_refusals = refusals  # type: ignore[attr-defined]
+        refusals.append((tool_name, reason))
 
     async def emit(chunk: str) -> None:
         state.events.append(chunk)
@@ -787,11 +809,15 @@ async def _run_turn(
                 elif event.kind == EVENT_THINKING_CHUNK and getattr(event, "text", ""):
                     # Stay-on-task #5: reasoning chunks render in a
                     # separate collapsible panel — never inline.
-                    await emit(sse_thinking(redact_chunk(event.text)))
+                    safe_thinking = redact_chunk(event.text)
+                    if len(state.thinking) < _MAX_SAVED_THINKING:
+                        state.thinking += safe_thinking
+                    await emit(sse_thinking(safe_thinking))
 
                 elif event.kind == EVENT_COMPACTION_STATUS:
                     # Stay-on-task #6: surface provider-level
                     # compaction transitions to the UI banner.
+                    state.recovery_compacted = True  # type: ignore[attr-defined]
                     await emit(
                         sse_compaction(
                             status=str(getattr(event, "stop_reason", "") or "in_progress"),
@@ -822,6 +848,8 @@ async def _run_turn(
 
                 elif event.kind == EVENT_TOOL_CALL:
                     state._in_tool_group = True  # type: ignore[attr-defined]
+                    # Recovery reads only the text after the LAST tool call.
+                    state.recovery_seg_start = len(state.full_reply)  # type: ignore[attr-defined]
                     tool_name = event.text or ""
                     tool_input_str = str(event.tool_input or "")
                     if tool_name:
@@ -855,6 +883,12 @@ async def _run_turn(
                         # progress. The marker tells the user why.
                         if state.last_context_pct >= 90.0:
                             await provider.reject_tool(request_id)
+                            await note_policy_refusal(
+                                tool_name,
+                                f"context window is {state.last_context_pct:.0f}% full; "
+                                "large tool calls are blocked until it is compacted — "
+                                "wrap up with what you have or ask the user to compact",
+                            )
                             await emit(
                                 sse_chunk(
                                     '\n\n<goal-marker variant="context-guard" '
@@ -867,6 +901,7 @@ async def _run_turn(
                             rule = hooks.evaluate_command(raw_input)
                             if rule and rule.severity == "block":
                                 await provider.reject_tool(request_id)
+                                await note_policy_refusal(tool_name, f"hook rule: {rule.reason}")
                                 await emit(sse_chunk(f"\n⚠️ blocked: {rule.reason}\n"))
                                 continue
                         if (
@@ -1036,6 +1071,8 @@ async def _run_turn(
                 msg.elapsed_ms = elapsed_ms
                 if state.turn_tool_calls:
                     msg.tool_calls = state.turn_tool_calls
+                if state.thinking:
+                    msg.thinking = state.thinking[:_MAX_SAVED_THINKING]
                 if state.archive_versions:
                     msg.versions = list(state.archive_versions) + [
                         _final_assistant_text(cleaned, extracted, state.full_reply)
@@ -1056,6 +1093,12 @@ async def _run_turn(
                 context_pct=event.context_usage_pct or 0.0,
                 usage=usage_dict,
             )
+            try:
+                from arz.dashboard import context_trace
+
+                context_trace.finish_turn(session_id, event.context_usage_pct, usage_dict)
+            except Exception:
+                log.exception("context trace finish failed")
             break  # outer while
 
     except asyncio.CancelledError:
@@ -1109,6 +1152,8 @@ async def _run_turn(
                 msg.elapsed_ms = int((_time.monotonic() - turn_started) * 1000)
                 if state.turn_tool_calls:
                     msg.tool_calls = state.turn_tool_calls
+                if state.thinking:
+                    msg.thinking = state.thinking[:_MAX_SAVED_THINKING]
                 if state.archive_versions:
                     msg.versions = list(state.archive_versions) + [
                         _final_assistant_text(cleaned, extracted, state.full_reply)
@@ -1187,6 +1232,59 @@ async def _run_turn(
         except Exception:
             log.exception("goal auto-iteration scheduling failed")
 
+        # ── Automatic turn recovery ──
+        # One system-authored continuation when the turn ended without
+        # doing what it set out to do (promise-only ending, empty reply
+        # after tool work, compaction cut it off). Skipped when the user
+        # stopped it, it errored, the goal loop follows up anyway, or
+        # this turn already was a recovery.
+        recovery_task = None
+        try:
+            if session and chat_runner is not None:
+                from arz import recovery as _recovery
+
+                seg_start = int(getattr(state, "recovery_seg_start", 0) or 0)
+                recovery_msg = _recovery.pick_recovery(
+                    final_segment_text=state.full_reply[seg_start:],
+                    full_reply_text=state.full_reply,
+                    tool_calls=len(state.turn_tool_calls or []),
+                    compacted=bool(getattr(state, "recovery_compacted", False)),
+                    stopped_by_user=final_status == "cancelled"
+                    or bool(getattr(state, "user_stopped", False)),
+                    errored=final_status == "failed",
+                    goal_loop_active=goal_auto_iter_task is not None or is_goal_auto,
+                    recoveries_used=1 if is_recovery else 0,
+                )
+                refusals = getattr(state, "recovery_refusals", None) or []
+                if not recovery_msg and refusals and not is_recovery:
+                    stopped = final_status != "complete" or getattr(state, "user_stopped", False)
+                    if not stopped and goal_auto_iter_task is None:
+                        recovery_msg = _recovery.build_refusal_recovery_prompt(
+                            refusals, answered=bool(state.full_reply[seg_start:].strip())
+                        )
+                if recovery_msg:
+                    log.info(
+                        "turn recovery scheduled",
+                        extra={"session_id": session_id, "kind": recovery_msg.split("]")[0]},
+                    )
+
+                    async def _recover() -> None:
+                        # Let registry.finish settle so the new POST isn't
+                        # rejected as "already streaming".
+                        await asyncio.sleep(0.5)
+                        try:
+                            await chat_runner(
+                                session_id, recovery_msg, extra_body={"_recovery": True}
+                            )
+                        except TypeError:
+                            await chat_runner(session_id, recovery_msg)
+                        except Exception:
+                            log.exception("turn recovery chat_runner failed")
+
+                    recovery_task = _recover()
+        except Exception:
+            log.exception("turn recovery scheduling failed")
+
         # Flush the held-back `complete` event AFTER the evaluator
         # marker. The frontend closes its EventSource on this event,
         # so the order is what matters: writer chunks → judge chips →
@@ -1217,6 +1315,11 @@ async def _run_turn(
                 asyncio.create_task(goal_auto_iter_task)
             except Exception:
                 log.exception("goal follow-up POST scheduling failed")
+        if recovery_task is not None:
+            try:
+                asyncio.create_task(recovery_task)
+            except Exception:
+                log.exception("turn recovery POST scheduling failed")
 
 
 async def _sse_subscribe(session_id: str) -> AsyncIterator[str]:
@@ -1293,6 +1396,12 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
 
     cfg = request.app.state.config
 
+    # Context-trace bookkeeping for the side panel's Context tab: each block
+    # below is prepended to `message`, so the length delta after a stage is
+    # that block's size. See arz.dashboard.context_trace.
+    _trace: dict[str, int] = {"user": len(original_message)}
+    _trace_len = len(message)
+
     # Drain any <recall> queries queued by the assistant on a prior turn.
     # Run them as searches and prepend the results so the model sees what
     # it asked for. This is the on-demand search path without MCP.
@@ -1312,6 +1421,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
                 message = "\n\n".join(recall_blocks) + "\n\n" + message
     except Exception:
         log.exception("recall drain failed")
+    _trace["recall"], _trace_len = len(message) - _trace_len, len(message)
 
     # Refresh the intent tracker from the latest message tail so
     # build_prefix can inject a `<intent>` block + boost retrieval.
@@ -1340,6 +1450,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             message = f"{prefix}\n\n{message}"
     except Exception:
         log.exception("Memory context build failed; continuing without it")
+    _trace["memory"], _trace_len = len(message) - _trace_len, len(message)
 
     # Persistent goal — when the user has set one on the session, prepend
     # a `<goal>` block so the model keeps it in mind on every turn until
@@ -1360,6 +1471,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             message = f"{goal_block}\n\n{message}"
     except Exception:
         log.exception("goal injection failed")
+    _trace["goal"], _trace_len = len(message) - _trace_len, len(message)
 
     # Inject any completed subagent results that landed since the last turn.
     try:
@@ -1371,6 +1483,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             message = "\n\n".join(blocks) + "\n\n" + message
     except Exception:
         log.exception("Subagent injection failed; continuing without it")
+    _trace["subagents"], _trace_len = len(message) - _trace_len, len(message)
 
     # Re-state the suggestion contract on the turn itself. base.md carries the
     # full rule, but it was stated once at session start: deep into a long
@@ -1378,6 +1491,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     # stops emitting the `[OPTIONS:]` line and the chip row disappears with no
     # other symptom. Cheap enough to pay every turn.
     message = build_turn_message(message)
+    _trace["reminder"] = len(message) - _trace_len
 
     history: list[dict] | None = None
     if session and session.messages:
@@ -1396,6 +1510,20 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             history = await compress_history(history, runner=runner)
         except Exception:
             log.exception("history compression failed; using verbatim transcript")
+    try:
+        from arz.dashboard import context_trace
+
+        _trace["history"] = sum(len(h.get("text") or "") for h in history or [])
+        _trace["system"] = len(
+            resolve_system_prompt(
+                cfg.dashboard.system_prompt or None,
+                widget_density=getattr(cfg.dashboard, "widget_density", None),
+            )
+            or ""
+        )
+        context_trace.record_turn(session_id, _trace)
+    except Exception:
+        log.exception("context trace record failed")
     session_map: SessionMap = request.app.state.session_map
     session_work_dir = getattr(session, "work_dir", None)
 
@@ -1546,6 +1674,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
                 chat_runner=getattr(request.app.state, "chat_runner", None),
                 subagent_runner=getattr(request.app.state, "subagent_runner", None),
                 is_goal_auto=bool(body.get("_goal_auto") or False),
+                is_recovery=bool(body.get("_recovery") or False),
             )
         )
         state.task = spawned_task
@@ -1681,6 +1810,9 @@ async def chat_stop(session_id: str, request: Request) -> dict:
     state = registry._states.get(session_id)  # noqa: SLF001
     if state is None or state.status != "running":
         return {"stopped": False, "mode": "noop"}
+    # A cooperative cancel can still end the stream "normally"; this flag
+    # keeps turn recovery from continuing a turn the user just stopped.
+    state.user_stopped = True  # type: ignore[attr-defined]
 
     pool: ProviderPool = request.app.state.provider_pool
     provider = pool._pool.get(session_id)  # noqa: SLF001

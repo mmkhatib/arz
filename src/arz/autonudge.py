@@ -17,6 +17,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from datetime import UTC
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ class AutoNudge:
         self._runner = runner
         self._task: asyncio.Task | None = None
         self._last_fire: dict[str, float] = {}
+        self._inflight: dict[str, asyncio.Task] = {}
 
     async def start(self) -> None:
         if self._task is None:
@@ -80,9 +82,17 @@ class AutoNudge:
                 continue
             if registry.is_streaming(session.id):
                 continue
+            if session.id in self._inflight:
+                continue
             # Idle = no message activity for at least idle_s seconds.
+            # updated_at is naive UTC; .timestamp() on a naive datetime assumes
+            # local time, which west of UTC put "last activity" in the future
+            # and starved the nudge forever.
             try:
-                last_activity = session.updated_at.timestamp()
+                ts = session.updated_at
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=UTC)
+                last_activity = ts.timestamp()
             except Exception:
                 continue
             if now - last_activity < idle_s:
@@ -106,10 +116,21 @@ class AutoNudge:
             self._last_fire[session.id] = now
             session.autonudge_iterations += 1
             self._mgr.save(session)
-            try:
-                await self._runner(session.id, _NUDGE_TEMPLATE.format(goal=goal))
-            except Exception:
-                log.exception("autonudge runner failed", extra={"session_id": session.id})
+            # Run the turn in the background so one long nudge doesn't hold up
+            # every other session's tick.
+            task = asyncio.create_task(
+                self._run(session.id, _NUDGE_TEMPLATE.format(goal=goal)),
+                name=f"autonudge:{session.id}",
+            )
+            self._inflight[session.id] = task
+
+    async def _run(self, session_id: str, message: str) -> None:
+        try:
+            await self._runner(session_id, message)
+        except Exception:
+            log.exception("autonudge runner failed", extra={"session_id": session_id})
+        finally:
+            self._inflight.pop(session_id, None)
 
 
 _singleton: AutoNudge | None = None

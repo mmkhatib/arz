@@ -83,6 +83,20 @@ def _ensure_unique(target_dir: Path, name: str) -> Path:
     raise HTTPException(status_code=409, detail="too many name collisions")
 
 
+def _resolve_in_workdir(request: Request, session_id: str, rel: str) -> str | None:
+    """Join a relative path onto the session's work_dir; None if it escapes it."""
+    mgr = getattr(request.app.state, "session_manager", None)
+    session = mgr.get(session_id) if mgr else None
+    work_dir = getattr(session, "work_dir", None) if session else None
+    if not work_dir:
+        return None
+    root = Path(work_dir).expanduser().resolve()
+    candidate = (root / rel).resolve()
+    if candidate != root and root not in candidate.parents:
+        return None
+    return str(candidate)
+
+
 @router.get("/api/files/read")
 async def read_file(
     request: Request,
@@ -97,7 +111,12 @@ async def read_file(
     captured content. Lets users re-open a file generated on another
     machine when only the session record (not the workspace) synced.
     Response carries ``source: "history"`` so the client can label it.
+
+    Relative paths (chat prose often says ``calc.py`` or ``src/app.ts``)
+    resolve against the session's work_dir when ``session_id`` is given.
     """
+    if not os.path.isabs(path) and session_id:
+        path = _resolve_in_workdir(request, session_id, path) or path
     if not os.path.isabs(path):
         raise HTTPException(status_code=400, detail="path must be absolute")
 

@@ -45,6 +45,9 @@ class StreamState:
     # Mirror of streaming text + tool calls so the SSE replay can reflect them.
     full_reply: str = ""
     turn_tool_calls: list[dict] = field(default_factory=list)
+    # Reasoning text accumulated across the turn; saved on the assistant
+    # Message so the collapsible Thinking block survives a reload.
+    thinking: str = ""
     error: str | None = None
     # Regenerate: alternate assistant texts to merge into the new
     # assistant message at completion time. Empty for normal turns.

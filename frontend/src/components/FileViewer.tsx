@@ -47,12 +47,17 @@ function CodeView({
   path,
   sessionId,
   onSent,
+  line,
+  endLine,
 }: {
   content: string
   lang: string
   path?: string
   sessionId?: string | null
   onSent?: () => void
+  /** 1-based line to scroll to and highlight (from a `path:12` chat link). */
+  line?: number
+  endLine?: number
 }) {
   const html = useMemo(() => highlight(content, lang), [content, lang])
   const lines = content.split('\n')
@@ -66,6 +71,17 @@ function CodeView({
       gutterRef.current.scrollTop = scrollRef.current.scrollTop
     }
   }
+
+  const hlStart = line && line > 0 ? line : 0
+  const hlEnd = hlStart ? Math.max(hlStart, endLine ?? hlStart) : 0
+  useEffect(() => {
+    const pre = scrollRef.current
+    if (!pre || !hlStart) return
+    const lh = parseFloat(getComputedStyle(pre).lineHeight) || 19.2
+    // Leave a few lines of context above the target.
+    pre.scrollTop = Math.max(0, (hlStart - 4) * lh)
+    syncScroll()
+  }, [hlStart, content])
 
   const copy = async () => {
     try {
@@ -121,7 +137,14 @@ function CodeView({
           ref={gutterRef}
           className="shrink-0 w-[3em] bg-[var(--surface)] border-r border-[var(--border)] text-right pr-2 pt-3 text-[11px] text-[var(--muted)]/40 select-none overflow-hidden"
         >
-          {lines.map((_, i) => <div key={i}>{i + 1}</div>)}
+          {lines.map((_, i) => (
+            <div
+              key={i}
+              className={hlStart && i + 1 >= hlStart && i + 1 <= hlEnd ? 'text-[var(--cedar-glow)] bg-[var(--cedar-dim)]' : undefined}
+            >
+              {i + 1}
+            </div>
+          ))}
         </div>
         {/* Highlighted code */}
         <pre
@@ -672,6 +695,8 @@ export function FileBody({
   sessionId = null,
   onSent,
   maxHeight,
+  line,
+  endLine,
 }: {
   path: string
   content: string | null
@@ -680,6 +705,8 @@ export function FileBody({
   sessionId?: string | null
   onSent?: () => void
   maxHeight?: number | string
+  line?: number
+  endLine?: number
 }) {
   const name = path.split(/[\\/]/).pop() || path
   const ext = name.split('.').pop()?.toLowerCase() || ''
@@ -732,6 +759,8 @@ export function FileBody({
           path={path}
           sessionId={sessionId}
           onSent={onSent}
+          line={line}
+          endLine={endLine}
         />
       )}
     </div>
@@ -745,9 +774,11 @@ interface Props {
   /** Active session id — needed to fire the comment-driven editor for
    *  markdown files. When absent, the comment rail is hidden. */
   sessionId?: string | null
+  line?: number
+  endLine?: number
 }
 
-export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }: Props) {
+export const FileViewer = memo(function FileViewer({ path, onClose, sessionId, line, endLine }: Props) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -960,6 +991,8 @@ export const FileViewer = memo(function FileViewer({ path, onClose, sessionId }:
           error={error}
           sessionId={sessionId ?? null}
           onSent={() => { void load() }}
+          line={line}
+          endLine={endLine}
         />
       )}
     </div>

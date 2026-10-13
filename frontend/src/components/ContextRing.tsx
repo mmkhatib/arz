@@ -15,8 +15,18 @@ export default function ContextRing({ pct, estimated = false }: Props) {
     ? `Context: ~${Math.round(safe)}% (client estimate)`
     : `Context: ${Math.round(safe)}%`;
 
+  // Opens the side panel's Context tab (ChatPage listens for this event)
+  // so the ring doesn't need a callback threaded through the composer.
+  const openBreakdown = () =>
+    window.dispatchEvent(new CustomEvent("arz:open-panel", { detail: { tab: "context" } }));
+
   return (
-    <div title={title} className="shrink-0 w-7 h-7 flex items-center justify-center">
+    <button
+      type="button"
+      onClick={openBreakdown}
+      title={`${title} — click for breakdown`}
+      className="shrink-0 w-7 h-7 flex items-center justify-center rounded-full hover:bg-[var(--s2)] transition-colors"
+    >
       <svg width="28" height="28" viewBox="0 0 28 28">
         <circle
           cx="14" cy="14" r={radius}
@@ -48,6 +58,6 @@ export default function ContextRing({ pct, estimated = false }: Props) {
           {Math.round(safe)}%
         </text>
       </svg>
-    </div>
+    </button>
   );
 }

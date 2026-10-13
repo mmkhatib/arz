@@ -71,6 +71,9 @@ class Message:
     # True when this user turn was injected into an already-running turn
     # (mid-turn steer) rather than starting one. Renders as a steer chip.
     steer: bool = False
+    # Reasoning the model emitted during this assistant turn (capped).
+    # Rendered as a collapsed Thinking block above the reply.
+    thinking: str | None = None
 
     def to_dict(self) -> dict:
         d: dict = {
@@ -97,6 +100,8 @@ class Message:
             d["source_surface"] = self.source_surface
         if self.steer:
             d["steer"] = True
+        if self.thinking:
+            d["thinking"] = self.thinking
         return d
 
     @classmethod
@@ -115,6 +120,7 @@ class Message:
             source_thread=d.get("source_thread"),
             source_surface=d.get("source_surface"),
             steer=bool(d.get("steer", False)),
+            thinking=d.get("thinking") or None,
         )
 
 
@@ -192,6 +198,9 @@ class Session:
     # Per-session UI state — persists across restarts and machines.
     pinned: bool = False
     archived: bool = False
+    # Message count the user had seen when they last viewed this session.
+    # Sidebar shows an unread dot while len(messages) exceeds it.
+    last_read_count: int = 0
     # Index into self.messages marking the last consolidated turn. Used by
     # the consolidation triggers (30-msg threshold, idle sweep) to know
     # which slice still needs an LLM pass. Survives gateway restart so
@@ -247,6 +256,7 @@ class Session:
             "goal_judge_tools": self.goal_judge_tools,
             "pinned": self.pinned,
             "archived": self.archived,
+            "last_read_count": self.last_read_count,
             "last_consolidated_index": self.last_consolidated_index,
             "last_consolidation_ts": self.last_consolidation_ts,
         }
@@ -288,6 +298,8 @@ class Session:
             goal_judge_tools=str(d.get("goal_judge_tools") or "trust_reads"),
             pinned=bool(d.get("pinned") or False),
             archived=bool(d.get("archived") or False),
+            # Legacy sessions predate unread tracking: treat them as read.
+            last_read_count=int(d.get("last_read_count", len(d.get("messages", []))) or 0),
             last_consolidated_index=int(d.get("last_consolidated_index", -1) or -1),
             last_consolidation_ts=float(d.get("last_consolidation_ts") or 0.0),
         )

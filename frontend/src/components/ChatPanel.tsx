@@ -1,6 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { api } from "@/api/client";
 import type { MessageRecord, SessionDetail } from "@/api/client";
 import MessageBubble from "./MessageBubble";
@@ -15,7 +13,12 @@ import { extractOptions, segmentMessage, stripPartialOptions } from "@/utils/seg
 import Widget from "./Widget";
 import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
 import GoalModal from "./GoalModal";
-import { saveDraft } from "@/utils/draftStorage";
+import { loadDraft, saveDraft } from "@/utils/draftStorage";
+import ChatMarkdown from "./ChatMarkdown";
+import ThinkingBlock from "./ThinkingBlock";
+import ErrorCard from "./ErrorCard";
+import RecoveryChip from "./RecoveryChip";
+import { parseRecovery } from "@/utils/recovery";
 import { useDialog } from "@/components/Dialog";
 
 /* Preserved for revert: original three-dot bouncer. Was the only
@@ -1217,6 +1220,7 @@ export default function ChatPanel({
     let fullText = "";
     let turnUsage: import("@/api/client").UsageRecord | undefined;
     const turnToolCalls: { name: string; input: string }[] = [];
+    let turnThinking = "";
     for await (const chunk of api.streamChat(response)) {
       if (abortFlagRef.aborted) break;
       if (chunk.type === "text_chunk" && chunk.text) {
@@ -1237,6 +1241,7 @@ export default function ChatPanel({
         ));
         onSseEvent?.("tool_result", chunk.tool_call_id);
       } else if (chunk.type === "thinking_chunk" && chunk.text) {
+        turnThinking += chunk.text;
         setThinkingBuffer((s) => s + chunk.text);
         onSseEvent?.("thinking_chunk");
       } else if (chunk.type === "compaction_status") {
@@ -1320,6 +1325,7 @@ export default function ChatPanel({
         text: fullText,
         created_at: new Date().toISOString(),
         tool_calls: turnToolCalls.length > 0 ? turnToolCalls : undefined,
+        thinking: turnThinking || undefined,
         elapsed_ms: Date.now() - sendStart,
         usage: turnUsage,
       };
@@ -1388,6 +1394,43 @@ export default function ChatPanel({
       setPendingApproval(null);
       abortRef.current = null;
       void watchForAutoIterStream();
+    }
+  };
+
+  // Retry from the error card: re-run the last user message. When a
+  // (partial) assistant reply was saved after it, regenerate so that text
+  // is archived as a version; otherwise re-send in place without adding a
+  // duplicate user row (replaceLastUser with identical text is a no-op edit).
+  const retryLast = () => {
+    let idx = -1;
+    for (let k = messages.length - 1; k >= 0; k--) {
+      if (messages[k].role === "user") { idx = k; break; }
+    }
+    if (idx < 0) return;
+    const text = messages[idx].text;
+    const answered = messages.slice(idx + 1).some((m) => m.role === "assistant");
+    setError(null);
+    void doSend(text, answered ? { regenerate: true } : { replaceLastUser: true });
+  };
+
+  // Quote a message into the composer as a markdown blockquote, appended
+  // to whatever the user had already typed.
+  const quoteIntoComposer = (text: string) => {
+    if (!sessionId) return;
+    const quoted = text.trim().split("\n").map((l) => `> ${l}`).join("\n");
+    const existing = loadDraft(sessionId).trimEnd();
+    saveDraft(sessionId, `${existing ? existing + "\n\n" : ""}${quoted}\n\n`);
+    bumpFocusSignal();
+  };
+
+  // Fork a new session holding the conversation up to and including
+  // message `idx`.
+  const forkAt = async (idx: number) => {
+    try {
+      const f = await api.forkSession(sessionId, { up_to_index: idx + 1 });
+      onSessionForked?.(f.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -1643,7 +1686,11 @@ export default function ChatPanel({
             : null;
           // "Last user/assistant" = the trailing message of its role in the
           // visible list. Used to show edit & regenerate affordances.
-          const lastUserIdx = messages.map((m, idx) => m.role === "user" ? idx : -1).filter((x) => x >= 0).pop() ?? -1;
+          if (msg.role === "user") {
+            const note = parseRecovery(msg.text);
+            if (note) return <RecoveryChip key={i} note={note} />;
+          }
+          const lastUserIdx = messages.map((m, idx) => m.role === "user" && !parseRecovery(m.text) ? idx : -1).filter((x) => x >= 0).pop() ?? -1;
           const lastAsstIdx = messages.map((m, idx) => m.role === "assistant" ? idx : -1).filter((x) => x >= 0).pop() ?? -1;
           const isLastUser = i === lastUserIdx && !streaming;
           const isLastAssistant = i === lastAsstIdx && !streaming;
@@ -1675,6 +1722,8 @@ export default function ChatPanel({
                     }
                   : undefined
               }
+              onQuote={quoteIntoComposer}
+              onForkHere={!streaming && onSessionForked ? () => void forkAt(i) : undefined}
               onCompare={
                 msg.role === "assistant" && prevUser
                   ? () => setCompareTarget({
@@ -1712,33 +1761,11 @@ export default function ChatPanel({
           </div>
         )}
 
-        {/* Thinking panel — collapsible scratchpad beside the bubble. */}
-        {streaming && thinkingBuffer && (
-          <div className="flex justify-start mb-2 px-9">
-            <details
-              className="text-[12px] text-[var(--muted)] max-w-[75%]"
-              style={{
-                background: "var(--surface)",
-                border: "1px dashed var(--border)",
-                borderRadius: 8,
-                padding: "6px 10px",
-                fontFamily: "var(--fm, ui-monospace, monospace)",
-              }}
-            >
-              <summary style={{ cursor: "pointer", userSelect: "none" }}>
-                💭 thinking… ({thinkingBuffer.length} chars)
-              </summary>
-              <pre
-                style={{
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                  marginTop: 6,
-                  color: "var(--text2, var(--text))",
-                }}
-              >
-                {thinkingBuffer}
-              </pre>
-            </details>
+        {/* Thinking panel — collapsible reasoning above the live bubble.
+            The saved message carries the same text (Message.thinking). */}
+        {streaming && !writerDone && thinkingBuffer && (
+          <div className="mb-2 pl-9 max-w-[75%]">
+            <ThinkingBlock text={thinkingBuffer} streaming />
           </div>
         )}
 
@@ -1760,7 +1787,7 @@ export default function ChatPanel({
                 />
               )}
             </div>
-            <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-bl-sm bg-[var(--asst-bg)] border border-[var(--border)] text-[14px] whitespace-pre-wrap">
+            <div className="max-w-[75%] px-4 py-2.5 rounded-2xl rounded-bl-sm bg-[var(--asst-bg)] border border-[var(--border)] text-[14px] break-words">
               {(toolCalls.length > 0 || pendingApproval) && (
                 <div className="mb-2">
                   <CollapsibleToolGroup
@@ -1786,51 +1813,10 @@ export default function ChatPanel({
                   ) : seg.kind === "goal-auto" ? (
                     <GoalAutoCard key={i} attrs={seg.attrs} body={seg.body} />
                   ) : (
-                    // Live-stream markdown render. MessageBubble does
-                    // a fancier render on save (path links, mermaid,
-                    // KaTeX); during streaming we keep it cheap — just
-                    // gfm so **bold** / lists / tables / code blocks
-                    // format inline instead of showing as raw md.
-                    <ReactMarkdown
-                      key={i}
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                        code: ({ children, className }) => {
-                          const isBlock = className?.includes("language-");
-                          return isBlock ? (
-                            <pre className="bg-[var(--bg)] border border-[var(--border)] rounded-md p-2 my-2 overflow-x-auto text-[12px] font-mono">
-                              <code className={className}>{children}</code>
-                            </pre>
-                          ) : (
-                            <code className="bg-[var(--bg)] border border-[var(--border)] rounded px-1 py-0.5 text-[12px] font-mono">
-                              {children}
-                            </code>
-                          );
-                        },
-                        ul: ({ children }) => (
-                          <ul className="list-disc pl-5 mb-2 space-y-0.5">{children}</ul>
-                        ),
-                        ol: ({ children }) => (
-                          <ol className="list-decimal pl-5 mb-2 space-y-0.5">{children}</ol>
-                        ),
-                        li: ({ children }) => <li className="text-[14px]">{children}</li>,
-                        strong: ({ children }) => (
-                          <strong className="font-semibold text-[var(--text)]">{children}</strong>
-                        ),
-                        h1: ({ children }) => (
-                          <h1 className="text-[16px] font-semibold mb-1 mt-2">{children}</h1>
-                        ),
-                        h2: ({ children }) => (
-                          <h2 className="text-[15px] font-semibold mb-1 mt-2">{children}</h2>
-                        ),
-                        h3: ({ children }) => (
-                          <h3 className="text-[14px] font-semibold mb-1 mt-1">{children}</h3>
-                        ),
-                      }}
-                    >
-                      {seg.value}
-                    </ReactMarkdown>
+                    // Same renderer as the saved bubble, so nothing reflows
+                    // when the turn completes; `streaming` adds the caret
+                    // and holds back a half-written mermaid fence.
+                    <ChatMarkdown key={i} text={seg.value} onFileOpen={onFileOpen} streaming />
                   ),
                 )
               ) : (
@@ -1840,10 +1826,12 @@ export default function ChatPanel({
           </div>
         )}
 
-        {error && (
-          <div className="mx-auto max-w-sm text-center text-[13px] text-red-400 bg-red-900/20 rounded-xl px-4 py-2 mb-4">
-            {error}
-          </div>
+        {error && !streaming && (
+          <ErrorCard
+            message={error}
+            onDismiss={() => setError(null)}
+            onRetry={retryLast}
+          />
         )}
 
         <div ref={bottomRef} />

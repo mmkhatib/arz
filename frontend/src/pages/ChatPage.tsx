@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
 import NewSessionModal from "@/components/NewSessionModal";
-import ActivityPane, { type ToolEntry } from "@/components/ActivityPane";
+import ActivityPane, { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, type ToolEntry } from "@/components/ActivityPane";
+import type { PanelTabId } from "@/hooks/usePanelTabs";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { chatPath, readSessionIdFromUrl } from "@/utils/sessionUrl";
 
@@ -36,8 +37,9 @@ export default function ChatPage() {
   const [activityWidth, setActivityWidth] = useState<number>(() => {
     const saved = localStorage.getItem("arz:activity-width");
     const n = saved ? parseInt(saved, 10) : NaN;
-    return !isNaN(n) && n >= 220 && n <= 600 ? n : 300;
+    return !isNaN(n) && n >= PANEL_MIN_WIDTH && n <= PANEL_MAX_WIDTH ? n : 300;
   });
+  const [requestedTab, setRequestedTab] = useState<PanelTabId | null>(null);
   const [seedPaths, setSeedPaths] = useState<string[]>([]);
   const [requestedFile, setRequestedFile] = useState<string | null>(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -122,6 +124,38 @@ export default function ChatPage() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
+
+  // Side panel open/closed is remembered per session: loaded on switch,
+  // written by `setPanelOpen` (every user-driven open/close goes through it).
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
+  useEffect(() => {
+    if (!activeId) return;
+    try { setActivityOpen(localStorage.getItem(`arz:panel-open:${activeId}`) === "1"); } catch { /* ignore */ }
+  }, [activeId]);
+  const setPanelOpen = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
+    setActivityOpen((prev) => {
+      const v = typeof next === "function" ? next(prev) : next;
+      const sid = activeIdRef.current;
+      if (sid) {
+        try { localStorage.setItem(`arz:panel-open:${sid}`, v ? "1" : "0"); } catch { /* ignore */ }
+      }
+      return v;
+    });
+  }, []);
+
+  // Anything can ask for a panel tab: `window.dispatchEvent(new
+  // CustomEvent("arz:open-panel", { detail: { tab: "context" } }))`.
+  // Used by ContextRing, which lives deep inside the composer.
+  useEffect(() => {
+    const onOpen = (e: Event) => {
+      const tab = (e as CustomEvent<{ tab?: PanelTabId }>).detail?.tab;
+      setPanelOpen(true);
+      if (tab) setRequestedTab(tab);
+    };
+    window.addEventListener("arz:open-panel", onOpen);
+    return () => window.removeEventListener("arz:open-panel", onOpen);
+  }, [setPanelOpen]);
 
   // On session switch: load persisted activity from localStorage instead of clearing
   useEffect(() => {
@@ -237,7 +271,7 @@ export default function ChatPage() {
   });
 
   const handleFileOpen = (path: string) => {
-    setActivityOpen(true);
+    setPanelOpen(true);
     setRequestedFile(path);
   };
 
@@ -337,7 +371,7 @@ export default function ChatPage() {
               }
               onFileOpen={handleFileOpen}
               activityOpen={activityOpen}
-              onToggleActivity={() => setActivityOpen((v) => !v)}
+              onToggleActivity={() => setPanelOpen((v) => !v)}
               onSessionForked={async (newId) => {
                 await loadSessions();
                 setActiveId(newId);
@@ -367,7 +401,9 @@ export default function ChatPage() {
             seedPaths={seedPaths}
             requestedFile={requestedFile}
             onFileOpenHandled={() => setRequestedFile(null)}
-            onClose={() => setActivityOpen(false)}
+            requestedTab={requestedTab}
+            onTabRequestHandled={() => setRequestedTab(null)}
+            onClose={() => setPanelOpen(false)}
             width={activityWidth}
             onWidthChange={setActivityWidth}
             onSpawnSession={handleSpawnFromTask}
