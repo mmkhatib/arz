@@ -162,7 +162,7 @@ def test_load_config_defaults(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None
     importlib.reload(loader)
     config = loader.load_config()
     assert config.provider.name == "claude-code"
-    assert config.provider.model == "claude-opus-4-7"
+    assert config.provider.model == "opus"
     assert config.dashboard.port == 7777
     assert config.dashboard.bot_name == "Arzeh"
 

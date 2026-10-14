@@ -1077,7 +1077,7 @@ async def _pick_cheap_model(*, fallback_provider: str, fallback_model: str) -> t
             return ("ollama", name)
 
     if shutil.which("claude"):
-        return ("claude-code", "claude-haiku-4-5")
+        return ("claude-code", "haiku")
 
     return (fallback_provider, fallback_model)
 

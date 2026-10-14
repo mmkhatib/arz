@@ -6,7 +6,7 @@ from __future__ import annotations
 def test_package_imports() -> None:
     import arz
 
-    assert arz.__version__ == "0.9.0"
+    assert arz.__version__ == "0.9.1"
 
 
 def test_llm_provider_abc_importable() -> None:

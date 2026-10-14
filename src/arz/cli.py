@@ -260,7 +260,7 @@ def setup() -> None:
         show_choices=True,
         prompt_suffix=" [claude-code/kiro-cli]: ",
     )
-    model = typer.prompt("Model", default="claude-opus-4-7")
+    model = typer.prompt("Model", default="opus")
 
     config_path.write_text(
         f"""[provider]

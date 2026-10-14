@@ -3,7 +3,7 @@
 
 [provider]
 name = "claude-code"       # "claude-code" | "kiro-cli" | "anthropic"
-model = "claude-opus-4-7"
+model = "opus"
 # work_dir = "~/.arz/workspace"  # uncomment to override
 
 [dashboard]

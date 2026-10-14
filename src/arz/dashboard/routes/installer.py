@@ -72,3 +72,11 @@ async def install(request: Request) -> StreamingResponse:
             yield chunk
 
     return StreamingResponse(gen(), media_type="text/plain")
+
+
+@router.get("/api/models")
+async def models(refresh: bool = False) -> dict:
+    """Live per-provider model lists — see arz.model_catalog."""
+    from arz.model_catalog import catalog
+
+    return {"providers": await catalog(refresh=refresh)}

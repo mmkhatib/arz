@@ -53,14 +53,28 @@ class CloudModel:
     note: str = ""
 
 
+# CLI aliases (opus/haiku, pro/flash) always resolve to the newest model,
+# so these never go stale. Codex has no aliases — read its live cache.
 _CLOUD_MODELS: list[CloudModel] = [
-    CloudModel("claude-opus-4-8", "claude-code", "frontier", 200, "deep reasoning, agentic"),
-    CloudModel("claude-opus-4-7", "claude-code", "frontier", 200, "deep reasoning, agentic"),
-    CloudModel("claude-haiku-4-5", "claude-code", "cheap", 200, "fast & inexpensive"),
-    CloudModel("gpt-5", "codex", "frontier", 400, "long-doc, structured output"),
-    CloudModel("gemini-2.5-pro", "gemini", "frontier", 2000, "very long context"),
-    CloudModel("gemini-2.5-flash", "gemini", "fast", 1000, "fast & multimodal"),
+    CloudModel("opus", "claude-code", "frontier", 200, "deep reasoning, agentic"),
+    CloudModel("sonnet", "claude-code", "fast", 200, "balanced speed & quality"),
+    CloudModel("haiku", "claude-code", "cheap", 200, "fast & inexpensive"),
+    CloudModel("pro", "gemini", "frontier", 1000, "very long context"),
+    CloudModel("flash", "gemini", "fast", 1000, "fast & multimodal"),
 ]
+
+
+def _cloud_models() -> list[CloudModel]:
+    from arz.model_catalog import _codex_models, cheap_codex_model
+
+    out = list(_CLOUD_MODELS)
+    codex = _codex_models()
+    if codex:
+        out.append(CloudModel(codex[0].id, "codex", "frontier", 400, "long-doc, structured output"))
+        cheap = cheap_codex_model()
+        if cheap and cheap != codex[0].id:
+            out.append(CloudModel(cheap, "codex", "cheap", 400, "fast & inexpensive"))
+    return out
 
 
 @dataclass
@@ -218,7 +232,7 @@ def snapshot(max_concurrent: int = 3) -> CapabilitySnapshot:
     responsibility (e.g. the channel runner re-snapshots every minute)."""
     return CapabilitySnapshot(
         clis=_detect_clis(),
-        cloud_models=list(_CLOUD_MODELS),
+        cloud_models=_cloud_models(),
         local_models=_list_local_models(),
         agents=_list_agents(),
         mcps=_list_mcps(),

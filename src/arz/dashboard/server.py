@@ -367,7 +367,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> FastAPI:
     """Construct the FastAPI app with all routes and middleware."""
-    app = FastAPI(title="Arz", version="0.9.0", lifespan=_lifespan)
+    app = FastAPI(title="Arz", version="0.9.1", lifespan=_lifespan)
 
     app.state.config = config
     app.state.provider_pool = provider_pool or ProviderPool(max_size=5)
@@ -432,6 +432,9 @@ def create_app(config: ArzConfig, provider_pool: ProviderPool | None = None) -> 
             model = agent.model
         else:
             model = ""
+        from arz.model_catalog import normalize_model
+
+        model = normalize_model(provider_name, model)
         sys_prompt = resolve_system_prompt(agent.system_prompt if agent else None)
 
         # Caller override beats agent default. Project-linked channels

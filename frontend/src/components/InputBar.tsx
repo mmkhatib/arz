@@ -19,6 +19,7 @@ import { api } from "@/api/client";
 import ContextRing from "./ContextRing";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
+import { useLiveModels } from "@/hooks/useLiveModels";
 import { loadDraft, saveDraft } from "@/utils/draftStorage";
 import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
 
@@ -337,6 +338,7 @@ export default function InputBar({
   // Hydrate the dynamic Ollama list (no-op for non-ollama sessions; the
   // hook short-circuits on subsequent mounts).
   useOllamaInstalledModels();
+  useLiveModels();
   const providerModels = modelsForProvider(provider);
   const effectiveModel = isModelValid(provider, model) ? (model as string) : defaultModelForProvider(provider);
   const activeModel = providerModels.find((m) => m.id === effectiveModel);

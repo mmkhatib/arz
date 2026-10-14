@@ -11,6 +11,7 @@ import {
 import { useTheme, THEMES } from "@/hooks/useTheme";
 import type { ModePreference } from "@/hooks/useTheme";
 import { modelsForProvider, defaultModelForProvider, isModelValid } from "@/utils/models";
+import { useLiveModels } from "@/hooks/useLiveModels";
 import { Settings as SettingsIcon } from "lucide-react";
 import { PageShell, PageHeader } from "@/components/PageShell";
 
@@ -24,6 +25,7 @@ const PROVIDER_LABELS = ["Claude Code CLI", "Kiro CLI (Amazon)", "OpenAI Codex C
 const LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"];
 
 export default function SettingsModal({ onClose, variant = "modal" }: Props) {
+  useLiveModels();
   const handleClose = onClose ?? (() => {});
   const [settings, setSettings] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);

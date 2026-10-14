@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "@/api/client";
 import { GitCompare, Square, Copy, Check } from "lucide-react";
-import { modelsForProvider, defaultModelForProvider, PROVIDER_LABELS, CLAUDE_MODELS, CODEX_MODELS, KIRO_MODELS, ANTHROPIC_MODELS } from "@/utils/models";
+import { modelsForProvider, defaultModelForProvider, PROVIDER_LABELS } from "@/utils/models";
+import { useLiveModels } from "@/hooks/useLiveModels";
 
 interface Props {
   prompt: string;
@@ -14,17 +15,17 @@ interface Props {
 interface ProviderOption {
   id: string;
   label: string;
-  models: { id: string; label: string }[];
 }
 
 const ALL_PROVIDERS: ProviderOption[] = [
-  { id: "claude-code", label: PROVIDER_LABELS["claude-code"], models: CLAUDE_MODELS },
-  { id: "codex",       label: PROVIDER_LABELS["codex"],       models: CODEX_MODELS },
-  { id: "kiro-cli",    label: PROVIDER_LABELS["kiro-cli"],    models: KIRO_MODELS },
-  { id: "anthropic",   label: PROVIDER_LABELS["anthropic"],   models: ANTHROPIC_MODELS },
+  { id: "claude-code", label: PROVIDER_LABELS["claude-code"] },
+  { id: "codex",       label: PROVIDER_LABELS["codex"] },
+  { id: "kiro-cli",    label: PROVIDER_LABELS["kiro-cli"] },
+  { id: "anthropic",   label: PROVIDER_LABELS["anthropic"] },
 ];
 
 export default function CompareModal({ prompt, baselineModel, baselineReply, provider, onClose }: Props) {
+  useLiveModels();
   const [altProvider, setAltProvider] = useState<string>(provider || "claude-code");
   const altModels = modelsForProvider(altProvider);
   const [altModel, setAltModel] = useState<string>(() => {

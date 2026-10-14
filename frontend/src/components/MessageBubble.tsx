@@ -16,9 +16,11 @@ import { extractEditChanges, stripPyRepr } from "@/utils/toolInput";
 import { extractOptions, segmentMessage, splitGoalTags } from "@/utils/segments";
 
 function shortModel(model: string): string {
-  // Compress "claude-opus-4-7" → "Opus 4.7", "claude-haiku-4-5-20251001" → "Haiku 4.5"
-  const m = model.match(/claude-(opus|sonnet|haiku)-(\d+)-(\d+)/i);
+  // Compress "claude-opus-5-5" → "Opus 5.5", "claude-haiku-4-5-20251001" → "Haiku 4.5"
+  const m = model.match(/claude-(opus|sonnet|haiku|fable)-(\d+)-(\d+)/i);
   if (m) return `${m[1][0].toUpperCase()}${m[1].slice(1)} ${m[2]}.${m[3]}`;
+  // CLI aliases ("opus", "flash-lite") — capitalise for the badge.
+  if (/^[a-z][a-z-]*$/.test(model)) return model[0].toUpperCase() + model.slice(1);
   return model.length > 24 ? model.slice(0, 24) + "…" : model;
 }
 

@@ -17,6 +17,7 @@ import {
 import { api, type Settings } from "@/api/client";
 import { useTheme } from "@/hooks/useTheme";
 import { modelsForProvider, defaultModelForProvider, PROVIDER_LABELS } from "@/utils/models";
+import { useLiveModels } from "@/hooks/useLiveModels";
 
 type Section = "general" | "providers" | "memory" | "security" | "appearance" | "advanced";
 
@@ -37,6 +38,7 @@ const ALL_PROVIDERS: Settings["provider"][] = [
 ];
 
 export default function SettingsPage() {
+  useLiveModels();
   const [section, setSection] = useState<Section>("general");
   const [saved, setSaved] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);

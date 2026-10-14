@@ -161,7 +161,7 @@ export default function AgentsModal({ onClose, variant = "modal" }: Props) {
           <input
             value={form.model}
             onChange={(e) => setForm({ ...form, model: e.target.value })}
-            placeholder="e.g. claude-opus-4-7 (leave blank for default)"
+            placeholder="e.g. opus, sonnet (leave blank for default)"
             className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]"
           />
         </Field>

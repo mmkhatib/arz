@@ -646,7 +646,7 @@ _SEED_AGENTS: list[AgentConfig] = [
         name="codex",
         description="OpenAI Codex CLI — autonomous coding agent for hands-off iteration.",
         provider="codex",
-        model="gpt-5.4",
+        model="",
         approval_mode="yolo",
     ),
 ]

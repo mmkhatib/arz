@@ -30,21 +30,22 @@ GoalRunner = Callable[[str, str], Awaitable[str]]
 # Cheap model per provider — the evaluator is meant to be a SMALL fast
 # judge, not another full Opus/Pro turn. Maps the session's main provider
 # to the cheapest reliable counterpart for that family. Mirrors the
-# Claude Code /goal design: Opus 4.7 writes; Haiku 4.5 judges.
+# Claude Code /goal design: Opus writes; Haiku judges. Aliases where the
+# CLI has them, so the judge tracks new releases without a code change.
 #
-#   claude-code → Haiku 4.5
-#   codex       → GPT-5.4 Mini
-#   gemini      → Gemini 2.5 Flash-Lite
-#   kiro-cli    → Haiku 4.5 (Kiro routes to Anthropic underneath)
+#   claude-code → haiku (CLI alias for the newest Haiku)
+#   codex       → first "mini" in Codex's live model cache (see cheap_model_for)
+#   gemini      → flash-lite (gemini-cli alias)
+#   kiro-cli    → "" (Kiro's own auto routing)
 #   ollama      → "" (leave default; user picks; local models are already cheap)
-#   anthropic   → Haiku 4.5
+#   anthropic   → Haiku
 CHEAP_MODELS_BY_PROVIDER: dict[str, str] = {
-    "claude-code": "claude-haiku-4-5-20251001",
-    "codex": "gpt-5.4-mini",
-    "gemini": "gemini-2.5-flash-lite",
-    "kiro-cli": "claude-haiku-4.5",
+    "claude-code": "haiku",
+    "codex": "",
+    "gemini": "flash-lite",
+    "kiro-cli": "",
     "ollama": "",
-    "anthropic": "claude-haiku-4-5",
+    "anthropic": "claude-haiku-5-5",
 }
 
 
@@ -57,6 +58,10 @@ def cheap_model_for(provider: str | None) -> str:
     """
     if not provider:
         return ""
+    if provider == "codex":
+        from arz.model_catalog import cheap_codex_model
+
+        return cheap_codex_model() or ""
     return CHEAP_MODELS_BY_PROVIDER.get(provider, "")
 
 

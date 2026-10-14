@@ -11,7 +11,7 @@ class ProviderConfig(BaseModel):
     """LLM provider settings."""
 
     name: Literal["claude-code", "kiro-cli", "codex", "anthropic"] = "claude-code"
-    model: str = "claude-opus-4-7"
+    model: str = "opus"
     work_dir: str | None = None
 
 

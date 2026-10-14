@@ -103,6 +103,9 @@ def _make_provider(
         model = config.provider.model
     else:
         model = ""
+    from arz.model_catalog import normalize_model
+
+    model = normalize_model(provider_name, model)
     work_dir = Path(session_work_dir) if session_work_dir else (_WORKSPACE_ROOT / session_id)
     # Resolve the steered prompt: agent's system_prompt (if set) → per-config
     # override → bundled.

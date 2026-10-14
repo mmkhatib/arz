@@ -3,6 +3,7 @@ import { Check, Bot, Sparkles, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
+import { useLiveModels } from "@/hooks/useLiveModels";
 import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
 
 interface AgentOpt { name: string; description?: string; provider?: string }
@@ -44,6 +45,7 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
 
   // Hydrate the dynamic Ollama list (no-op if already cached).
   useOllamaInstalledModels();
+  useLiveModels();
   const providerModels = modelsForProvider(provider);
   const effectiveModel = isModelValid(provider, model) ? (model as string) : defaultModelForProvider(provider);
   const activeModel = providerModels.find((m) => m.id === effectiveModel);

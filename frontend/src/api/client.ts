@@ -744,6 +744,9 @@ export const api = {
     }),
 
   // ── LLM Installer ──
+  getModels: (refresh = false) => request<{
+    providers: Record<string, { source: string; models: { id: string; label: string; default?: boolean }[] }>;
+  }>(`/models${refresh ? "?refresh=true" : ""}`),
   getInstallerStatus: () => request<{
     clis: { name: string; binary: string; description: string; installed: boolean; path?: string | null; docs_url: string; installable_here: boolean }[];
     model_catalog: {
