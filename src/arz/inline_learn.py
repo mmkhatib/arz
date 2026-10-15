@@ -19,6 +19,7 @@ can both display the de-tagged reply and log what landed.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -94,6 +95,18 @@ def drain_recalls(session_id: str) -> list[str]:
     return _pending_recalls.pop(session_id, [])
 
 
+def _session_work_dir(session_id: str | None) -> str | None:
+    if not session_id:
+        return None
+    try:
+        from arz.session.manager import _SESSIONS_DIR
+
+        data = json.loads((_SESSIONS_DIR / f"{session_id}.json").read_text(encoding="utf-8"))
+        return data.get("work_dir") or None
+    except Exception:
+        return None
+
+
 def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dict[str, int]:
     """Persist each extraction to the right store. Returns counts per kind.
 
@@ -135,7 +148,12 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
                 if cat not in _VALID_LEARN_CATEGORIES:
                     cat = "knowledge"
                 pinned = ex.attrs.get("pinned", "").lower() in {"true", "1", "yes"}
-                lessons.add(cat, ex.body, pinned)
+                scope = None
+                if ex.attrs.get("scope", "").lower() in {"repo", "project", "here"}:
+                    from arz.lessons import scope_for
+
+                    scope = scope_for(_session_work_dir(session_id))
+                lessons.add(cat, ex.body, pinned, scope=scope, applies=ex.attrs.get("applies", ""))
                 counts["learn"] += 1
             elif ex.kind == "memory":
                 # Route memory entries to one of the auto-injected files

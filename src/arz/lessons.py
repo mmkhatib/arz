@@ -38,6 +38,43 @@ class Lesson(BaseModel):
     text: str
     pinned: bool = False
     created_at: float
+    # Absolute repo/folder this lesson applies to; None = everywhere. A
+    # repo-specific convention ("run make check before pushing") must not
+    # leak into every other project.
+    scope: str | None = None
+    # Optional trigger condition, rendered as "(when: …)" — tells the model
+    # when the rule applies instead of leaving it to guess.
+    applies: str = ""
+
+
+def scope_for(work_dir: str | Path | None) -> str | None:
+    """Canonical scope for a working directory: its git root, else itself.
+
+    None when there's no real working directory (arz's per-session scratch
+    folders under ~/.arz/workspace are not projects).
+    """
+    if not work_dir:
+        return None
+    try:
+        p = Path(work_dir).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    scratch = (Path.home() / ".arz" / "workspace").resolve()
+    if p == scratch or scratch in p.parents:
+        return None
+    for d in (p, *p.parents):
+        if (d / ".git").exists():
+            return str(d)
+    return str(p)
+
+
+def in_scope(lesson: Lesson, work_dir: str | Path | None) -> bool:
+    if not lesson.scope:
+        return True
+    here = scope_for(work_dir)
+    if here is None:
+        return False
+    return here == lesson.scope or Path(lesson.scope) in Path(here).parents
 
 
 def _tokens(s: str) -> set[str]:
@@ -117,7 +154,15 @@ class LessonStore:
             self._reload_if_changed()
             return list(self._lessons)
 
-    def add(self, category: str, text: str, pinned: bool = False) -> Lesson:
+    def add(
+        self,
+        category: str,
+        text: str,
+        pinned: bool = False,
+        *,
+        scope: str | None = None,
+        applies: str = "",
+    ) -> Lesson:
         category = category if category in _VALID_CATEGORIES else "knowledge"
         text = (text or "").strip()
         if not text:
@@ -129,7 +174,7 @@ class LessonStore:
             # produce three rows.
             target = _norm(text)
             for existing in self._lessons:
-                if existing.category != category:
+                if existing.category != category or existing.scope != scope:
                     continue
                 e_norm = _norm(existing.text)
                 if (
@@ -148,6 +193,8 @@ class LessonStore:
                 text=text,
                 pinned=pinned,
                 created_at=time.time(),
+                scope=scope,
+                applies=(applies or "").strip()[:200],
             )
             self._next_id += 1
             self._lessons.append(l)
@@ -210,6 +257,7 @@ class LessonStore:
         exclude_ids: set[int] | frozenset[int] = frozenset(),
         follow_up: bool = False,
         budget_chars: int = _RENDER_BUDGET_CHARS,
+        work_dir: str | Path | None = None,
     ) -> tuple[list[Lesson], list[Lesson]]:
         """Pick lessons for one turn: ``(standing, relevant)``.
 
@@ -228,7 +276,7 @@ class LessonStore:
 
         with self._lock:
             self._reload_if_changed()
-            pool = [l for l in self._lessons if l.id not in exclude_ids]
+            pool = [l for l in self._lessons if l.id not in exclude_ids and in_scope(l, work_dir)]
         if not pool:
             return [], []
         standing = [l for l in pool if l.pinned or l.category == "preference"]
@@ -239,7 +287,7 @@ class LessonStore:
         if follow_up:
             # Rarity is judged against the whole store, not just unseen rows.
             with self._lock:
-                everyone = list(self._lessons)
+                everyone = [l for l in self._lessons if in_scope(l, work_dir)]
             eligible = {l.id for l in rest}
             gated = ranking.turn_gate(user_message, [l.text for l in everyone])
             candidates = [everyone[i] for i in gated if everyone[i].id in eligible]
@@ -265,7 +313,9 @@ class LessonStore:
 
 
 def _render_line(l: Lesson) -> str:
-    return f"- [{l.category}] {l.text}"
+    tag = f"{l.category}, this repo" if l.scope else l.category
+    when = f" (when: {l.applies})" if l.applies else ""
+    return f"- [{tag}] {l.text}{when}"
 
 
 def render_lessons(lessons: list[Lesson]) -> str:

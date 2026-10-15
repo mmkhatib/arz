@@ -157,3 +157,50 @@ def test_compaction_or_provider_swap_resets(mem) -> None:
     ctx.bind_provider("s1", p)
     other = _Persistent()
     assert "Reply tersely." in _build(ctx, "push to github", ctx.provider_token(other))
+
+
+# ── scoped lessons ───────────────────────────────────────────────────────────
+
+
+def test_repo_scoped_lessons_stay_in_their_repo(tmp_path: Path) -> None:
+    from arz.lessons import LessonStore, render_lessons, scope_for
+
+    repo_a = tmp_path / "a"
+    (repo_a / ".git").mkdir(parents=True)
+    (repo_a / "src").mkdir()
+    repo_b = tmp_path / "b"
+    (repo_b / ".git").mkdir(parents=True)
+    assert scope_for(repo_a / "src") == str(repo_a.resolve())
+
+    store = LessonStore(path=tmp_path / "l.jsonl")
+    store.add("tool", "run make check before pushing", scope=scope_for(repo_a), applies="pushing")
+    store.add("tool", "use uv for python deps")
+
+    def texts(wd) -> str:
+        standing, relevant = store.select("about to push, make check?", work_dir=wd)
+        return render_lessons(standing + relevant)
+
+    inside = texts(repo_a / "src")
+    assert "make check" in inside and "this repo" in inside and "(when: pushing)" in inside
+    assert "make check" not in texts(repo_b)
+    assert "make check" not in texts(None)
+    # Same text, different scope → separate lessons (no cross-scope dedup).
+    store.add("tool", "run make check before pushing")
+    assert len(store.list()) == 3
+
+
+def test_learn_tag_scope_attr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from arz import inline_learn
+    from arz import lessons as lessons_mod
+
+    repo = tmp_path / "proj"
+    (repo / ".git").mkdir(parents=True)
+    store = lessons_mod.LessonStore(path=tmp_path / "l.jsonl")
+    monkeypatch.setattr(lessons_mod, "_singleton", store)
+    monkeypatch.setattr(inline_learn, "_session_work_dir", lambda sid: str(repo))
+    _, ex = inline_learn.parse(
+        '<learn category="tool" scope="repo" applies="releasing">tag before release</learn>'
+    )
+    inline_learn.apply(ex, session_id="s")
+    (l,) = store.list()
+    assert l.scope == str(repo.resolve()) and l.applies == "releasing"

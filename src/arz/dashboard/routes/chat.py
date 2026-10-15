@@ -1466,6 +1466,7 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
             # Lets a persistent CLI get only what's new instead of the
             # full prefix every turn.
             provider_token=provider_token(_live),
+            work_dir=getattr(session, "work_dir", None),
         )
         if prefix:
             message = f"{prefix}\n\n{message}"

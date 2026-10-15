@@ -120,13 +120,14 @@ def build_prefix(
     session_id: str | None = None,
     provider_token: int | None = None,
     budget_chars: int | None = None,
+    work_dir: str | None = None,
 ) -> str:
     """Return the memory prefix to prepend to *user_message* before sending
     it to a provider. Empty string if nothing useful to inject.
 
     Pass *session_id* plus the live provider's *provider_token* (see
     :func:`provider_token`) to get inject-once behaviour; without them every
-    call is a full, stateless build.
+    call is a full, stateless build. *work_dir* selects repo-scoped lessons.
     """
     st: _SessionMemory | None = None
     follow_up = False
@@ -200,6 +201,7 @@ def build_prefix(
                 user_message,
                 exclude_ids=st.lesson_ids if follow_up and st else frozenset(),
                 follow_up=follow_up,
+                work_dir=work_dir,
             )
             if standing:
                 blocks.append(

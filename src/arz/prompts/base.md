@@ -77,6 +77,11 @@ it's additive.
 - `<learn category="preference">user's favourite color is red</learn>`
 - `<learn category="tool">use rg, not grep, for code search</learn>`
 - `<learn category="knowledge" pinned="true">prod DB is read-only on weekends</learn>`
+- `<learn category="tool" scope="repo">run make check before pushing</learn>` —
+  `scope="repo"` limits the lesson to the current project, so a repo's
+  conventions don't leak into other work. Default is global.
+- `<learn category="tool" applies="editing SQL migrations">never edit an applied migration; add a new one</learn>` —
+  `applies` says WHEN the rule matters; it's shown with the lesson.
 - `<memory key="preferences">be concise</memory>`
 - `<memory key="projects">arz multi-LLM agent runtime</memory>`
 - `<memory>random fact about user</memory>`
