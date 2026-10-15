@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 _DB_PATH = Path.home() / ".arz" / "memory_fts.db"
@@ -52,6 +53,10 @@ class MemoryFTS:
         self._db = db_path or _DB_PATH
         self._db.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
+        # (source, key) → indexed mtime, loaded once per reindex pass so the
+        # mtime check doesn't open a sqlite connection per file.
+        self._meta: dict[tuple[str, str], float] = {}
+        self._last_reindex = 0.0
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -74,6 +79,12 @@ class MemoryFTS:
                 conn.execute("DELETE FROM memory_fts")
                 conn.execute("DELETE FROM memory_meta")
                 conn.commit()
+        with self._lock, self._connect() as conn:
+            self._meta = {
+                (s, k): float(m)
+                for s, k, m in conn.execute("SELECT source, key, mtime FROM memory_meta")
+            }
+        self._last_reindex = time.monotonic()
 
         counts = {
             "memory_files": 0,
@@ -88,6 +99,17 @@ class MemoryFTS:
         counts["notes"] = self._index_markdown_notes()
         counts["sessions"] = self._index_sessions()
         return counts
+
+    def maybe_reindex(self, min_interval_s: float = 30.0) -> None:
+        """Reindex at most once per ``min_interval_s`` — for per-turn callers.
+
+        Writes made through arz itself are visible after the interval; an
+        explicit ``reindex()`` (dashboard search, /api/memory/reindex) is
+        always immediate.
+        """
+        if time.monotonic() - self._last_reindex < min_interval_s:
+            return
+        self.reindex()
 
     def search(self, q: str, source: str | None = None, k: int = 10) -> list[dict]:
         """Ranked FTS5 search. Returns up to k {source, key, title, snippet, rank}.
@@ -207,6 +229,7 @@ class MemoryFTS:
                 (mtime,),
             )
             conn.commit()
+        self._meta[("lessons", "all")] = mtime
         return count
 
     def _index_sessions(self) -> int:
@@ -251,6 +274,7 @@ class MemoryFTS:
                 title=f"[{day}] {title}" if day else title,
                 body=body,
                 mtime=mtime,
+                meta_key=path.name,
             )
             n += 1
         return n
@@ -269,6 +293,7 @@ class MemoryFTS:
                 title=path.stem,
                 body=path.read_text(encoding="utf-8"),
                 mtime=mtime,
+                meta_key=path.name,
             )
             n += 1
         return n
@@ -276,14 +301,23 @@ class MemoryFTS:
     # ── helpers ─────────────────────────────────────────────────────────────
 
     def _needs_reindex(self, source: str, key: str, mtime: float) -> bool:
-        with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT mtime FROM memory_meta WHERE source = ? AND key = ?",
-                (source, key),
-            ).fetchone()
-        return row is None or float(row[0]) < mtime - 0.001
+        prev = self._meta.get((source, key))
+        return prev is None or prev < mtime - 0.001
 
-    def _upsert(self, *, source: str, key: str, title: str, body: str, mtime: float) -> None:
+    def _upsert(
+        self,
+        *,
+        source: str,
+        key: str,
+        title: str,
+        body: str,
+        mtime: float,
+        meta_key: str | None = None,
+    ) -> None:
+        """``meta_key`` is the name ``_needs_reindex`` checks (the file name)
+        when it differs from the row ``key`` — they must match or the file is
+        re-indexed on every pass."""
+        meta_key = meta_key or key
         with self._lock, self._connect() as conn:
             conn.execute(
                 "DELETE FROM memory_fts WHERE source = ? AND key = ?",
@@ -296,9 +330,10 @@ class MemoryFTS:
             conn.execute(
                 "INSERT INTO memory_meta (source, key, mtime) VALUES (?, ?, ?) "
                 "ON CONFLICT(source, key) DO UPDATE SET mtime = excluded.mtime",
-                (source, key, mtime),
+                (source, meta_key, mtime),
             )
             conn.commit()
+        self._meta[(source, meta_key)] = mtime
 
     @staticmethod
     def _sanitize_query(q: str) -> str:

@@ -162,6 +162,11 @@ class VectorStore:
             conn.execute("DELETE FROM vector_docs WHERE id = ?", (row[0],))
             return True
 
+    def count(self) -> int:
+        """Total documents (embedded or pending)."""
+        with self._connect() as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM vector_docs").fetchone()[0])
+
     def pending_count(self) -> int:
         """Documents with no vector for the active embedder."""
         with self._connect() as conn:
@@ -246,3 +251,50 @@ class VectorStore:
             return []
         # Convert L2 distance → similarity-ish score (1 / (1 + d)).
         return [(key, content, 1.0 / (1.0 + dist)) for key, content, dist in rows]
+
+
+# ── Shared instance ─────────────────────────────────────────────────────────
+# Every caller MUST go through get_vector_store(). Two VectorStores with
+# different embedders on the same DB fight: each one's _init_schema sees the
+# other's embedder_id, drops vector_embeddings and queues a full re-embed —
+# so vector recall silently empties every time the "other" one starts.
+
+_shared: VectorStore | None = None
+_shared_lock = threading.Lock()
+
+
+def get_vector_store(config=None) -> VectorStore | None:
+    """Process-wide VectorStore using the configured embedder.
+
+    ``config`` is optional; without it the user config is loaded so the
+    embedder choice never depends on which caller happened to start first.
+    """
+    global _shared
+    if _shared is not None:
+        return _shared
+    with _shared_lock:
+        if _shared is not None:
+            return _shared
+        try:
+            from arz.memory.embedder import embedder_from_config
+
+            if config is None:
+                try:
+                    from arz.config.loader import load_config
+
+                    config = load_config()
+                except Exception:
+                    config = None
+            spec = "auto"
+            if config is not None and hasattr(config, "dashboard"):
+                spec = getattr(config.dashboard, "embedding_model", "auto") or "auto"
+            _shared = VectorStore(embedder=embedder_from_config(spec))
+        except Exception:
+            log.exception("VectorStore init failed")
+            return None
+        return _shared
+
+
+def reset_vector_store_for_tests() -> None:
+    global _shared
+    _shared = None

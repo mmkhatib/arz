@@ -6,7 +6,10 @@ other's preferences. One memory dir per workspace.
 Default workspace = ``"default"`` so existing single-workspace installs
 keep their on-disk paths exactly where they are (``~/.arz/memory/``,
 ``~/.arz/memory.db``). Switching to a named workspace remaps both
-markdown + sqlite paths to ``~/.arz/workspace/<name>/...``.
+markdown + sqlite paths to ``~/.arz/memory-workspaces/<name>/...``.
+
+(Not ``~/.arz/workspace/`` — that directory holds per-session working
+folders, which ``list_workspaces`` used to report as memory workspaces.)
 
 The active workspace is held in module state — switched at runtime via
 ``set_active_workspace()`` from the dashboard or surface manager. Never
@@ -20,6 +23,10 @@ import re
 from pathlib import Path
 
 import structlog
+
+# Named memory workspaces. Distinct from ~/.arz/workspace/, which holds
+# per-session working directories.
+_ROOT_NAME = "memory-workspaces"
 
 log = structlog.get_logger(__name__)
 
@@ -54,11 +61,11 @@ def memory_dir() -> Path:
 
     The default workspace keeps the legacy ``~/.arz/memory/`` location so
     existing installs aren't disrupted. Named workspaces land under
-    ``~/.arz/workspace/<name>/memory/``.
+    ``~/.arz/memory-workspaces/<name>/memory/``.
     """
     if _active == _DEFAULT:
         return Path.home() / ".arz" / "memory"
-    return Path.home() / ".arz" / "workspace" / _active / "memory"
+    return Path.home() / ".arz" / _ROOT_NAME / _active / "memory"
 
 
 def db_path() -> Path:
@@ -68,14 +75,14 @@ def db_path() -> Path:
     """
     if _active == _DEFAULT:
         return Path.home() / ".arz" / "memory.db"
-    return Path.home() / ".arz" / "workspace" / _active / "memory.db"
+    return Path.home() / ".arz" / _ROOT_NAME / _active / "memory.db"
 
 
 def list_workspaces() -> list[str]:
     """All known workspace names — `default` + every dir under
-    ``~/.arz/workspace/``."""
+    ``~/.arz/memory-workspaces/``."""
     out = [_DEFAULT]
-    root = Path.home() / ".arz" / "workspace"
+    root = Path.home() / ".arz" / _ROOT_NAME
     if root.exists():
         for p in sorted(root.iterdir()):
             if p.is_dir() and p.name != _DEFAULT:

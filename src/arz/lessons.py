@@ -248,4 +248,44 @@ def get_lesson_store() -> LessonStore:
     global _singleton
     if _singleton is None:
         _singleton = LessonStore()
+        try:
+            migrate_legacy_sqlite_lessons(_singleton)
+        except Exception:
+            pass
     return _singleton
+
+
+_LEGACY_DB = Path.home() / ".arz" / "memory.db"
+
+
+def migrate_legacy_sqlite_lessons(store: LessonStore, db_path: Path | None = None) -> int:
+    """Move rows from the retired SQLite ``lessons`` table into the JSONL store.
+
+    That table was written by the old ``/api/memory/lessons`` endpoints but
+    never injected into prompts, so anything saved there was invisible to
+    the model. Rows are added (deduped) and the table is renamed so this
+    runs once. Returns the number of rows migrated.
+    """
+    import sqlite3
+
+    db = db_path or _LEGACY_DB
+    if not db.exists():
+        return 0
+    with sqlite3.connect(str(db)) as conn:
+        has = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lessons'"
+        ).fetchone()
+        if not has:
+            return 0
+        rows = conn.execute("SELECT content, tags FROM lessons ORDER BY id").fetchall()
+        n = 0
+        for content, tags in rows:
+            tag_set = {t.strip() for t in (tags or "").split(",") if t.strip()}
+            category = next((t for t in tag_set if t in _VALID_CATEGORIES), "knowledge")
+            try:
+                store.add(category, content)
+                n += 1
+            except ValueError:
+                continue
+        conn.execute("ALTER TABLE lessons RENAME TO lessons_legacy_migrated")
+    return n

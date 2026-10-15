@@ -130,31 +130,21 @@ async def overview(
     notes = 0
     lessons = 0
     md_store = getattr(state, "markdown_store", None)
-    lesson_store = getattr(state, "lessons_store", None)
     if md_store is None:
         from arz.memory.markdown import MarkdownStore
 
         md_store = MarkdownStore()
         state.markdown_store = md_store
-    if lesson_store is None:
-        from arz.memory.lessons import LessonsStore
-
-        lesson_store = LessonsStore()
-        state.lessons_store = lesson_store
     try:
         notes = len(md_store.list())
     except Exception:
         pass
-    # Prefer the new auto-inject lessons store; fall back to legacy SQLite store.
     try:
         from arz.lessons import get_lesson_store
 
         lessons = len(get_lesson_store().list())
     except Exception:
-        try:
-            lessons = len(lesson_store.list())
-        except Exception:
-            pass
+        pass
 
     # Counts for the new autonomy features.
     agents_count = 0

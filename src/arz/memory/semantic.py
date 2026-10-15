@@ -447,8 +447,12 @@ def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
     # Without a vector embedder we fall back to keyword-only ranking so the
     # hash-embedder default still produces sensible results. Vector-on
     # callers get the full hybrid blend.
+    # Relevance (pre recency/frequency) per fact — only facts that actually
+    # matched the query count as a "hit". Bumping every rendered fact made
+    # hit_count self-reinforcing: shown → more hits → higher rank → shown.
+    relevance: dict[str, float] = {}
     if query.strip():
-        scored = _hybrid_score(query, facts)
+        scored = _hybrid_score(query, facts, relevance_out=relevance)
         facts = [f for _, f in scored]
     out: list[str] = []
     used = 0
@@ -462,7 +466,8 @@ def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
             break
         out.append(line)
         used += len(line) + 1
-        surfaced_keys.append(f.key)
+        if relevance.get(f.key, 0.0) >= _HIT_RELEVANCE:
+            surfaced_keys.append(f.key)
     if not out:
         return ""
     # Update hit_count for surfaced facts.
@@ -489,7 +494,9 @@ def _row_to_fact(row: tuple) -> Fact:
     )
 
 
-_TOKEN_RE = __import__("re").compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
+# Underscores split tokens so a key like ``project.deploy_target`` matches
+# a query that says "deploy target".
+_TOKEN_RE = __import__("re").compile(r"[A-Za-z][A-Za-z0-9]{2,}")
 
 
 def _tokens(s: str) -> set[str]:
@@ -608,6 +615,11 @@ def _recency_factor(updated_at: float, *, now: float | None = None) -> float:
     return 0.55
 
 
+# Minimum query relevance (0.6·cos + 0.4·keyword) for a surfaced fact to
+# count as used. Below this the fact merely rode along in the prefix.
+_HIT_RELEVANCE = 0.2
+
+
 def _frequency_factor(hit_count: int) -> float:
     """Saturating frequency boost. Rarely-hit facts stay at 1.0; facts
     surfaced often climb toward ~1.5. Saturates so a runaway lookup
@@ -623,7 +635,9 @@ def _frequency_factor(hit_count: int) -> float:
     return min(1.6, 1.0 + math.log10(1.0 + hit_count) * 0.3)
 
 
-def _hybrid_score(query: str, facts: list[Fact]) -> list[tuple[float, Fact]]:
+def _hybrid_score(
+    query: str, facts: list[Fact], *, relevance_out: dict[str, float] | None = None
+) -> list[tuple[float, Fact]]:
     """Score every fact against the query with the 0.6/0.4 hybrid blend,
     then multiply by recency + frequency factors so old, never-hit facts
     sink and recent / proven-useful facts rise.
@@ -641,6 +655,8 @@ def _hybrid_score(query: str, facts: list[Fact]) -> list[tuple[float, Fact]]:
         kw = _keyword_score(q_tokens, f)
         cos = _cosine_between(q_vec, _fact_vector(f)) if q_vec else 0.0
         base = 0.6 * cos + 0.4 * kw
+        if relevance_out is not None:
+            relevance_out[f.key] = base
         rec = _recency_factor(f.updated_at, now=now)
         freq = _frequency_factor(f.hit_count)
         score = base * rec * freq

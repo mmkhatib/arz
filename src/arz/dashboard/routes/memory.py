@@ -9,9 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from arz.dashboard.token_auth import require_token
-from arz.memory.lessons import LessonsStore
 from arz.memory.markdown import MarkdownStore
-from arz.memory.vector import VectorStore
+from arz.memory.vector import VectorStore, get_vector_store
 
 router = APIRouter(dependencies=[Depends(require_token)])
 
@@ -26,20 +25,31 @@ def _markdown_store(request: Request) -> MarkdownStore:
     return store
 
 
-def _lessons_store(request: Request) -> LessonsStore:
-    store = getattr(request.app.state, "lessons_store", None)
-    if store is None:
-        store = LessonsStore()
-        request.app.state.lessons_store = store
-    return store
+def _lessons_store(request: Request):
+    # The one lesson store prompts are built from (~/.arz/lessons.jsonl).
+    from arz.lessons import get_lesson_store
+
+    return get_lesson_store()
 
 
-def _vector_store(request: Request) -> VectorStore:
-    store = getattr(request.app.state, "vector_store", None)
-    if store is None:
-        store = VectorStore()
-        request.app.state.vector_store = store
-    return store
+class _NullVectorStore:
+    """Stand-in when sqlite-vec / the embedder can't load — FTS still works."""
+
+    def add(self, *a, **kw) -> None: ...
+    def remove(self, *a, **kw) -> bool:
+        return False
+
+    def search(self, *a, **kw) -> list:
+        return []
+
+    def count(self) -> int:
+        return 0
+
+
+def _vector_store(request: Request) -> VectorStore | _NullVectorStore:
+    # The SAME instance chat recall uses. A private VectorStore() here used
+    # the default hash embedder and wiped the real index on every start.
+    return get_vector_store(getattr(request.app.state, "config", None)) or _NullVectorStore()
 
 
 # ── Markdown CRUD ──────────────────────────────────────────────────────────────
@@ -69,7 +79,7 @@ async def memory_stats(request: Request) -> dict:
         lessons = 0
     try:
         vec = _vector_store(request)
-        vec_count = vec.count() if hasattr(vec, "count") else 0
+        vec_count = vec.count()
     except Exception:
         vec_count = 0
     return {"markdown": len(md), "lessons": lessons, "vectors": vec_count}
@@ -140,28 +150,30 @@ class LessonCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+def _lesson_row(l) -> LessonRow:  # noqa: ANN001 — arz.lessons.Lesson
+    return LessonRow(id=l.id, content=l.text, tags=[l.category], created_at=l.created_at)
+
+
 @router.get("/api/memory/lessons", response_model=list[LessonRow])
 async def list_lessons(
     request: Request,
     tag: str | None = None,
 ) -> list[LessonRow]:
-    return [
-        LessonRow(id=l.id, content=l.content, tags=l.tags, created_at=l.created_at)
-        for l in _lessons_store(request).list(tag)
-    ]
+    rows = [l for l in _lessons_store(request).list() if tag is None or l.category == tag]
+    rows.sort(key=lambda l: l.created_at, reverse=True)
+    return [_lesson_row(l) for l in rows]
 
 
 @router.post("/api/memory/lessons", response_model=LessonRow, status_code=201)
 async def create_lesson(body: LessonCreate, request: Request) -> LessonRow:
-    lesson = _lessons_store(request).add(body.content, body.tags)
+    category = next((t for t in body.tags if t in {"preference", "tool", "knowledge"}), "knowledge")
+    lesson = _lessons_store(request).add(category, body.content)
     _vector_store(request).add(
         f"lesson:{lesson.id}",
-        lesson.content,
-        meta={"source": "lesson", "tags": lesson.tags},
+        lesson.text,
+        meta={"source": "lesson", "tags": [lesson.category]},
     )
-    return LessonRow(
-        id=lesson.id, content=lesson.content, tags=lesson.tags, created_at=lesson.created_at
-    )
+    return _lesson_row(lesson)
 
 
 @router.delete("/api/memory/lessons/{lesson_id}", status_code=204)

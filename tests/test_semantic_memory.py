@@ -151,14 +151,16 @@ def test_stats_counts_facts(isolated_semantic):
     assert s["avg_confidence"] == pytest.approx(0.8, abs=0.01)
 
 
-def test_render_bumps_hit_count(isolated_semantic):
+def test_render_bumps_hit_count_only_when_relevant(isolated_semantic):
+    """A fact that merely rides along in the prefix is not a hit — counting
+    it would make hit_count (and so its rank) self-reinforcing."""
     sem = isolated_semantic
-    sem.upsert("project.k", "v")
-    sem.render_for_prompt()
-    sem.render_for_prompt()
-    got = sem.get("project.k")
-    assert got is not None
-    assert got.hit_count >= 1
+    sem.upsert("project.deploy_target", "staging cluster in us-east")
+    sem.render_for_prompt()  # no query → nothing matched
+    sem.render_for_prompt(query="what is the weather like")
+    assert sem.get("project.deploy_target").hit_count == 0
+    sem.render_for_prompt(query="which deploy target do we use")
+    assert sem.get("project.deploy_target").hit_count == 1
 
 
 # ── Phase 3 guardrails: allowlist / blocklist / shape ──

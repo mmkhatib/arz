@@ -58,8 +58,8 @@ def test_named_paths_remap():
     workspace.set_active_workspace("acme")
     md = workspace.memory_dir()
     db = workspace.db_path()
-    assert "/workspace/acme/memory" in str(md)
-    assert "/workspace/acme/memory.db" in str(db)
+    assert "/memory-workspaces/acme/memory" in str(md)
+    assert "/memory-workspaces/acme/memory.db" in str(db)
 
 
 def test_list_workspaces_includes_default():

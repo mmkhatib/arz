@@ -310,7 +310,7 @@ def _recall_block(user_message: str, *, recall_k: int, config: Any | None) -> st
 
     fts = get_memory_fts()
     try:
-        fts.reindex()
+        fts.maybe_reindex()
     except Exception:
         pass
     fts_hits = fts.search(user_message, k=recall_k)
@@ -337,30 +337,15 @@ def _recall_block(user_message: str, *, recall_k: int, config: Any | None) -> st
     return "<memory>\n" + "\n".join(blocks) + "\n</memory>"
 
 
-_vector_singleton = None
-
-
 def _vector_store(config: Any | None):
-    """Lazy-init shared VectorStore so embedding cost is paid once."""
-    global _vector_singleton
-    if _vector_singleton is not None:
-        return _vector_singleton
-    try:
-        from arz.memory.embedder import embedder_from_config
-        from arz.memory.vector import VectorStore
+    """Shared VectorStore — see arz.memory.vector.get_vector_store."""
+    from arz.memory.vector import get_vector_store
 
-        spec = "auto"
-        if config is not None and hasattr(config, "dashboard"):
-            spec = getattr(config.dashboard, "embedding_model", "auto") or "auto"
-        emb = embedder_from_config(spec)
-        _vector_singleton = VectorStore(embedder=emb)
-        return _vector_singleton
-    except Exception:
-        log.exception("VectorStore init failed")
-        return None
+    return get_vector_store(config)
 
 
 def reset_vector_store_for_tests() -> None:
     """Test helper — clears the shared singleton."""
-    global _vector_singleton
-    _vector_singleton = None
+    from arz.memory.vector import reset_vector_store_for_tests as _reset
+
+    _reset()

@@ -173,10 +173,11 @@ def test_same_embedder_does_not_requeue(tmp_path):
 def isolated_episodic(monkeypatch, tmp_path):
     from arz.memory import context as ctx
     from arz.memory import episodic
+    from arz.memory import vector as vector_mod
 
     monkeypatch.setattr(episodic, "_DB_PATH", tmp_path / "memory.db")
     store = VectorStore(db_path=tmp_path / "vec.db", embedder=HashEmbedder(dim=128))
-    monkeypatch.setattr(ctx, "_vector_singleton", store, raising=False)
+    monkeypatch.setattr(vector_mod, "_shared", store)
     return episodic, ctx, store
 
 
@@ -188,7 +189,9 @@ def test_episodic_ignores_rows_from_a_stale_embedder(isolated_episodic, tmp_path
 
     # Swap the shared embedder — the stored vector is now from a foreign space.
     swapped = VectorStore(db_path=tmp_path / "vec2.db", embedder=HashEmbedder(dim=64))
-    monkeypatch.setattr(ctx, "_vector_singleton", swapped, raising=False)
+    from arz.memory import vector as vector_mod
+
+    monkeypatch.setattr(vector_mod, "_shared", swapped)
     assert episodic.search(text, k=5) == [], "stale-space rows must not be scored"
 
     # Backfill re-embeds them into the new space.

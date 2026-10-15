@@ -10,6 +10,7 @@ def isolated_episodic(monkeypatch, tmp_path):
     """Redirect episodic.py + the embedder hook so tests stay hermetic."""
     from arz.memory import context as ctx
     from arz.memory import episodic
+    from arz.memory import vector as vector_mod
     from arz.memory.embedder import HashEmbedder
     from arz.memory.vector import VectorStore
 
@@ -17,7 +18,7 @@ def isolated_episodic(monkeypatch, tmp_path):
     # Force a hash-embedder vector store so _embedder() returns something
     # deterministic without hitting Ollama.
     store = VectorStore(db_path=tmp_path / "vec.db", embedder=HashEmbedder(dim=128))
-    monkeypatch.setattr(ctx, "_vector_singleton", store, raising=False)
+    monkeypatch.setattr(vector_mod, "_shared", store)
     yield episodic
 
 
