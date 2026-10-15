@@ -14,6 +14,7 @@ export interface SessionSummary {
   model?: string | null;
   agent?: string | null;
   approval_mode?: "normal" | "trust_reads" | "trust" | "yolo";
+  memory_mode?: "persistent" | "incognito" | "temporary";
   streaming?: boolean;
   autonudge_goal?: string | null;
   autonudge_idle_s?: number;
@@ -1058,6 +1059,15 @@ export const api = {
 
   async evictSession(sessionId: string): Promise<void> {
     await fetch(`${BASE}/sessions/${sessionId}/evict`, { method: "POST" });
+  },
+
+  async setMemoryMode(sessionId: string, mode: string): Promise<void> {
+    const res = await fetch(`${BASE}/sessions/${sessionId}/memory-mode`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
   },
 
   async setApprovalMode(sessionId: string, mode: string): Promise<{ mode: string }> {

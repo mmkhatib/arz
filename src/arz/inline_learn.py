@@ -107,11 +107,25 @@ def _session_work_dir(session_id: str | None) -> str | None:
         return None
 
 
-def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dict[str, int]:
+# Tags that write long-term memory. <recall> (a read) and <todo> (an action
+# item, not memory) still work when memory writes are off.
+MEMORY_WRITE_KINDS = frozenset({"learn", "memory", "note", "semantic", "forget", "episodic"})
+
+
+def apply(
+    extractions: list[Extracted],
+    *,
+    session_id: str | None = None,
+    write: bool = True,
+    read: bool = True,
+) -> dict[str, int]:
     """Persist each extraction to the right store. Returns counts per kind.
 
     ``session_id`` is required for ``<recall>`` extractions so the queued
-    query can be pulled on the next turn.
+    query can be pulled on the next turn. With ``write=False`` (incognito /
+    temporary sessions, or memory writes disabled) memory-writing tags are
+    dropped and counted as skipped; with ``read=False`` (temporary sessions)
+    ``<recall>`` is dropped too.
     """
     counts = {
         "learn": 0,
@@ -135,6 +149,9 @@ def apply(extractions: list[Extracted], *, session_id: str | None = None) -> dic
     notes = MarkdownStore()
 
     for ex in extractions:
+        if (not write and ex.kind in MEMORY_WRITE_KINDS) or (not read and ex.kind == "recall"):
+            counts["skipped"] += 1
+            continue
         try:
             if ex.kind == "recall":
                 if session_id:

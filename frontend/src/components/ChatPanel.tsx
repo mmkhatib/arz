@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/api/client";
 import type { MessageRecord, SessionDetail } from "@/api/client";
 import MessageBubble from "./MessageBubble";
-import InputBar, { type ApprovalMode } from "./InputBar";
+import InputBar, { type ApprovalMode, type MemoryMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
 import CedarMark from "./CedarMark";
@@ -826,6 +826,7 @@ export default function ChatPanel({
   const [toolCalls, setToolCalls] = useState<{ callId: string; name: string; input: string; state?: "running" | "done" | "rejected" | "error" }[]>([]);
   const [pendingApproval, setPendingApproval] = useState<{ requestId: string; title: string; toolInput: string } | null>(null);
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>("normal");
+  const [memoryMode, setMemoryMode] = useState<MemoryMode>("persistent");
   const [settings, setSettings] = useState<{ model: string } | null>(null);
   const [sessionProvider, setSessionProvider] = useState<string | null>(null);
   const [sessionModel, setSessionModel] = useState<string | null>(null);
@@ -862,6 +863,7 @@ export default function ChatPanel({
         setSessionAgent(s.agent ?? null);
         setSessionColor(s.color ?? null);
         if (s.approval_mode) setApprovalMode(s.approval_mode);
+        setMemoryMode(s.memory_mode ?? "persistent");
         setAutonudgeGoal(s.autonudge_goal ?? null);
         setAutonudgeIdleS(s.autonudge_idle_s ?? 0);
         setGoal(s.goal ?? null);
@@ -987,6 +989,12 @@ export default function ChatPanel({
   const handleApprovalModeChange = (mode: ApprovalMode) => {
     setApprovalMode(mode);
     api.setApprovalMode(sessionId, mode).catch(() => {});
+  };
+
+  const handleMemoryModeChange = (mode: MemoryMode) => {
+    const prev = memoryMode;
+    setMemoryMode(mode);
+    api.setMemoryMode(sessionId, mode).catch(() => setMemoryMode(prev));
   };
 
   const handleModelChange = (model: string) => {
@@ -1736,6 +1744,8 @@ export default function ChatPanel({
         provider={sessionProvider ?? undefined}
         approvalMode={approvalMode}
         onApprovalModeChange={handleApprovalModeChange}
+        memoryMode={memoryMode}
+        onMemoryModeChange={handleMemoryModeChange}
         onModelChange={handleModelChange}
         agent={sessionAgent}
         agents={agents}

@@ -37,6 +37,9 @@ class DashboardConfig(BaseModel):
     system_prompt: str = _DEFAULT_SYSTEM_PROMPT
     auto_recall: bool = True
     recall_k: int = 8
+    # Global memory switches. Per-session memory_mode can only narrow these.
+    memory_inject: bool = True  # put stored memory into prompts
+    memory_write: bool = True  # learn from conversations (tags, extraction, consolidator)
     # Embedder spec:
     #   "auto"                  — local → ollama → hash (recommended)
     #   "local[:model]"         — in-process ONNX via the `arz[embeddings]` extra

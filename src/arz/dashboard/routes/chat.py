@@ -729,6 +729,17 @@ async def _run_turn(
                     pass
 
     session = mgr.get(session_id)
+    # Incognito / temporary sessions (and memory_write=false) never write
+    # long-term memory; <recall> and <todo> still work.
+    try:
+        from arz.config.loader import load_config as _load_cfg
+        from arz.session.session import memory_reads, memory_writes
+
+        _cfg_now = _load_cfg()
+        _mem_write = memory_writes(session, _cfg_now)
+        _mem_read = memory_reads(session, _cfg_now)
+    except Exception:
+        _mem_write = _mem_read = True
     turn_started = _time.monotonic()
     saved_assistant = False
     final_status = "complete"
@@ -976,7 +987,9 @@ async def _run_turn(
                 _, seg_extracted = inline_learn.parse(new_segment)
                 if seg_extracted:
                     try:
-                        inline_learn.apply(seg_extracted, session_id=session_id)
+                        inline_learn.apply(
+                            seg_extracted, session_id=session_id, write=_mem_write, read=_mem_read
+                        )
                     except Exception:
                         log.exception("inline-learn apply (segment) failed")
             segment_start = len(state.full_reply)
@@ -1043,7 +1056,7 @@ async def _run_turn(
                 # learn writes a no-op duplicate). Cleaned text is what
                 # we save and what the user sees.
                 cleaned, extracted = inline_learn.parse(state.full_reply)
-                if not extracted:
+                if not extracted and _mem_write:
                     # Fallback: model didn't emit any tags. Run a cheap
                     # post-turn extraction pass against the raw reply
                     # to catch durable preferences / corrections the
@@ -1153,7 +1166,9 @@ async def _run_turn(
                 cleaned, extracted = inline_learn.parse(state.full_reply)
                 if extracted:
                     try:
-                        inline_learn.apply(extracted, session_id=session_id)
+                        inline_learn.apply(
+                            extracted, session_id=session_id, write=_mem_write, read=_mem_read
+                        )
                     except Exception:
                         log.exception("inline-learn apply (finally path) failed")
                 msg = session.add_message(
@@ -1418,6 +1433,10 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     # it asked for. This is the on-demand search path without MCP.
     try:
         pending = inline_learn.drain_recalls(session_id)
+        from arz.session.session import memory_reads as _reads
+
+        if pending and not _reads(session, cfg):
+            pending = []  # temporary session: no memory reads at all
         if pending:
             from arz.memory.context import _recall_block  # type: ignore[attr-defined]
 
@@ -1457,16 +1476,22 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
         _want = getattr(session, "model", None) or cfg.provider.model
         if _live is not None and _live.current_model not in (None, _want):
             _live = None
-        prefix = build_prefix(
-            message,
-            config=cfg,
-            recall_k=int(getattr(cfg.dashboard, "recall_k", 8) or 8),
-            enable_recall=bool(getattr(cfg.dashboard, "auto_recall", True)),
-            session_id=session_id,
-            # Lets a persistent CLI get only what's new instead of the
-            # full prefix every turn.
-            provider_token=provider_token(_live),
-            work_dir=getattr(session, "work_dir", None),
+        from arz.session.session import memory_reads
+
+        prefix = (
+            build_prefix(
+                message,
+                config=cfg,
+                recall_k=int(getattr(cfg.dashboard, "recall_k", 8) or 8),
+                enable_recall=bool(getattr(cfg.dashboard, "auto_recall", True)),
+                session_id=session_id,
+                # Lets a persistent CLI get only what's new instead of the
+                # full prefix every turn.
+                provider_token=provider_token(_live),
+                work_dir=getattr(session, "work_dir", None),
+            )
+            if memory_reads(session, cfg)
+            else ""
         )
         if prefix:
             message = f"{prefix}\n\n{message}"

@@ -121,6 +121,7 @@ def _session_to_dict(session: object) -> dict:
         "model": session.model,
         "agent": session.agent,
         "approval_mode": session.approval_mode,
+        "memory_mode": getattr(session, "memory_mode", "persistent"),
         "streaming": get_stream_registry().is_streaming(session.id),
         "autonudge_goal": session.autonudge_goal,
         "autonudge_idle_s": session.autonudge_idle_s,
@@ -715,6 +716,30 @@ async def set_session_pin(session_id: str, request: Request) -> None:
     assert isinstance(session, Session)
     session.pinned = bool(body.get("pinned", False))
     mgr.save(session)
+
+
+@router.patch("/api/sessions/{session_id}/memory-mode", status_code=status.HTTP_204_NO_CONTENT)
+async def set_session_memory_mode(session_id: str, request: Request) -> None:
+    from arz.session.session import MEMORY_MODES
+
+    mgr: SessionManager = _get_manager(request)
+    session = mgr.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    body = await request.json()
+    mode = str(body.get("mode", ""))
+    if mode not in MEMORY_MODES:
+        raise HTTPException(
+            status_code=422, detail=f"mode must be one of {', '.join(MEMORY_MODES)}"
+        )
+    session.memory_mode = mode
+    mgr.save(session)
+    if mode == "temporary":
+        # Its provider may still hold an earlier memory prefix; the next
+        # build must not treat that as "already shown".
+        from arz.memory.context import reset_session
+
+        reset_session(session_id)
 
 
 @router.patch("/api/sessions/{session_id}/archive", status_code=status.HTTP_204_NO_CONTENT)

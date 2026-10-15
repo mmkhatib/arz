@@ -821,6 +821,13 @@ class Consolidator:
         """Run a consolidation pass over recent sessions. Returns a report."""
         if self._runner is None:
             return {"ok": False, "error": "runner not configured"}
+        try:
+            from arz.config.loader import load_config
+
+            if not load_config().dashboard.memory_write:
+                return {"ok": True, "skipped": "memory_write disabled", "candidates": 0}
+        except Exception:
+            pass
 
         state = _load_state()
         cutoff = time.time() - _RECENT_WINDOW_HOURS * 3600
@@ -833,6 +840,8 @@ class Consolidator:
                 continue
             if not s.messages or len(s.messages) < _MIN_NEW_MESSAGES:
                 continue
+            if getattr(s, "memory_mode", "persistent") != "persistent":
+                continue  # incognito / temporary sessions are never learned from
             candidates.append(s)
 
         report = {

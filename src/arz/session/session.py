@@ -44,6 +44,25 @@ def _title_from_user_text(raw: str) -> str:
     return text.strip()[:60]
 
 
+MEMORY_MODES = ("persistent", "incognito", "temporary")
+
+
+def memory_reads(session: object, config: object | None = None) -> bool:
+    """Should memory be injected into this session's prompts?"""
+    if getattr(session, "memory_mode", "persistent") == "temporary":
+        return False
+    dash = getattr(config, "dashboard", None)
+    return bool(getattr(dash, "memory_inject", True)) if dash is not None else True
+
+
+def memory_writes(session: object, config: object | None = None) -> bool:
+    """May anything from this session be written to long-term memory?"""
+    if getattr(session, "memory_mode", "persistent") != "persistent":
+        return False
+    dash = getattr(config, "dashboard", None)
+    return bool(getattr(dash, "memory_write", True)) if dash is not None else True
+
+
 @dataclass
 class Message:
     """One turn in a session's conversation history."""
@@ -143,6 +162,10 @@ class Session:
     model: str | None = None
     agent: str | None = None
     approval_mode: str = "normal"  # "normal" | "trust_reads" | "trust" | "yolo"
+    # "persistent" — reads memory and learns from this session (default).
+    # "incognito"  — reads memory, but nothing from this session is saved.
+    # "temporary"  — clean slate: no memory injected, nothing saved.
+    memory_mode: str = "persistent"
     # AutoNudge: when enabled, a background loop sends a "continue working
     # toward your goal" prompt every ``autonudge_idle_s`` seconds of session
     # idleness. Survives gateway restart because it lives on the Session.
@@ -237,6 +260,7 @@ class Session:
             "model": self.model,
             "agent": self.agent,
             "approval_mode": self.approval_mode,
+            "memory_mode": self.memory_mode,
             "autonudge_goal": self.autonudge_goal,
             "autonudge_idle_s": self.autonudge_idle_s,
             "autonudge_max_iterations": self.autonudge_max_iterations,
@@ -279,6 +303,9 @@ class Session:
             model=d.get("model"),
             agent=d.get("agent"),
             approval_mode=d.get("approval_mode", "normal"),
+            memory_mode=d.get("memory_mode", "persistent")
+            if d.get("memory_mode") in MEMORY_MODES
+            else "persistent",
             autonudge_goal=d.get("autonudge_goal"),
             autonudge_idle_s=int(d.get("autonudge_idle_s") or 0),
             autonudge_max_iterations=int(d.get("autonudge_max_iterations") or 20),

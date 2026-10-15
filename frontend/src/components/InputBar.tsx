@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2, Target, Crosshair } from "lucide-react";
+import { ArrowUp, ArrowUpFromLine, Square, ShieldCheck, BookOpen, Handshake, Rocket, Check, Paperclip, X, ChevronDown, Bot, Sparkles, Loader2, Target, Crosshair, Brain, EyeOff, Eraser } from "lucide-react";
 import { useDialog } from "@/components/Dialog";
 
 // Per-provider accent — matches the chat badges + analytics legend.
@@ -24,6 +24,13 @@ import { loadDraft, saveDraft } from "@/utils/draftStorage";
 import { useOllamaInstalledModels } from "@/hooks/useOllamaInstalledModels";
 
 export type ApprovalMode = "normal" | "trust_reads" | "trust" | "yolo";
+export type MemoryMode = "persistent" | "incognito" | "temporary";
+
+const MEMORY_OPTIONS: { mode: MemoryMode; label: string; icon: React.ReactNode; hint: string }[] = [
+  { mode: "persistent", label: "On",        icon: <Brain size={13} />,  hint: "Uses memory and learns from this chat" },
+  { mode: "incognito",  label: "Incognito", icon: <EyeOff size={13} />, hint: "Uses memory, but saves nothing from this chat" },
+  { mode: "temporary",  label: "Off",       icon: <Eraser size={13} />, hint: "Clean slate: no memory in, nothing saved" },
+];
 
 const APPROVAL_OPTIONS: { mode: ApprovalMode; label: string; icon: React.ReactNode; hint: string; color: string }[] = [
   { mode: "normal",      label: "Normal", icon: <ShieldCheck size={13} />, hint: "Ask before every tool",          color: "text-[var(--muted)]" },
@@ -50,6 +57,8 @@ interface Props {
   provider?: string;
   approvalMode?: ApprovalMode;
   onApprovalModeChange?: (mode: ApprovalMode) => void;
+  memoryMode?: MemoryMode;
+  onMemoryModeChange?: (mode: MemoryMode) => void;
   onModelChange?: (model: string) => void;
   agent?: string | null;
   agents?: { name: string; description?: string; provider?: string }[];
@@ -90,6 +99,8 @@ export default function InputBar({
   provider,
   approvalMode = "normal",
   onApprovalModeChange,
+  memoryMode = "persistent",
+  onMemoryModeChange,
   onModelChange,
   agent,
   agents = [],
@@ -196,6 +207,7 @@ export default function InputBar({
     return !isNaN(n) && n >= INPUT_DRAG_MIN_H ? n : null;
   });
   const [approvalOpen, setApprovalOpen] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [agentOpen, setAgentOpen] = useState(false);
 
@@ -335,6 +347,7 @@ export default function InputBar({
   };
 
   const activeApproval = APPROVAL_OPTIONS.find((o) => o.mode === approvalMode) ?? APPROVAL_OPTIONS[0];
+  const activeMemory = MEMORY_OPTIONS.find((o) => o.mode === memoryMode) ?? MEMORY_OPTIONS[0];
   // Hydrate the dynamic Ollama list (no-op for non-ollama sessions; the
   // hook short-circuits on subsequent mounts).
   useOllamaInstalledModels();
@@ -737,6 +750,68 @@ export default function InputBar({
                         <span className={`shrink-0 ${opt.color}`}>{opt.icon}</span>
                         <div className="min-w-0">
                           <div className={opt.mode === approvalMode ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
+                            {opt.label}
+                          </div>
+                          <div className="text-[10px] text-[var(--muted)]/60">{opt.hint}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </Popover>
+              </div>
+            )}
+
+            {/* Memory mode picker */}
+            {onMemoryModeChange && (
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => { setMemoryOpen((v) => !v); setApprovalOpen(false); setModelOpen(false); setAgentOpen(false); }}
+                  title={`Memory: ${activeMemory.hint}`}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                    height: 26,
+                    padding: "0 8px",
+                    background: memoryMode === "persistent" ? "var(--bg)" : "var(--surface2, var(--bg))",
+                    border: `1px solid ${memoryMode === "persistent" ? "var(--border)" : "var(--amber, var(--ember))"}`,
+                    borderRadius: 6,
+                    color: "var(--text2)",
+                    fontSize: 11.5,
+                    cursor: "pointer",
+                    fontFamily: "var(--fn)",
+                  }}
+                >
+                  <span className="shrink-0 text-[var(--muted)]">{activeMemory.icon}</span>
+                  <span
+                    style={{
+                      fontFamily: "var(--fm)",
+                      fontSize: 9.5,
+                      color: "var(--muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: ".08em",
+                    }}
+                  >
+                    memory
+                  </span>
+                  <span style={{ color: "var(--text)", fontWeight: 500 }}>{activeMemory.label}</span>
+                  <ChevronDown size={9} className="text-[var(--muted)]" />
+                </button>
+                <Popover open={memoryOpen} onClose={() => setMemoryOpen(false)}>
+                  <div className="px-1 py-0.5">
+                    <div className="px-2 py-1 text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium">Memory for this chat</div>
+                    {MEMORY_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.mode}
+                        onClick={() => { onMemoryModeChange(opt.mode); setMemoryOpen(false); }}
+                        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-[13px] hover:bg-[var(--bg)] transition-colors text-left"
+                      >
+                        <span className="w-3 shrink-0">
+                          {opt.mode === memoryMode && <Check size={12} className="text-[var(--cedar)]" />}
+                        </span>
+                        <span className="shrink-0 text-[var(--muted)]">{opt.icon}</span>
+                        <div className="min-w-0">
+                          <div className={opt.mode === memoryMode ? "text-[var(--text)] font-medium" : "text-[var(--muted)]"}>
                             {opt.label}
                           </div>
                           <div className="text-[10px] text-[var(--muted)]/60">{opt.hint}</div>
