@@ -43,6 +43,12 @@ class LLMProvider(ABC):
     """Abstract LLM backend."""
 
     name: str = "unknown"
+    # True when the backend keeps the whole conversation itself (a persistent
+    # CLI/ACP session), so text sent on an earlier turn is still in its
+    # context. Memory injection uses this to send long-lived blocks once per
+    # session instead of every turn. Stateless backends that rebuild context
+    # from a short transcript each turn must leave it False.
+    keeps_context: bool = False
 
     @abstractmethod
     async def start(self) -> None:

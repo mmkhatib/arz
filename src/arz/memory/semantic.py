@@ -434,13 +434,25 @@ def top(n: int = 10, min_confidence: float = 0.4) -> list[Fact]:
     return [_row_to_fact(r) for r in rows]
 
 
-def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
+def render_for_prompt(
+    query: str = "",
+    cap_chars: int = 1500,
+    *,
+    exclude_keys: set[str] | frozenset[str] = frozenset(),
+    follow_up: bool = False,
+    keys_out: list[str] | None = None,
+) -> str:
     """Render the top semantic facts as a citation-tagged block.
 
-    Bumps hit_count for each fact surfaced so confidence reflects "this
-    actually got used", not just "we wrote it down once".
+    Bumps hit_count for facts that matched the query so confidence reflects
+    "this actually got used", not just "we wrote it down once".
+
+    *exclude_keys* skips facts the session's provider already holds. On a
+    *follow_up* turn only facts relevant to *query* are added (no
+    high-confidence force-include — those went in on the first turn).
+    Rendered keys are appended to *keys_out*.
     """
-    facts = top(n=40, min_confidence=0.4)
+    facts = [f for f in top(n=40, min_confidence=0.4) if f.key not in exclude_keys]
     if not facts:
         return ""
     # Hybrid score (MeshClaw blueprint): 0.6 * cosine + 0.4 * keyword_overlap.
@@ -454,6 +466,8 @@ def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
     if query.strip():
         scored = _hybrid_score(query, facts, relevance_out=relevance)
         facts = [f for _, f in scored]
+    if follow_up:
+        facts = [f for f in facts if relevance.get(f.key, 0.0) >= _HIT_RELEVANCE]
     out: list[str] = []
     used = 0
     surfaced_keys: list[str] = []
@@ -466,6 +480,8 @@ def render_for_prompt(query: str = "", cap_chars: int = 1500) -> str:
             break
         out.append(line)
         used += len(line) + 1
+        if keys_out is not None:
+            keys_out.append(f.key)
         if relevance.get(f.key, 0.0) >= _HIT_RELEVANCE:
             surfaced_keys.append(f.key)
     if not out:

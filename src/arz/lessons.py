@@ -7,10 +7,12 @@ Each lesson is:
     { id: int, category: "preference"|"tool"|"knowledge", text: str,
       pinned: bool, created_at: float }
 
-Auto-injection rules (see render_for_prompt):
-    - Always include category=preference and pinned=True.
-    - Include other lessons whose words overlap with the user message.
-    - Total render cap: ~6k chars.
+Auto-injection rules (see LessonStore.select):
+    - Always include category=preference and pinned=True (protected).
+    - Rank the rest by rarity-weighted stem overlap with the user message,
+      blended with embedding cosine when a real embedder is loaded.
+    - Follow-up turns add only unseen lessons sharing ≥ 2 rare stems.
+    - Relevant-lesson cap: ~6k chars.
 """
 
 from __future__ import annotations
@@ -201,44 +203,116 @@ class LessonStore:
 
     # ── prompt rendering ────────────────────────────────────────────────────
 
-    def render_for_prompt(self, user_message: str) -> str:
+    def select(
+        self,
+        user_message: str,
+        *,
+        exclude_ids: set[int] | frozenset[int] = frozenset(),
+        follow_up: bool = False,
+        budget_chars: int = _RENDER_BUDGET_CHARS,
+    ) -> tuple[list[Lesson], list[Lesson]]:
+        """Pick lessons for one turn: ``(standing, relevant)``.
+
+        *standing* — pinned lessons and preferences. They're rules, so callers
+        treat them as protected (never dropped for budget).
+
+        *relevant* — the rest, ranked against *user_message* by rarity-weighted
+        stem overlap (blended with embedding cosine when a real embedder is
+        loaded), until ``budget_chars``. On a *follow_up* turn of a session
+        whose provider already holds the earlier prefix, only lessons not in
+        *exclude_ids* are considered, and a lesson must share ≥ 2 rare stems
+        with the message (``ranking.turn_gate``) — a follow-up adds what's
+        newly relevant, it doesn't re-send the whole set.
+        """
+        from arz.memory import ranking
+
         with self._lock:
             self._reload_if_changed()
-            if not self._lessons:
-                return ""
-            picked: list[Lesson] = []
-            seen: set[int] = set()
-            # Always: pinned + preferences
-            for l in self._lessons:
-                if l.pinned or l.category == "preference":
-                    picked.append(l)
-                    seen.add(l.id)
-            # Then: word-overlap with user message
-            msg_tokens = _tokens(user_message)
-            if msg_tokens:
-                scored: list[tuple[int, Lesson]] = []
-                for l in self._lessons:
-                    if l.id in seen:
-                        continue
-                    overlap = len(_tokens(l.text) & msg_tokens)
-                    if overlap > 0:
-                        scored.append((overlap, l))
-                scored.sort(key=lambda p: p[0], reverse=True)
-                for _, l in scored:
-                    picked.append(l)
+            pool = [l for l in self._lessons if l.id not in exclude_ids]
+        if not pool:
+            return [], []
+        standing = [l for l in pool if l.pinned or l.category == "preference"]
+        rest = [l for l in pool if not (l.pinned or l.category == "preference")]
+        # Newest first so equal scores favour recent lessons.
+        rest.sort(key=lambda l: l.created_at, reverse=True)
+        texts = [l.text for l in rest]
+        if follow_up:
+            # Rarity is judged against the whole store, not just unseen rows.
+            with self._lock:
+                everyone = list(self._lessons)
+            eligible = {l.id for l in rest}
+            gated = ranking.turn_gate(user_message, [l.text for l in everyone])
+            candidates = [everyone[i] for i in gated if everyone[i].id in eligible]
+        else:
+            cos = _lesson_cosine(user_message, rest)
+            ranked = ranking.rank(user_message, texts, cosine=cos)
+            candidates = [rest[i] for i, _ in ranked]
+        relevant: list[Lesson] = []
+        used = 0
+        for l in candidates:
+            size = len(_render_line(l)) + 1
+            if used + size > budget_chars:
+                continue  # a long lesson doesn't block shorter ones behind it
+            relevant.append(l)
+            used += size
+        return standing, relevant
 
-            # Cap by budget
-            lines: list[str] = []
-            used = 0
-            for l in picked:
-                line = f"- [{l.category}] {l.text}"
-                if used + len(line) + 1 > _RENDER_BUDGET_CHARS:
-                    break
-                lines.append(line)
-                used += len(line) + 1
-            if not lines:
-                return ""
-            return "<lessons>\n" + "\n".join(lines) + "\n</lessons>"
+    def render_for_prompt(self, user_message: str) -> str:
+        """Stateless render (all standing + top relevant) — used by surfaces
+        without per-session memory state (eval, subagents)."""
+        standing, relevant = self.select(user_message)
+        return render_lessons(standing + relevant)
+
+
+def _render_line(l: Lesson) -> str:
+    return f"- [{l.category}] {l.text}"
+
+
+def render_lessons(lessons: list[Lesson]) -> str:
+    if not lessons:
+        return ""
+    return "<lessons>\n" + "\n".join(_render_line(l) for l in lessons) + "\n</lessons>"
+
+
+_lesson_vec_cache: dict[tuple[str, int, str], list[float]] = {}
+
+
+def _lesson_cosine(query: str, lessons: list[Lesson]):
+    """index → cosine, or None when no real embedder is live.
+
+    The hash fingerprint fallback is excluded: its "similarity" is character
+    n-gram overlap, which the lexical score already covers better.
+    """
+    try:
+        from arz.memory import semantic
+        from arz.memory.embedder import embedder_id
+
+        emb = semantic._shared_embedder()  # noqa: SLF001
+        if emb is None:
+            return None
+        eid = embedder_id(emb)
+        if eid.startswith("hash"):
+            return None
+        q = semantic._encode(query)  # noqa: SLF001
+        if not q:
+            return None
+    except Exception:
+        return None
+
+    def cos(i: int) -> float:
+        l = lessons[i]
+        ck = (eid, l.id, l.text)
+        vec = _lesson_vec_cache.get(ck)
+        if vec is None:
+            vec = semantic._encode(l.text)  # noqa: SLF001
+            if vec is None:
+                return 0.0
+            if len(_lesson_vec_cache) > 4096:
+                _lesson_vec_cache.clear()
+            _lesson_vec_cache[ck] = vec
+        return semantic._cosine_between(q, vec)  # noqa: SLF001
+
+    return cos
 
 
 _singleton: LessonStore | None = None

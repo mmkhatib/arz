@@ -238,8 +238,19 @@ def search(query: str, *, k: int = 5) -> list[tuple[Episode, float]]:
     return scored[: max(1, k)]
 
 
-def render_for_prompt(query: str, *, k: int = 5, cap_chars: int = 3000) -> str:
-    hits = search(query, k=k)
+def render_for_prompt(
+    query: str,
+    *,
+    k: int = 5,
+    cap_chars: int = 3000,
+    exclude_ids: set[int] | frozenset[int] = frozenset(),
+    ids_out: list[int] | None = None,
+) -> str:
+    """Top-*k* relevant episodes not in *exclude_ids* (already shown to the
+    session's provider). Rendered ids are appended to *ids_out*."""
+    hits = [
+        (ep, sim) for ep, sim in search(query, k=k + len(exclude_ids)) if ep.id not in exclude_ids
+    ][:k]
     if not hits:
         return ""
     out: list[str] = []
@@ -252,6 +263,8 @@ def render_for_prompt(query: str, *, k: int = 5, cap_chars: int = 3000) -> str:
             break
         out.append(line)
         used += len(line) + 1
+        if ids_out is not None:
+            ids_out.append(ep.id)
     if not out:
         return ""
     return "<episodic-memory>\n" + "\n".join(out) + "\n</episodic-memory>"

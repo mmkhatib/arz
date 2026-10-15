@@ -821,6 +821,14 @@ async def _run_turn(
                     # Stay-on-task #6: surface provider-level
                     # compaction transitions to the UI banner.
                     state.recovery_compacted = True  # type: ignore[attr-defined]
+                    # The summary may have dropped the memory prefix —
+                    # next turn re-injects it in full.
+                    try:
+                        from arz.memory.context import reset_session
+
+                        reset_session(session_id)
+                    except Exception:
+                        pass
                     await emit(
                         sse_compaction(
                             status=str(getattr(event, "stop_reason", "") or "in_progress"),
@@ -1440,14 +1448,24 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     # Single source of truth for memory context — same shape on every
     # provider, every surface (chat, subagent, heartbeat, taskrunner).
     try:
-        from arz.memory.context import build_prefix
+        from arz.memory.context import build_prefix, provider_token
 
+        # The provider already serving this session — unless the model
+        # changed, in which case it's about to be evicted below and its
+        # replacement has seen nothing.
+        _live = pool._pool.get(session_id)  # noqa: SLF001
+        _want = getattr(session, "model", None) or cfg.provider.model
+        if _live is not None and _live.current_model not in (None, _want):
+            _live = None
         prefix = build_prefix(
             message,
             config=cfg,
             recall_k=int(getattr(cfg.dashboard, "recall_k", 8) or 8),
             enable_recall=bool(getattr(cfg.dashboard, "auto_recall", True)),
             session_id=session_id,
+            # Lets a persistent CLI get only what's new instead of the
+            # full prefix every turn.
+            provider_token=provider_token(_live),
         )
         if prefix:
             message = f"{prefix}\n\n{message}"
@@ -1623,6 +1641,15 @@ async def chat(session_id: str, request: Request) -> StreamingResponse:
     # Persist provider session ID for future resume
     if provider.session_id:
         session_map.set(session_id, provider.session_id)
+
+    # Tie this session's memory-injection state to the provider that will
+    # receive the prefix (see memory.context inject-once).
+    try:
+        from arz.memory.context import bind_provider
+
+        bind_provider(session_id, provider)
+    except Exception:
+        log.exception("memory bind failed")
 
     # Allocate a stream slot. If one's already running for this session,
     # surface a clean 409 so the UI can attach to /stream instead.

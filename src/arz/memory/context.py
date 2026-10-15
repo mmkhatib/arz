@@ -4,31 +4,109 @@ Every surface that talks to a provider (chat turn, subagent, heartbeat
 item, task runner step, cron fire) calls ``build_prefix(user_message)``
 and prepends the result to the prompt sent to the underlying model.
 
-Block layout (top to bottom):
+Blocks (top to bottom):
 
-  <preferences>...</preferences>          always-on, ~1k chars
-  <projects>...</projects>                always-on, ~2k chars
-  <memory_notes>...</memory_notes>        always-on, ~2k chars
-  <lessons>...</lessons>                  always-on, ranked, ~6k chars
-  <memory>                                relevance-ranked top-K hits
-    - [fts:lessons/12] ...
-    - [vec:projects/arz] ...
-  </memory>
+  <arz-runtime>, <intent>                 protected
+  memory files (preferences/projects)     protected
+  <lessons> standing (pinned/preference)  protected
+  <lessons> relevant                      background ┐
+  <semantic-memory>                       background │ admitted whole, in
+  <memory> FTS + vector recall            background │ this order, under
+  <episodic-memory>                       background │ budget.DEFAULT_BUDGET_CHARS
+  <recent-sessions>                       background │
+  <skills>                                background ┘
+  <memory-budget> what was omitted, if anything
   {user_message}
 
-Result: every model on every surface sees the same memory shape.
-
-Designed to be cheap when nothing's changed: the FTS index is mtime-driven
-and lessons/files reload on change. Vector hits are pulled from a shared
-``VectorStore`` singleton so embedding cost is paid once per turn.
+**Inject once.** Providers that keep their own conversation (claude-code,
+kiro-cli — ``LLMProvider.keeps_context``) still hold the first turn's prefix
+on later turns, so re-sending it every turn only burned context. For those,
+a session's first turn gets the full set; follow-up turns get the intent,
+lessons/facts/episodes/recall hits the provider hasn't seen yet (lessons
+must share ≥ 2 rare stems with the message), and any always-on block whose
+content changed. The state resets — next turn is full again — when the
+provider is replaced, the context is compacted, or the gateway restarts.
+Stateless providers (ollama, gemini, codex) get the full prefix every turn.
 """
 
 from __future__ import annotations
 
+import hashlib
+import itertools
 import logging
+import threading
+from dataclasses import dataclass, field
 from typing import Any
 
+from arz.memory.budget import DEFAULT_BUDGET_CHARS, Block, admit, omission_note
+
 log = logging.getLogger(__name__)
+
+
+# ── Per-session injection state ─────────────────────────────────────────────
+
+
+@dataclass
+class _SessionMemory:
+    token: int | None = None  # epoch of the provider holding our prefix
+    lesson_ids: set[int] = field(default_factory=set)
+    fact_keys: set[str] = field(default_factory=set)
+    episode_ids: set[int] = field(default_factory=set)
+    recall_keys: set[str] = field(default_factory=set)
+    block_hashes: dict[str, str] = field(default_factory=dict)
+
+
+_sessions: dict[str, _SessionMemory] = {}
+_sessions_lock = threading.Lock()
+_epochs = itertools.count(1)
+
+
+def provider_token(provider: Any) -> int | None:
+    """Stable token for a provider instance that keeps conversation context,
+    or None for stateless providers (they need the full prefix every turn)."""
+    if provider is None or not getattr(provider, "keeps_context", False):
+        return None
+    tok = getattr(provider, "_arz_memory_epoch", None)
+    if tok is None:
+        tok = next(_epochs)
+        try:
+            provider._arz_memory_epoch = tok  # noqa: SLF001
+        except Exception:
+            return None
+    return tok
+
+
+def bind_provider(session_id: str, provider: Any) -> None:
+    """Record which provider received this session's prefix.
+
+    Called after the turn's provider is activated. A provider swapped in
+    after the prefix was built never saw the earlier injections, so the
+    state is dropped and the next turn rebuilds in full.
+    """
+    tok = provider_token(provider)
+    with _sessions_lock:
+        st = _sessions.get(session_id)
+        if st is None:
+            return
+        if tok is None:
+            _sessions.pop(session_id, None)
+        elif st.token is None:
+            st.token = tok
+        elif st.token != tok:
+            _sessions.pop(session_id, None)
+
+
+def reset_session(session_id: str) -> None:
+    """Forget what this session's provider holds (compaction, restart, swap)."""
+    with _sessions_lock:
+        _sessions.pop(session_id, None)
+
+
+def _hash(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+
+
+# ── Builder ─────────────────────────────────────────────────────────────────
 
 
 def build_prefix(
@@ -40,131 +118,195 @@ def build_prefix(
     enable_lessons: bool = True,
     enable_memory_files: bool = True,
     session_id: str | None = None,
+    provider_token: int | None = None,
+    budget_chars: int | None = None,
 ) -> str:
     """Return the memory prefix to prepend to *user_message* before sending
     it to a provider. Empty string if nothing useful to inject.
 
-    All flags default ON so any surface that just calls ``build_prefix(text)``
-    gets the full treatment without further wiring.
+    Pass *session_id* plus the live provider's *provider_token* (see
+    :func:`provider_token`) to get inject-once behaviour; without them every
+    call is a full, stateless build.
     """
-    parts: list[str] = []
+    st: _SessionMemory | None = None
+    follow_up = False
+    if session_id:
+        with _sessions_lock:
+            prev = _sessions.get(session_id)
+            if prev is not None and provider_token is not None and prev.token == provider_token:
+                st, follow_up = prev, True
+            else:
+                st = _SessionMemory()
+                _sessions[session_id] = st
+    blocks: list[Block] = []
 
-    # 0. Runtime hint about widget rendering. Injected on EVERY turn (not
-    # just at process start) so persistent providers — claude-code, kiro —
-    # that were spawned with an older base prompt still get nudged toward
-    # `<arzwidget>` for visual asks. Cheap (~250 chars) and the agent can
-    # ignore it when irrelevant.
-    if config is not None:
+    def changed(name: str, text: str) -> bool:
+        """First turn: always. Follow-up: only when the content moved."""
+        if st is None:
+            return True
+        h = _hash(text)
+        if follow_up and st.block_hashes.get(name) == h:
+            return False
+        st.block_hashes[name] = h
+        return True
+
+    # 0. Runtime hint (widgets + <recall>). A persistent provider keeps it.
+    if config is not None and not follow_up:
         density = getattr(getattr(config, "dashboard", None), "widget_density", "more")
         if density in {"more", "less"}:
-            parts.append(_widget_hint(density))
+            blocks.append(Block("runtime", _widget_hint(density), protected=True))
 
-    # 0a. Session intent — short phrase the tracker derived from recent
-    # turns. Lets the model see what the user is "working on" so terse
-    # messages ("yes", "keep going") still get topical retrieval.
+    # 0a. Session intent — short phrase derived from recent turns. Always
+    # sent; it is small and moves every turn.
     intent_query_boost = ""
     if session_id:
         try:
+            from arz.memory.intent import get_intent
             from arz.memory.intent import render_for_prompt as intent_render
 
             block = intent_render(session_id)
             if block:
-                parts.append(block)
-                # Reuse the same keywords to broaden retrieval below.
-                from arz.memory.intent import get_intent
-
+                blocks.append(Block("intent", block, protected=True))
                 _it = get_intent(session_id)
                 if _it and _it.keywords:
                     intent_query_boost = " " + " ".join(_it.keywords)
         except Exception:
             log.exception("intent render failed")
 
-    # 0b. Recent sessions index — small block listing the last N days of
-    # session titles grouped by day. Gives terse, always-on context for
-    # "what did I work on yesterday?" / "summarise this week" style asks
-    # without forcing a `<recall>` round-trip.
-    try:
-        block = _recent_sessions_block(days=7, cap_per_day=8)
-        if block:
-            parts.append(_cite("recent-sessions", "~/.arz/sessions/", block))
-    except Exception:
-        log.exception("recent sessions render failed")
-
-    # 1. Always-on preferences/projects/memory_notes (with source citations)
+    # 1. Preference/project/notes files — the user's own instructions.
     if enable_memory_files:
         try:
             from arz.memory.files import get_memory_files
 
             files = get_memory_files()
             block = files.render_for_prompt()
-            if block:
-                parts.append(_cite("memory-files", str(files.base_dir), block))
+            if block and changed("memory-files", block):
+                blocks.append(
+                    Block(
+                        "memory files",
+                        _cite("memory-files", str(files.base_dir), block),
+                        protected=True,
+                    )
+                )
         except Exception:
             log.exception("memory files render failed")
 
-    # 2. Always-on lessons (ranked by relevance to the user message)
+    # 2. Lessons: standing rules protected, relevant ones compete for budget.
     if enable_lessons:
         try:
-            from arz.lessons import get_lesson_store
+            from arz.lessons import get_lesson_store, render_lessons
 
-            block = get_lesson_store().render_for_prompt(user_message)
-            if block:
-                parts.append(_cite("lessons", "~/.arz/lessons.jsonl", block))
+            standing, relevant = get_lesson_store().select(
+                user_message,
+                exclude_ids=st.lesson_ids if follow_up and st else frozenset(),
+                follow_up=follow_up,
+            )
+            if standing:
+                blocks.append(
+                    Block(
+                        "standing lessons",
+                        _cite("lessons", "~/.arz/lessons.jsonl", render_lessons(standing)),
+                        protected=True,
+                    )
+                )
+            if relevant:
+                blocks.append(
+                    Block(
+                        "lessons",
+                        _cite("lessons", "~/.arz/lessons.jsonl", render_lessons(relevant)),
+                    )
+                )
+            if st is not None:
+                st.lesson_ids.update(l.id for l in standing + relevant)
         except Exception:
             log.exception("lessons render failed")
 
-    # 3. Semantic memory — high-confidence key/value facts. Filtered against
-    # the user message when present so long-tail facts only surface when
-    # relevant. Hits bump hit_count so the dashboard can see what's actually
-    # carrying its weight.
+    # 3. Semantic facts.
     try:
         from arz.memory.semantic import render_for_prompt as semantic_render
 
-        block = semantic_render(query=user_message, cap_chars=1500)
+        keys: list[str] = []
+        block = semantic_render(
+            query=user_message,
+            cap_chars=1500,
+            exclude_keys=st.fact_keys if follow_up and st else frozenset(),
+            follow_up=follow_up,
+            keys_out=keys,
+        )
         if block:
-            parts.append(_cite("semantic-memory", "~/.arz/memory.db", block))
+            blocks.append(
+                Block("semantic facts", _cite("semantic-memory", "~/.arz/memory.db", block))
+            )
+            if st is not None:
+                st.fact_keys.update(keys)
     except Exception:
         log.exception("semantic memory render failed")
 
-    # 4. Skills index — curated + auto-saved procedures. Short header-only
-    # listing so the model knows what's available without inlining 50 KB
-    # of bodies. It can `<recall>` a skill body by title if needed.
-    try:
-        block = _skills_index_block()
-        if block:
-            parts.append(_cite("skills", "~/.arz/skills/", block))
-    except Exception:
-        log.exception("skills index render failed")
+    # 4. FTS + vector recall against the message (+ intent keywords).
+    if enable_recall:
+        try:
+            query = (user_message or "") + intent_query_boost
+            got: list[str] = []
+            block = _recall_block(
+                query,
+                recall_k=recall_k,
+                config=config,
+                exclude=st.recall_keys if follow_up and st else frozenset(),
+                keys_out=got,
+            )
+            if block:
+                blocks.append(Block("recall hits", _cite("recall", "FTS5 + vector", block)))
+                if st is not None:
+                    st.recall_keys.update(got)
+        except Exception:
+            log.exception("recall failed")
 
-    # 5. Episodic memory — vector-retrieved past conversation fragments
-    # against the user message. Length-aware threshold (0.55 short / 0.42
-    # long) keeps long entries from getting filtered out by embedding
-    # dilution. Cheap when the embedder is warm.
+    # 5. Episodic fragments.
     if user_message and user_message.strip():
         try:
             from arz.memory.episodic import render_for_prompt as episodic_render
 
-            block = episodic_render(user_message, k=5, cap_chars=3000)
+            ids: list[int] = []
+            block = episodic_render(
+                user_message,
+                k=5,
+                cap_chars=3000,
+                exclude_ids=st.episode_ids if follow_up and st else frozenset(),
+                ids_out=ids,
+            )
             if block:
-                parts.append(_cite("episodic-memory", "~/.arz/memory.db", block))
+                blocks.append(
+                    Block("episodic memory", _cite("episodic-memory", "~/.arz/memory.db", block))
+                )
+                if st is not None:
+                    st.episode_ids.update(ids)
         except Exception:
             log.exception("episodic render failed")
 
-    # 6. Top-K relevance hits (FTS + vector). Cheap when index is warm.
-    # Auto-fires against the user message — no `<recall>` tag needed.
-    # Intent keywords broaden the query so memories matching the
-    # session's running focus also surface on terse messages.
-    if enable_recall:
+    # 6. Recent sessions — first turn only (titles churn every turn).
+    if not follow_up:
         try:
-            query = (user_message or "") + intent_query_boost
-            block = _recall_block(query, recall_k=recall_k, config=config)
+            block = _recent_sessions_block(days=7, cap_per_day=8)
             if block:
-                parts.append(_cite("recall", "FTS5 + vector", block))
+                blocks.append(
+                    Block("recent sessions", _cite("recent-sessions", "~/.arz/sessions/", block))
+                )
         except Exception:
-            log.exception("recall failed")
+            log.exception("recent sessions render failed")
 
-    if not parts:
-        return ""
+    # 7. Skills index.
+    try:
+        block = _skills_index_block()
+        if block and changed("skills", block):
+            blocks.append(Block("skills index", _cite("skills", "~/.arz/skills/", block)))
+    except Exception:
+        log.exception("skills index render failed")
+
+    admitted, omitted = admit(blocks, budget=budget_chars or DEFAULT_BUDGET_CHARS)
+    parts = [b.text for b in admitted]
+    note = omission_note(omitted)
+    if note:
+        parts.append(note)
     return "\n\n".join(parts)
 
 
@@ -305,7 +447,14 @@ def _widget_hint(density: str) -> str:
     )
 
 
-def _recall_block(user_message: str, *, recall_k: int, config: Any | None) -> str:
+def _recall_block(
+    user_message: str,
+    *,
+    recall_k: int,
+    config: Any | None,
+    exclude: set[str] | frozenset[str] = frozenset(),
+    keys_out: list[str] | None = None,
+) -> str:
     from arz.memory.fts import get_memory_fts
 
     fts = get_memory_fts()
@@ -313,25 +462,39 @@ def _recall_block(user_message: str, *, recall_k: int, config: Any | None) -> st
         fts.maybe_reindex()
     except Exception:
         pass
-    fts_hits = fts.search(user_message, k=recall_k)
+    fts_hits = fts.search(user_message, k=recall_k + len(exclude))
 
     vec = _vector_store(config)
     vector_hits: list = []
     if vec is not None:
         try:
-            vector_hits = vec.search(user_message, k=recall_k)
+            vector_hits = vec.search(user_message, k=recall_k + len(exclude))
         except Exception:
             log.exception("vector search failed")
 
     blocks: list[str] = []
+    seen: set[str] = set(exclude)
     for h in fts_hits:
-        blocks.append(f"- [fts:{h['source']}/{h['key']}] {h['snippet']}")
+        key = f"fts:{h['source']}/{h['key']}"
+        if key in seen or len(blocks) >= recall_k:
+            continue
+        seen.add(key)
+        blocks.append(f"- [{key}] {h['snippet']}")
+        if keys_out is not None:
+            keys_out.append(key)
+    n_fts = len(blocks)
     for tup in vector_hits:
         try:
             k, content, _score = tup
         except (TypeError, ValueError):
             continue
-        blocks.append(f"- [vec:{k}] {(content or '')[:400]}")
+        key = f"vec:{k}"
+        if key in seen or len(blocks) - n_fts >= recall_k:
+            continue
+        seen.add(key)
+        blocks.append(f"- [{key}] {(content or '')[:400]}")
+        if keys_out is not None:
+            keys_out.append(key)
     if not blocks:
         return ""
     return "<memory>\n" + "\n".join(blocks) + "\n</memory>"

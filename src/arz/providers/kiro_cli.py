@@ -37,6 +37,7 @@ class KiroCliProvider(LLMProvider):
     """
 
     name = "kiro-cli"
+    keeps_context = True
 
     def __init__(
         self,

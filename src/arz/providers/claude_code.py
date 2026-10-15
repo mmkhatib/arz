@@ -32,6 +32,7 @@ class ClaudeCodeProvider(LLMProvider):
     """
 
     name = "claude-code"
+    keeps_context = True
 
     def __init__(
         self,
