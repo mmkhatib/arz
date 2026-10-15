@@ -50,6 +50,37 @@ _DEFAULT_CAP = 10_000
 _LONG_TEXT_THRESHOLD = 300
 _RELEVANCE_SHORT = 0.55
 _RELEVANCE_LONG = 0.42
+
+# Recency decay per day, by tag. score = cos · (0.7 + 0.3·importance) ·
+# exp(−rate · days). Decisions and preferences stay useful for months; a
+# debugging session is stale within weeks. The first matching tag wins.
+_DEFAULT_DECAY_RATE = 0.03
+_DECAY_BY_TAG: dict[str, float] = {
+    "preference": 0.0,
+    "decision": 0.005,
+    "architecture": 0.005,
+    "milestone": 0.01,
+    "debug": 0.1,
+    "error": 0.1,
+}
+
+
+def decay_rate_for(tags: list[str]) -> float:
+    for t in tags:
+        rate = _DECAY_BY_TAG.get(t.lower())
+        if rate is not None:
+            return rate
+    return _DEFAULT_DECAY_RATE
+
+
+def episode_score(
+    cos: float, importance: float, created_at: float, tags: list[str], now: float
+) -> float:
+    days = max(0.0, (now - created_at) / 86400.0)
+    imp = min(1.0, max(0.0, importance))
+    return cos * (0.7 + 0.3 * imp) * math.exp(-decay_rate_for(tags) * days)
+
+
 _MIN_TEXT = 10
 _MAX_TEXT = 2000
 
@@ -214,28 +245,40 @@ def search(query: str, *, k: int = 5) -> list[tuple[Episode, float]]:
             "AND embedder_id IS ?",
             (eid,),
         ).fetchall()
-    scored: list[tuple[Episode, float]] = []
+    # (episode, score, vector). The relevance gate is on raw cosine; the
+    # ranking score adds importance and per-tag recency decay.
+    now = time.time()
+    cands: list[tuple[Episode, float, list[float]]] = []
     for rid, text, tags_json, importance, created_at, blob in rows:
         if blob is None:
             continue
-        sim = _cosine(q_vec, _unpack(blob))
+        vec = _unpack(blob)
+        sim = _cosine(q_vec, vec)
         threshold = gate_long if len(text) > _LONG_TEXT_THRESHOLD else gate_short
         if sim < threshold:
             continue
-        scored.append(
-            (
-                Episode(
-                    id=int(rid),
-                    text=text,
-                    tags=_safe_tags(tags_json),
-                    importance=float(importance),
-                    created_at=float(created_at),
-                ),
-                float(sim),
-            )
+        ep = Episode(
+            id=int(rid),
+            text=text,
+            tags=_safe_tags(tags_json),
+            importance=float(importance),
+            created_at=float(created_at),
         )
-    scored.sort(key=lambda p: p[1], reverse=True)
-    return scored[: max(1, k)]
+        cands.append((ep, episode_score(sim, ep.importance, ep.created_at, ep.tags, now), vec))
+    if not cands:
+        return []
+    cands.sort(key=lambda c: c[1], reverse=True)
+    # Diversify: near-duplicate episodes ("deployed X", "deployed X again")
+    # shouldn't fill all k slots.
+    from arz.memory.fusion import mmr
+
+    picked = mmr(
+        cands[: max(4 * k, 20)],
+        relevance=lambda c: c[1],
+        similarity=lambda a, b: _cosine(a[2], b[2]),
+        limit=max(1, k),
+    )
+    return [(ep, score) for ep, score, _ in picked]
 
 
 def render_for_prompt(

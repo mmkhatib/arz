@@ -472,29 +472,37 @@ def _recall_block(
         except Exception:
             log.exception("vector search failed")
 
-    blocks: list[str] = []
-    seen: set[str] = set(exclude)
+    # Fuse the two rankings (agreement lifts a hit), then diversify.
+    from arz.memory.fusion import mmr, rrf, token_jaccard
+
+    texts: dict[str, str] = {}
+    fts_keys: list[str] = []
     for h in fts_hits:
         key = f"fts:{h['source']}/{h['key']}"
-        if key in seen or len(blocks) >= recall_k:
-            continue
-        seen.add(key)
-        blocks.append(f"- [{key}] {h['snippet']}")
-        if keys_out is not None:
-            keys_out.append(key)
-    n_fts = len(blocks)
+        if key not in exclude and key not in texts:
+            texts[key] = h["snippet"]
+            fts_keys.append(key)
+    vec_keys: list[str] = []
     for tup in vector_hits:
         try:
             k, content, _score = tup
         except (TypeError, ValueError):
             continue
         key = f"vec:{k}"
-        if key in seen or len(blocks) - n_fts >= recall_k:
-            continue
-        seen.add(key)
-        blocks.append(f"- [{key}] {(content or '')[:400]}")
-        if keys_out is not None:
-            keys_out.append(key)
+        if key not in exclude and key not in texts:
+            texts[key] = (content or "")[:400]
+            vec_keys.append(key)
+    fused = rrf([fts_keys, vec_keys])
+    score = dict(fused)
+    chosen = mmr(
+        [key for key, _ in fused],
+        relevance=lambda key: score[key],
+        similarity=lambda x, y: token_jaccard(texts[x], texts[y]),
+        limit=recall_k,
+    )
+    blocks = [f"- [{key}] {texts[key]}" for key in chosen]
+    if keys_out is not None:
+        keys_out.extend(chosen)
     if not blocks:
         return ""
     return "<memory>\n" + "\n".join(blocks) + "\n</memory>"
