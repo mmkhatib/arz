@@ -12,6 +12,8 @@ import { Columns2, FileText, RefreshCw, Rows2, X } from "lucide-react";
 import { api, type FileDiff } from "@/api/client";
 import { langForPath } from "@/utils/hljs";
 import { editsAsDiffPair, type FileChange } from "@/utils/panelData";
+import { PanelLoading } from "./PanelEmpty";
+import { useTheme } from "@/hooks/useTheme";
 
 const DiffEditor = lazy(() =>
   import("@monaco-editor/react").then((m) => ({ default: m.DiffEditor })),
@@ -27,6 +29,7 @@ interface Props {
 }
 
 export default function DiffTab({ path, change, onOpenFile, onClose }: Props) {
+  const { resolved } = useTheme();
   const [git, setGit] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<Source | null>(null);
@@ -119,21 +122,21 @@ export default function DiffTab({ path, change, onOpenFile, onClose }: Props) {
         {error && !change ? (
           <div className="p-4 text-[12px] text-[var(--ember)]">{error}</div>
         ) : !pair ? (
-          <div className="p-4 text-[12px] text-[var(--muted)]">Loading diff…</div>
+          <PanelLoading label="Loading diff…" />
         ) : pair.original === pair.modified ? (
           <div className="p-4 text-[12px] text-[var(--muted)]">
             No differences{effective === "git" ? " from HEAD" : ""}.
           </div>
         ) : (
           <Suspense
-            fallback={<div className="p-4 text-[12px] text-[var(--muted)]">Loading editor…</div>}
+            fallback={<PanelLoading label="Loading editor…" />}
           >
             <DiffEditor
               height="100%"
               language={lang}
               original={pair.original}
               modified={pair.modified}
-              theme="vs-dark"
+              theme={resolved === "light" ? "vs" : "vs-dark"}
               options={{
                 readOnly: true,
                 renderSideBySide: split,

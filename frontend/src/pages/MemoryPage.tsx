@@ -9,7 +9,8 @@
 // Rings band radial position within band is biased by strength (stronger = closer to core).
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Search, Pencil, Copy as CopyIcon, Trash2, Check, X } from "lucide-react";
+import { Plus, Search, Pencil, Copy as CopyIcon, Trash2, Check, X, Brain } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
 import {
   CedarPage,
   CedarPageHeader,
@@ -37,6 +38,8 @@ type Memory = {
   rawCategory: string;
   title: string;
   body: string;
+  /** Original stored text — what Copy puts on the clipboard. */
+  text: string;
   tags: string[];
   strength: number;
   pinned: boolean;
@@ -64,8 +67,17 @@ function kindToCategory(kind: Kind): string {
 function lessonToMemory(l: Lesson): Memory {
   const kind = categoryToKind(l.category);
   const lines = (l.text || "").split("\n");
-  const title = lines[0]?.slice(0, 90) || "(untitled)";
-  const body = lines.slice(1).join(" ").trim() || lines[0] || "";
+  const first = (lines[0] || "").trim();
+  const rest = lines.slice(1).join(" ").trim();
+  // Short one-liners are their own title — no body echoing it. Long
+  // first lines get a word-boundary title and keep the full line as body.
+  let title = first || "(untitled)";
+  let body = rest;
+  if (first.length > 90) {
+    const cut = first.slice(0, 90);
+    title = cut.slice(0, Math.max(cut.lastIndexOf(" "), 60)).replace(/[\s,;:—-]+$/, "") + "…";
+    body = rest ? `${first} ${rest}` : first;
+  }
   const ageDays = (Date.now() / 1000 - (l.created_at || 0)) / 86400;
   const strength = l.pinned ? 0.95 : Math.max(0.45, Math.min(0.92, 1 - ageDays / 60));
   return {
@@ -75,6 +87,7 @@ function lessonToMemory(l: Lesson): Memory {
     rawCategory: l.category,
     title,
     body,
+    text: l.text || "",
     tags: [kind],
     strength,
     pinned: !!l.pinned,
@@ -179,7 +192,7 @@ export default function MemoryPage() {
               <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>Rings</em> of what Arzeh remembers.
             </>
           }
-          sub={`${memories.length} memor${memories.length === 1 ? "y" : "ies"} across lessons, facts, and preferences. Stronger memories sit closer to the core; older rings fade.`}
+          sub={`${memories.length} memor${memories.length === 1 ? "y" : "ies"} across lessons, facts, and preferences.${variant === "rings" ? " Stronger memories sit closer to the core; older rings fade." : ""}`}
           right={
             <>
               <SearchBox value={query} onChange={setQuery} />
@@ -204,7 +217,7 @@ export default function MemoryPage() {
           <RingsView
             memories={filtered}
             onEdit={(m) => setEditing(m)}
-            onCopy={(m) => copyText(`${m.title}${m.body ? "\n" + m.body : ""}`)}
+            onCopy={(m) => copyText(m.text || m.title)}
             onForget={onForget}
           />
         )}
@@ -212,7 +225,7 @@ export default function MemoryPage() {
           <ListView
             memories={filtered}
             onEdit={(m) => setEditing(m)}
-            onCopy={(m) => copyText(`${m.title}${m.body ? "\n" + m.body : ""}`)}
+            onCopy={(m) => copyText(m.text || m.title)}
             onForget={onForget}
           />
         )}
@@ -527,10 +540,12 @@ function RingsView({
 
   if (memories.length === 0) {
     return (
-      <CedarCard padding={48}>
-        <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-          The grove is bare. Have a conversation — Arzeh remembers what matters.
-        </div>
+      <CedarCard padding={0}>
+        <EmptyState
+          icon={<Brain size={22} />}
+          title="The grove is bare."
+          hint="Have a conversation — Arzeh keeps the lessons, facts and preferences that matter. Or add one yourself with Remember…"
+        />
       </CedarCard>
     );
   }
@@ -542,17 +557,31 @@ function RingsView({
       {/* Rings viz */}
       <div style={{ position: "relative", aspectRatio: "1", maxWidth: 520, margin: "0 auto", width: "100%" }}>
         <svg viewBox="0 0 400 400" style={{ width: "100%", height: "100%" }}>
-          {[180, 140, 100].map((r, i) => (
+          {/* Band guides sit exactly under the dots they hold; labels live
+              in the legend so they never collide with a memory. */}
+          {groups.map((g) => (
             <circle
-              key={i}
+              key={g.label}
               cx="200"
               cy="200"
-              r={r}
+              r={(g.inner + g.outer) / 2}
+              fill="none"
+              stroke="var(--cedar-glow)"
+              strokeWidth={g.outer - g.inner}
+              opacity={0.03 + (2 - g.gi) * 0.03}
+            />
+          ))}
+          {groups.map((g) => (
+            <circle
+              key={`${g.label}-edge`}
+              cx="200"
+              cy="200"
+              r={g.outer + 1.5}
               fill="none"
               stroke="var(--cedar-line)"
-              strokeWidth={i === 2 ? 2 : 1}
-              opacity={0.3 + i * 0.2}
-              strokeDasharray={i === 0 ? "2 4" : undefined}
+              strokeWidth="1"
+              opacity={0.5}
+              strokeDasharray={g.gi === 2 ? "2 4" : undefined}
             />
           ))}
           <circle cx="200" cy="200" r="8" fill="var(--cedar-glow)" />
@@ -581,9 +610,6 @@ function RingsView({
               );
             }),
           )}
-          <text x="200" y="50"  textAnchor="middle" fontFamily="var(--fm)" fontSize="10" fill="var(--muted)" letterSpacing=".1em">RECENT</text>
-          <text x="200" y="100" textAnchor="middle" fontFamily="var(--fm)" fontSize="10" fill="var(--muted)" letterSpacing=".1em">STRONG</text>
-          <text x="200" y="150" textAnchor="middle" fontFamily="var(--fm)" fontSize="10" fill="var(--muted)" letterSpacing=".1em">CORE</text>
         </svg>
       </div>
 
@@ -637,6 +663,25 @@ function RingsView({
             <div key={x.kind} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12, color: "var(--text2)" }}>
               <span style={{ width: 8, height: 8, borderRadius: "50%", background: `var(--${x.c})` }} />
               {x.l}
+            </div>
+          ))}
+          <div style={{ height: 1, background: "var(--border)", margin: "10px 0" }} />
+          {[...groups].reverse().map((g) => (
+            <div key={g.label} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12, color: "var(--text2)" }}>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "50%",
+                  border: "1px solid var(--cedar-line)",
+                  background: `color-mix(in srgb, var(--cedar-glow) ${10 + (2 - g.gi) * 12}%, transparent)`,
+                }}
+              />
+              <span>{g.label} ring</span>
+              <span style={{ fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)" }}>
+                {g.lo === 0 ? `< ${Math.round(g.hi * 100)}%` : g.hi > 1 ? `≥ ${Math.round(g.lo * 100)}%` : `${Math.round(g.lo * 100)}–${Math.round(g.hi * 100)}%`}
+              </span>
+              <span style={{ marginLeft: "auto", fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)" }}>{g.items.length}</span>
             </div>
           ))}
         </CedarCard>
@@ -708,7 +753,8 @@ function ListRow({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "auto 1fr auto auto auto auto",
+        // Fixed tag column so titles line up whatever the kind's label width.
+        gridTemplateColumns: "84px 1fr auto auto auto auto",
         gap: 14,
         alignItems: "center",
         padding: "12px 18px",
@@ -721,7 +767,7 @@ function ListRow({
       onMouseLeave={() => setHover(false)}
       onClick={() => onEdit(m)}
     >
-      <Tag color={KIND_TAG[m.kind]}>{m.kind}</Tag>
+      <div style={{ justifySelf: "start" }}><Tag color={KIND_TAG[m.kind]}>{m.kind}</Tag></div>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13.5, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {m.title}

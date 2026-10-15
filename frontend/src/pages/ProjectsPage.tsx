@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, Briefcase, Layers, ArrowLeft, ArrowRight, Check, Sparkles, X as XIcon } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
 import {
   CedarPage,
   CedarPageHeader,
@@ -80,22 +81,17 @@ export default function ProjectsPage() {
       </div>
       <div style={{ padding: "24px 32px 32px" }}>
         {projects.length === 0 ? (
-          <CedarCard padding={48}>
-            <div style={{ textAlign: "center", color: "var(--muted)" }}>
-              <Briefcase size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
-              <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
-                No projects yet.
-              </div>
-              <div style={{ fontSize: 13, marginTop: 8 }}>
-                Spin up a project to give the orchestrator a brief, a task list, and a place to
-                track artifacts across multiple agent sessions.
-              </div>
-              <div style={{ marginTop: 14 }}>
+          <CedarCard padding={0}>
+            <EmptyState
+              icon={<Briefcase size={22} />}
+              title="No projects yet."
+              hint="Spin up a project to give the orchestrator a brief, a task list, and a place to track artifacts across multiple agent sessions."
+              action={
                 <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowCreate(true)}>
                   Start one
                 </Btn>
-              </div>
-            </div>
+              }
+            />
           </CedarCard>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
@@ -411,7 +407,7 @@ function NewProjectModal({
             />
             <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 4 }}>
               Optional. Leave blank to use a sibling folder next to arz (e.g.
-              <code style={{ color: "var(--cedar-2)", margin: "0 4px" }}>
+              <code style={{ color: "var(--cedar-2)", margin: "0 4px", fontSize: "inherit", fontFamily: "inherit" }}>
                 ~/workspace/projects/&lt;slug&gt;
               </code>
               ) so subagents never touch the arz source.

@@ -16,9 +16,11 @@ import {
 } from "@/components/CedarUI";
 import { api, type OverviewResponse, type SessionSummary, type CronEntry } from "@/api/client";
 import { describe as describeCron } from "@/components/ScheduleBuilder";
+import { parseServerTime } from "@/utils/format";
 
 function relTime(iso: string): string {
-  const d = new Date(iso).getTime();
+  const d = parseServerTime(iso).getTime();
+  if (Number.isNaN(d)) return "";
   const m = Math.round((Date.now() - d) / 60_000);
   if (m < 1) return "just now";
   if (m < 60) return `${m}m`;
@@ -26,7 +28,7 @@ function relTime(iso: string): string {
   if (h < 24) return `${h}h`;
   const day = Math.round(h / 24);
   if (day < 7) return `${day}d`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 export default function OverviewPage() {

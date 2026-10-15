@@ -23,26 +23,64 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, Code, ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 
-const BOOTSTRAP = `
+// Theme tokens are read from the host page at render time, so a plain-HTML
+// widget sits in the chat like native content (light or dark) instead of
+// a fixed dark box. Agent CSS still wins: it loads after these defaults.
+interface WidgetTheme { bg: string; surface: string; text: string; text2: string; border: string; accent: string; font: string }
+
+function readTheme(): WidgetTheme {
+  const fallback: WidgetTheme = {
+    bg: "#1c1a17", surface: "#26221d", text: "#d8d4cb", text2: "#a49c90", border: "#3a342e",
+    accent: "#76c89c", font: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+  };
+  if (typeof document === "undefined") return fallback;
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name: string, fb: string) => cs.getPropertyValue(name).trim() || fb;
+  return {
+    bg: v("--bg", fallback.bg),
+    surface: v("--s2", fallback.surface),
+    text: v("--text", fallback.text),
+    text2: v("--text2", fallback.text2),
+    border: v("--border", fallback.border),
+    accent: v("--cedar-glow", fallback.accent),
+    font: v("--fn", fallback.font),
+  };
+}
+
+function bootstrapStyles(t: WidgetTheme): string {
+  return `
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   html, body {
     margin: 0;
     padding: 12px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: ${t.font};
     font-size: 13.5px;
     line-height: 1.55;
-    color: #d8d4cb;
-    background: #1c1a17;
+    color: ${t.text};
+    background: ${t.bg};
   }
   * { box-sizing: border-box; }
-  a { color: #c8a060; }
+  a { color: ${t.accent}; }
   table { border-collapse: collapse; }
-  th, td { padding: 6px 10px; border: 1px solid #3a342e; }
-  th { background: #26221d; }
-  /* Tailwind doesn't auto-apply to the body bg above on first paint;
-     keep a fallback so agents who use plain HTML still look intentional. */
-</style>
+  th, td { padding: 6px 10px; border: 1px solid ${t.border}; }
+  th { background: ${t.surface}; }
+</style>`;
+}
+
+/** Defaults for unclassed buttons — placed at the top of <body> so they
+ *  beat Tailwind's preflight reset (in <head>) but lose to agent CSS. */
+function baseControls(t: WidgetTheme): string {
+  return `<style>
+  button:where(:not([class])) {
+    font: inherit; color: ${t.text}; background: ${t.surface};
+    border: 1px solid ${t.border}; border-radius: 8px; padding: 6px 12px; cursor: pointer;
+  }
+  button:where(:not([class])):hover { border-color: ${t.accent}; color: ${t.accent}; }
+</style>`;
+}
+
+const BOOTSTRAP_SCRIPT = `
 <script>
   (function () {
     function postHeight() {
@@ -86,6 +124,29 @@ const BOOTSTRAP = `
 </script>
 `;
 
+/** Full documents (`<!doctype html><html><head><style>…`) get flattened to
+ *  head assets + body markup — keeping only <body> dropped the agent's
+ *  <style> and rendered unstyled text. */
+export function normalizeWidgetHtml(html: string): string {
+  if (!html || !/<!doctype|<html\b/i.test(html)) return html;
+  const head = html.match(/<head[^>]*>([\s\S]*?)<\/head>/i)?.[1] ?? "";
+  const assets = (head.match(/<style[\s\S]*?<\/style>|<link\b[^>]*>|<script[\s\S]*?<\/script>/gi) ?? []).join("\n");
+  const body = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1];
+  if (body !== undefined) return assets + body;
+  return (
+    assets +
+    html
+      .replace(/<!doctype[^>]*>/gi, "")
+      .replace(/<html[^>]*>|<\/html>/gi, "")
+      .replace(/<head[\s\S]*?<\/head>/gi, "")
+  );
+}
+
+export function buildSrcdoc(html: string, id: string, theme: WidgetTheme = readTheme()): string {
+  const boot = bootstrapStyles(theme) + BOOTSTRAP_SCRIPT.split("__ID__").join(id);
+  return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${baseControls(theme)}${normalizeWidgetHtml(html)}</body></html>`;
+}
+
 /* HtmlSandbox — the bare iframe + bootstrap + auto-resize.
  *
  * Exported so anything that needs to render HTML safely (Widget chrome
@@ -118,30 +179,8 @@ export function HtmlSandbox({
   const sandboxId = useMemo(() => id || `w_${Math.random().toString(36).slice(2, 10)}`, [id]);
   const [height, setHeight] = useState(120);
 
-  // Some writers (notably kiro-cli + some claude-code completions) emit
-  // a FULL `<!DOCTYPE html><html>…<body>…</body></html>` document
-  // inside the arzwidget body. We wrap that again in our own
-  // boilerplate → the iframe renders nothing visible. Normalize first:
-  // if the incoming html looks like a full document, extract just the
-  // <body> innerHTML; otherwise pass through.
-  const normalizedHtml = useMemo(() => {
-    if (!html) return html;
-    if (/<!doctype|<html\b/i.test(html)) {
-      const m = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-      if (m) return m[1];
-      // No <body> but has <html>/<doctype>: strip them.
-      return html
-        .replace(/<!doctype[^>]*>/gi, "")
-        .replace(/<html[^>]*>|<\/html>/gi, "")
-        .replace(/<head[\s\S]*?<\/head>/gi, "");
-    }
-    return html;
-  }, [html]);
-
-  const srcdoc = useMemo(() => {
-    const boot = BOOTSTRAP.replace("__ID__", sandboxId);
-    return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${normalizedHtml}</body></html>`;
-  }, [normalizedHtml, sandboxId, reloadKey]);
+  const theme = useMemo(readTheme, [reloadKey]);
+  const srcdoc = useMemo(() => buildSrcdoc(html, sandboxId, theme), [html, sandboxId, theme]);
 
   // Throttle: the page inside is agent-authored, so a scripted loop must
   // not be able to machine-gun the chat. One action per second is well
@@ -180,13 +219,13 @@ export function HtmlSandbox({
       srcDoc={srcdoc}
       style={
         fill
-          ? { width: "100%", height: "100%", border: "none", display: "block", background: "#1c1a17" }
+          ? { width: "100%", height: "100%", border: "none", display: "block", background: theme.bg }
           : {
               width: "100%",
               height,
               border: "none",
               display: "block",
-              background: "#1c1a17",
+              background: theme.bg,
               transition: "height .12s",
             }
       }
@@ -215,13 +254,8 @@ export default function Widget({ title, html, id, maxHeight = 800, onAction }: W
   const [collapsed, setCollapsed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
-  const srcdoc = useMemo(() => {
-    const boot = BOOTSTRAP.replace("__ID__", widgetId);
-    return `<!doctype html><html><head><meta charset="utf-8"/>${boot}</head><body>${html}</body></html>`;
-  }, [html, widgetId, reloadKey]);
-
   const openInNewTab = () => {
-    const blob = new Blob([srcdoc], { type: "text/html" });
+    const blob = new Blob([buildSrcdoc(html, widgetId)], { type: "text/html" });
     const url = URL.createObjectURL(blob);
     window.open(url, "_blank", "noopener,noreferrer");
     // Revoke later so the new tab has time to fetch.

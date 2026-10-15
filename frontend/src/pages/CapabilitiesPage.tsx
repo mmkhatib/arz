@@ -179,7 +179,7 @@ function McpView({
     return (
       <CedarCard padding={48}>
         <div style={{ textAlign: "center", color: "var(--muted)" }}>
-          <Server size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <Server size={28} style={{ margin: "0 auto 12px", color: "var(--text3)" }} />
           <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
             No MCP servers yet.
           </div>
@@ -1102,7 +1102,7 @@ function Empty({ title, sub, icon }: { title: string; sub: string; icon: React.R
   return (
     <CedarCard padding={48}>
       <div style={{ textAlign: "center", color: "var(--muted)" }}>
-        <div style={{ marginBottom: 12, color: "var(--text3)" }}>{icon}</div>
+        <div style={{ marginBottom: 12, color: "var(--text3)", display: "flex", justifyContent: "center" }}>{icon}</div>
         <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>{title}</div>
         <div style={{ fontSize: 13, marginTop: 8 }}>{sub}</div>
       </div>

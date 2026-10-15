@@ -9,6 +9,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Gauge } from "lucide-react";
 import { api, type ContextTraceTurn } from "@/api/client";
+import PanelEmpty, { PanelLoading } from "./PanelEmpty";
 
 export const CONTEXT_BLOCKS: { key: string; label: string; color: string }[] = [
   { key: "system", label: "System prompt", color: "var(--stone, #8a8f98)" },
@@ -50,15 +51,15 @@ export default function ContextBreakdown({ sessionId, refreshKey }: { sessionId:
   const maxTotal = useMemo(() => Math.max(1, ...recent.map(turnTotal)), [recent]);
 
   if (turns === null) {
-    return <div className="px-3 py-4 text-[11px] text-[var(--muted)]">Loading…</div>;
+    return <PanelLoading label="Loading context trace…" />;
   }
   if (turns.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center text-[var(--muted)]/40 gap-2 py-10 px-6 text-center">
-        <Gauge size={24} />
-        <span className="text-[13px]">No turns recorded yet</span>
-        <span className="text-[11px]">Send a message to see what fills the context window.</span>
-      </div>
+      <PanelEmpty
+        icon={Gauge}
+        title="No turns recorded yet"
+        hint="Send a message to see what fills the context window — system prompt, memory, history and tool output, turn by turn."
+      />
     );
   }
 

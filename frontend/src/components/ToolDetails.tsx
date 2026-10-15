@@ -88,7 +88,10 @@ type Tab = "input" | "output";
  *  once, below the strip (WrittenFilePreview), not again in here. */
 export function ToolDetails({ call }: { call: ToolCallRecord }) {
   const hasOutput = !!call.output;
-  const [tab, setTab] = useState<Tab>("input");
+  // A failed call's output is the interesting part — open on it.
+  const [tab, setTab] = useState<Tab>(() =>
+    hasOutput && inferToolStatus(call.output) === "error" ? "output" : "input",
+  );
   const obj = useMemo(() => parseToolInput(call.input), [call.input]);
   const shell = isShellTool(call.name);
 
@@ -111,6 +114,20 @@ export function ToolDetails({ call }: { call: ToolCallRecord }) {
       {label}
     </button>
   );
+
+  const command = shell && obj && typeof obj.command === "string" ? obj.command : null;
+  if (command !== null) {
+    // Shell calls read best as a terminal transcript: prompt + output, no tabs.
+    const transcript = `$ ${command}${call.output ? "\n" + call.output : ""}`;
+    return (
+      <div style={{ padding: "6px 10px 8px 24px", borderTop: "1px solid var(--hairline)", background: "var(--bg)" }}>
+        {typeof obj?.description === "string" && obj.description && (
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 6 }}>{obj.description}</div>
+        )}
+        <TerminalView text={transcript} maxHeightPx={320} />
+      </div>
+    );
+  }
 
   return (
     <div style={{ padding: "6px 10px 8px 24px", borderTop: "1px solid var(--hairline)", background: "var(--bg)" }}>
@@ -211,7 +228,11 @@ function InlineToolRow({
 }) {
   const [open, setOpen] = useState(false);
   const summary = useMemo(() => toolSummary(call.input), [call.input]);
-  const filePath = useMemo(() => toolFilePath(parseToolInput(call.input)), [call.input]);
+  const obj = useMemo(() => parseToolInput(call.input), [call.input]);
+  const filePath = useMemo(() => toolFilePath(obj), [obj]);
+  // Shell rows lead with the human description; the command trails, muted.
+  const description = typeof obj?.description === "string" ? obj.description : "";
+  const isCmd = isShellTool(call.name) && typeof obj?.command === "string";
   const status = inferToolStatus(call.output);
   return (
     <div style={{ borderTop: first ? "none" : "1px solid var(--hairline)" }}>
@@ -264,7 +285,14 @@ function InlineToolRow({
             textDecoration: filePath && onOpenFile ? "underline dotted" : undefined,
           }}
         >
-          {summary}
+          {isCmd ? (
+            <>
+              {description && <span style={{ color: "var(--text2)", fontFamily: "var(--fn)" }}>{description} </span>}
+              <span style={{ opacity: description ? 0.75 : 1 }}>$ {summary}</span>
+            </>
+          ) : (
+            summary
+          )}
         </span>
       </div>
       {open && <ToolDetails call={call} />}

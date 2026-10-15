@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes, Navigate } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import Layout from "@/pages/Layout";
 import ChatPage from "@/pages/ChatPage";
 import BoardPage from "@/pages/BoardPage";
@@ -15,6 +15,7 @@ import AutonomyPage from "@/pages/AutonomyPage";
 import CapabilitiesPage from "@/pages/CapabilitiesPage";
 import LLMInstallerPage from "@/pages/LLMInstallerPage";
 import SettingsPage from "@/pages/SettingsPage";
+import NotFoundPage from "@/pages/NotFoundPage";
 import { useTheme } from "@/hooks/useTheme";
 
 export default function App() {
@@ -43,8 +44,8 @@ export default function App() {
           <Route path="/autonomy" element={<AutonomyPage />} />
           <Route path="/models" element={<LLMInstallerPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="*" element={<NotFoundPage />} />
         </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

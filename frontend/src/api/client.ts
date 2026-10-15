@@ -744,6 +744,9 @@ export const api = {
     }),
 
   // ── LLM Installer ──
+  getEmbedderStatus: () => request<{
+    backend: string; id: string; dim: number; requested: string; degraded: boolean; reason: string;
+  }>("/memory/embedder"),
   getModels: (refresh = false) => request<{
     providers: Record<string, { source: string; models: { id: string; label: string; default?: boolean }[] }>;
   }>(`/models${refresh ? "?refresh=true" : ""}`),

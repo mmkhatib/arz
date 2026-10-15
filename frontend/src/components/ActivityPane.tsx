@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { splitLineRef, type PathRef } from "@/utils/pathRefs";
-import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File, GitCompare, ListTodo, Gauge, Plus, X } from "lucide-react";
+import { Wrench, Bot, ScrollText, FileText, FileCode, FileJson, Settings, Image as ImageIcon, Terminal, File, GitCompare, ListTodo, Gauge, Plus, X, Package, ChevronRight, Check, AlertTriangle, Ban, ExternalLink, FolderTree, Copy } from "lucide-react";
+import { inferToolStatus, parseToolInput, stripPyRepr, toolFilePath, toolSummary } from "@/utils/toolInput";
+import ArtifactsView from "./ArtifactsView";
+import PanelEmpty from "./PanelEmpty";
 import { api } from "@/api/client";
 import SegmentedControl from "./SegmentedControl";
 import { useTouchedFiles } from "@/hooks/useTouchedFiles";
@@ -72,18 +75,20 @@ function ToolEntryCard({
   isActive: boolean;
   onOpenFile?: (path: string) => void;
 }) {
-  const inputText = useStreamText(entry.input || "");
   const outputText = useStreamText(entry.result || "");
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const expanded = manualOpen !== null ? manualOpen : isLast;
   const wasLast = useRef(isLast);
   const wasActive = useRef(isActive);
-  const filePath = useMemo(() => {
-    try {
-      const obj = JSON.parse(entry.input);
-      return (obj?.file_path || obj?.path || obj?.filename || obj?.target_file) ?? null;
-    } catch { return null; }
+  const filePath = useMemo(() => toolFilePath(parseToolInput(entry.input)), [entry.input]);
+  // Pretty-print JSON inputs (unwrapping Claude Code's `{'raw': …}` repr)
+  // so the expanded card reads like the call, not like a Python dict.
+  const prettyInput = useMemo(() => {
+    const obj = parseToolInput(entry.input);
+    return obj ? JSON.stringify(obj, null, 2) : stripPyRepr(entry.input || "");
   }, [entry.input]);
+  const inputText = useStreamText(prettyInput);
+  const status = entry.done ? inferToolStatus(entry.result) : "running";
 
   useEffect(() => {
     if (wasLast.current && !isLast) { const t = setTimeout(() => setManualOpen(false), 2000); return () => clearTimeout(t); }
@@ -94,45 +99,69 @@ function ToolEntryCard({
     wasActive.current = isActive;
   }, [isActive, manualOpen]);
 
-  const previewInput = (() => {
-    try { const obj = JSON.parse(entry.input); const first = Object.values(obj).find((v) => typeof v === "string") as string | undefined; return first ? first.slice(0, 80) : ""; }
-    catch { return entry.input.slice(0, 80); }
-  })();
+  const preview = useMemo(() => {
+    const raw = toolSummary(entry.input || "").replace(/\s+/g, " ");
+    // A bare absolute path reads better as its last two segments.
+    const short = raw.startsWith("/") && !raw.includes(" ") ? raw.split("/").slice(-2).join("/") : raw;
+    return short.slice(0, 120);
+  }, [entry.input]);
 
   return (
-    <div className={["mx-2 mb-2 rounded-lg border bg-[var(--surface)] overflow-hidden shadow-sm transition-all", isActive ? "border-[var(--border)]/80" : "border-[var(--border)] opacity-70"].join(" ")}>
-      <div className="flex items-center gap-2 px-3 py-2.5 cursor-pointer hover:bg-[var(--bg)] transition-colors" onClick={() => setManualOpen(!expanded)}>
-        <Wrench size={12} className="text-amber-400 shrink-0" />
-        <span className="text-[13px] text-[var(--text)] truncate flex-1">{entry.name}</span>
+    <div
+      className={[
+        "mx-2 mb-1.5 rounded-lg border bg-[var(--bg)] overflow-hidden transition-colors",
+        isActive ? "border-[var(--cedar-line)]" : expanded ? "border-[var(--border2)]" : "border-[var(--border)]",
+      ].join(" ")}
+    >
+      <div
+        className="group flex items-center gap-2 px-2.5 py-2 cursor-pointer hover:bg-[var(--s2)] transition-colors"
+        onClick={() => setManualOpen(!expanded)}
+      >
+        <ChevronRight size={12} className={["shrink-0 text-[var(--muted)] transition-transform", expanded ? "rotate-90" : ""].join(" ")} />
+        <ToolStatusIcon status={status} />
+        <span className="text-[12px] font-medium text-[var(--text)] shrink-0">{entry.name}</span>
+        <span className="text-[11px] font-mono text-[var(--muted)] truncate flex-1 min-w-0">{preview}</span>
         {filePath && onOpenFile && (
           <button
             onClick={(e) => { e.stopPropagation(); onOpenFile(filePath); }}
             title={`Open ${filePath}`}
-            className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--cedar-dim)] text-[var(--cedar-glow)] hover:bg-[var(--cedar-line)] shrink-0"
+            aria-label={`Open ${filePath}`}
+            className="w-5 h-5 shrink-0 flex items-center justify-center rounded text-[var(--muted)] opacity-0 group-hover:opacity-100 hover:text-[var(--cedar-glow)] hover:bg-[var(--cedar-dim)]"
           >
-            open
+            <ExternalLink size={11} />
           </button>
         )}
-        {isActive ? <span className="w-2 h-2 rounded-full bg-[var(--cedar)] animate-pulse shrink-0" /> : <span className="text-[10px] text-green-400 shrink-0">✓</span>}
-        <span className="text-[10px] text-[var(--muted)]/60 font-mono shrink-0">{entry.time}</span>
-        <span className="text-[12px] text-[var(--muted)] bg-[var(--bg)] px-1 rounded shrink-0">{expanded ? "▾" : "▸"}</span>
+        <span className="text-[9.5px] text-[var(--muted)] font-mono shrink-0">{entry.time}</span>
       </div>
-      {!expanded && previewInput && <div className="px-3 pb-2 text-[10px] text-[var(--muted)] font-mono truncate">{previewInput}</div>}
       {expanded && (
-        <>
-          {entry.input && <div className="px-3 pt-1 pb-2"><div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Input</div><pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[150px] overflow-y-auto leading-relaxed text-[var(--muted)]">{inputText}</pre></div>}
-          {entry.result && (
-            <div className="px-3 pb-2">
-              <div className="text-[10px] text-[var(--muted)]/40 uppercase tracking-wider mb-1">Output</div>
-              {(isShellTool(entry.name) || hasAnsi(entry.result))
-                ? <TerminalView text={outputText} maxHeightPx={200} />
-                : <pre className="px-2.5 py-2 bg-[var(--bg)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[200px] overflow-y-auto leading-relaxed text-[var(--muted)]">{outputText}</pre>}
+        <div className="border-t border-[var(--hairline)] bg-[var(--surface)]">
+          {entry.input && (
+            <div className="px-2.5 pt-2 pb-2">
+              <div className="text-[9.5px] font-mono text-[var(--muted)] uppercase tracking-[.08em] mb-1">Input</div>
+              <pre className="px-2.5 py-2 bg-[var(--bg)] border border-[var(--hairline)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[180px] overflow-y-auto leading-relaxed text-[var(--text2)]">{inputText}</pre>
             </div>
           )}
-        </>
+          {entry.result && (
+            <div className="px-2.5 pb-2.5">
+              <div className="text-[9.5px] font-mono text-[var(--muted)] uppercase tracking-[.08em] mb-1">Output</div>
+              {(isShellTool(entry.name) || hasAnsi(entry.result))
+                ? <TerminalView text={outputText} maxHeightPx={220} />
+                : <pre className="px-2.5 py-2 bg-[var(--bg)] border border-[var(--hairline)] rounded-md text-[11px] font-mono whitespace-pre-wrap break-all max-h-[220px] overflow-y-auto leading-relaxed text-[var(--text2)]">{outputText}</pre>}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
+}
+
+function ToolStatusIcon({ status }: { status: ReturnType<typeof inferToolStatus> | "running" }) {
+  if (status === "running") {
+    return <span className="w-3 h-3 shrink-0 flex items-center justify-center"><span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar-glow)] animate-pulse" /></span>;
+  }
+  if (status === "error") return <AlertTriangle size={12} className="shrink-0 text-[var(--ember)]" />;
+  if (status === "denied") return <Ban size={12} className="shrink-0 text-[var(--dawn)]" />;
+  return <Check size={12} className="shrink-0 text-[var(--pine)]" />;
 }
 
 /* ── SubagentCard ── */
@@ -493,11 +522,13 @@ interface Props {
   onSpawnSession?: (prompt: string) => void;
 }
 
-export const PANEL_MIN_WIDTH = 220;
+export const PANEL_MIN_WIDTH = 300;
+export const PANEL_DEFAULT_WIDTH = 440;
 export const PANEL_MAX_WIDTH = 900;
 
 const VIEW_META: Record<PanelView, { label: string; icon: React.ComponentType<{ size?: number; className?: string }> }> = {
-  files: { label: "Files", icon: FileText },
+  files: { label: "Files", icon: FolderTree },
+  artifacts: { label: "Artifacts", icon: Package },
   changes: { label: "Changes", icon: GitCompare },
   tools: { label: "Tools", icon: Wrench },
   tasks: { label: "Tasks", icon: ListTodo },
@@ -665,6 +696,7 @@ export default function ActivityPane({
 
   const counts: Partial<Record<PanelView, string | number>> = {
     files: allFiles.length || undefined,
+    artifacts: changes.length || undefined,
     changes: changes.length || undefined,
     tools: toolEntries.length || undefined,
     subagents: subagentEntries.length || undefined,
@@ -676,20 +708,28 @@ export default function ActivityPane({
   const isDoc = tabPath(active) !== null;
 
   return (
-    <aside className="shrink-0 flex h-full" style={{ width }}>
-      {/* Left resize handle */}
+    <aside className="relative shrink-0 flex h-full" style={{ width }} aria-label="Side panel">
+      {/* Left resize handle — a wide invisible hit area over the border,
+          with a grip that shows on hover / while dragging. */}
       <div
-        className="w-1 shrink-0 cursor-col-resize hover:bg-[var(--cedar)]/40 active:bg-[var(--cedar)] transition-colors"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize side panel"
+        className="group absolute -left-[3px] top-0 bottom-0 w-[7px] z-20 cursor-col-resize flex items-center justify-center"
         onMouseDown={handleResizeStart}
-        onDoubleClick={() => { onWidthChange(300); try { localStorage.setItem("arz:activity-width", "300"); } catch { /* ignore */ } }}
+        onDoubleClick={() => { onWidthChange(PANEL_DEFAULT_WIDTH); try { localStorage.setItem("arz:activity-width", String(PANEL_DEFAULT_WIDTH)); } catch { /* ignore */ } }}
         title="Drag to resize · double-click to reset"
-      />
+      >
+        <span className="absolute inset-y-0 left-[3px] w-px bg-transparent group-hover:bg-[var(--cedar-line)] group-active:bg-[var(--cedar)] transition-colors" />
+        <span className="relative w-[5px] h-9 rounded-full bg-[var(--border2)] opacity-0 group-hover:opacity-100 group-active:bg-[var(--cedar)] transition-opacity" />
+      </div>
 
       <div className="flex-1 flex flex-col border-l border-[var(--border)] bg-[var(--surface)] min-w-0">
-        {/* Tab strip — pinned views, then opened views/documents, then "+" */}
-        <div className="flex items-stretch border-b border-[var(--border)] shrink-0 min-w-0">
-          <div className="flex-1 flex items-stretch overflow-x-auto min-w-0" style={{ scrollbarWidth: "none" }}>
-            {[...PINNED_VIEWS, ...tabs.state.open].map((id) => (
+        {/* Tab strip — pinned views stay fixed at the left; opened views
+            and documents scroll beside them; then "+" and close. */}
+        <div role="tablist" aria-label="Side panel views" className="flex items-stretch border-b border-[var(--border)] shrink-0 min-w-0">
+          {(() => {
+            const renderTab = (id: PanelTabId, compact: boolean) => (
               <PanelTab
                 key={id}
                 id={id}
@@ -697,32 +737,52 @@ export default function ActivityPane({
                 count={(VIEW_META as Record<string, unknown>)[id] ? counts[id as PanelView] : undefined}
                 busy={id === "tools" && activeIdx !== -1}
                 change={changeByPath.get(tabPath(id) ?? "")}
+                compact={compact}
                 onActivate={() => activate(id)}
                 onClose={isPinned(id) ? undefined : () => closeTab(id)}
               />
-            ))}
-          </div>
+            );
+            // Pinned views collapse to icon + count once the strip gets
+            // crowded: a narrow panel, or any opened tab beside them.
+            const crowded = width < 560 || tabs.state.open.length > 0;
+            return (
+              <>
+                <div className="shrink-0 flex items-stretch">
+                  {PINNED_VIEWS.map((id) => renderTab(id, crowded && active !== id))}
+                </div>
+                <div
+                  className="flex-1 flex items-stretch overflow-x-auto min-w-0"
+                  style={{ scrollbarWidth: "none" }}
+                  onWheel={(e) => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) e.currentTarget.scrollLeft += e.deltaY; }}
+                >
+                  {tabs.state.open.map((id) => renderTab(id, false))}
+                </div>
+              </>
+            );
+          })()}
           <div className="relative shrink-0 flex items-center">
             <button
               onClick={() => setMenuOpen((v) => !v)}
               title="Open a view"
-              className="w-7 h-full flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)]"
+              aria-label="Open a view"
+              className={["w-8 h-full flex items-center justify-center hover:text-[var(--text)] hover:bg-[var(--s2)] border-l border-[var(--hairline)]", menuOpen ? "text-[var(--text)] bg-[var(--s2)]" : "text-[var(--muted)]"].join(" ")}
             >
-              <Plus size={13} />
+              <Plus size={14} />
             </button>
             {menuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setMenuOpen(false)} />
-                <div className="absolute right-0 top-full mt-1 z-50 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg py-1">
+                <div className="absolute right-0 top-full mt-1 z-50 w-52 rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-2)] py-1">
+                  <div className="px-3 pt-1.5 pb-1 text-[9.5px] font-mono uppercase tracking-[.08em] text-[var(--muted)]">Open view</div>
                   {MENU_VIEWS.map((v) => {
                     const M = VIEW_META[v];
                     return (
                       <button
                         key={v}
                         onClick={() => { openTab(v); setMenuOpen(false); }}
-                        className="w-full flex items-center gap-2 px-3 py-1.5 text-[12px] text-[var(--text2)] hover:bg-[var(--s2)] hover:text-[var(--text)]"
+                        className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[12px] text-[var(--text2)] hover:bg-[var(--s2)] hover:text-[var(--text)]"
                       >
-                        <M.icon size={12} />
+                        <M.icon size={13} />
                         <span className="flex-1 text-left">{M.label}</span>
                         {counts[v] !== undefined && (
                           <span className="text-[10px] font-mono text-[var(--muted)]">{counts[v]}</span>
@@ -737,9 +797,10 @@ export default function ActivityPane({
           <button
             onClick={onClose}
             title="Close panel"
-            className="w-7 shrink-0 flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] border-l border-[var(--hairline)]"
+            aria-label="Close panel"
+            className="w-8 shrink-0 flex items-center justify-center text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)] border-l border-[var(--hairline)]"
           >
-            <X size={13} />
+            <X size={14} />
           </button>
         </div>
 
@@ -774,7 +835,11 @@ export default function ActivityPane({
             {/* Tools tab */}
             {active === "tools" && (
               toolEntries.length === 0 ? (
-                <EmptyState icon={Wrench} text="Waiting for activity…" />
+                <PanelEmpty
+                  icon={Wrench}
+                  title="No tool calls yet"
+                  hint="Every command, search and file edit the agent makes streams here live, newest first. Click a call to see its input and output."
+                />
               ) : (
                 [...toolEntries].reverse().map((entry, ri) => {
                   const origIdx = toolEntries.length - 1 - ri;
@@ -805,11 +870,15 @@ export default function ActivityPane({
                   />
                 </div>
                 {filesMode === "session" ? (
-                  <ActivityFilesView files={allFiles} onOpen={openFile} />
+                  <ActivityFilesView files={allFiles} onOpen={openFile} onBrowse={() => setFilesMode("workspace")} />
                 ) : (
                   <WorkspaceTree sessionId={sessionId} onOpen={openFile} fileIcon={fileIcon} />
                 )}
               </>
+            )}
+
+            {active === "artifacts" && (
+              <ArtifactsView changes={changes} onOpenFile={openFile} onOpenDiff={openDiff} />
             )}
 
             {active === "changes" && (
@@ -823,7 +892,11 @@ export default function ActivityPane({
             {/* Subagents tab */}
             {active === "subagents" && (
               subagentEntries.length === 0 ? (
-                <EmptyState icon={Bot} text="No subagents yet" />
+                <PanelEmpty
+                  icon={Bot}
+                  title="No subagents yet"
+                  hint="When the agent delegates work to a subagent, each one shows here with its task, a live timer and its result."
+                />
               ) : (
                 subagentEntries.map((e) => (
                   <SubagentCard
@@ -845,19 +918,13 @@ export default function ActivityPane({
   );
 }
 
-function EmptyState({ icon: Icon, text }: { icon: React.ComponentType<{ size?: number }>; text: string }) {
-  return (
-    <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-      <Icon size={24} /><span className="text-[13px]">{text}</span>
-    </div>
-  );
-}
-
 function PanelTab({
-  id, active, count, busy, change, onActivate, onClose,
+  id, active, count, busy, change, compact, onActivate, onClose,
 }: {
   id: PanelTabId;
   active: boolean;
+  /** Narrow panel: inactive pinned views show icon + count only. */
+  compact?: boolean;
   count?: string | number;
   busy?: boolean;
   change?: FileChange;
@@ -868,9 +935,17 @@ function PanelTab({
   const view = path ? null : VIEW_META[id as PanelView];
   const Icon = view ? view.icon : id.startsWith("diff:") ? GitCompare : fileIcon(path!);
   const label = view ? view.label : path!.split("/").pop() || path!;
+  // Keep the active tab visible when the strip overflows (opening a view
+  // from the + menu or a file from chat can land it off-screen).
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (active) ref.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [active]);
   return (
     <div
+      ref={ref}
       role="tab"
+      aria-label={path ? `${id.startsWith("diff:") ? "Diff " : ""}${label}` : label}
       aria-selected={active}
       tabIndex={0}
       onClick={onActivate}
@@ -878,16 +953,19 @@ function PanelTab({
       onAuxClick={(e) => { if (e.button === 1 && onClose) { e.preventDefault(); onClose(); } }}
       title={path ? `${id.startsWith("diff:") ? "Diff · " : ""}${path}` : label}
       className={[
-        "group shrink-0 flex items-center gap-1.5 pl-2.5 pr-1.5 h-8 cursor-pointer text-[11.5px] border-r border-[var(--hairline)] transition-colors select-none",
+        "group relative shrink-0 flex items-center gap-1.5 h-9 cursor-pointer text-[12px] border-r border-[var(--hairline)] transition-colors select-none outline-none focus-visible:bg-[var(--s2)]",
         active
-          ? "bg-[var(--bg)] text-[var(--text)] shadow-[inset_0_-2px_0_var(--cedar-glow)]"
-          : "text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--s2)]",
+          ? "bg-[var(--bg)] text-[var(--text)] font-medium after:absolute after:left-0 after:right-0 after:bottom-0 after:h-[2px] after:bg-[var(--cedar-glow)]"
+          : "text-[var(--text3)] hover:text-[var(--text)] hover:bg-[var(--s2)]",
+        compact ? "px-2.5" : "pl-3 pr-1.5",
       ].join(" ")}
     >
-      <Icon size={12} className={id.startsWith("diff:") ? "text-[var(--dawn)]" : undefined} />
-      <span className={["truncate max-w-[140px]", path ? "font-mono text-[11px]" : ""].join(" ")}>{label}</span>
+      <Icon size={13} className={id.startsWith("diff:") ? "text-[var(--dawn)]" : active ? "text-[var(--cedar-glow)]" : undefined} />
+      {!compact && <span className={["truncate max-w-[140px]", path ? "font-mono text-[11px]" : ""].join(" ")}>{label}</span>}
       {busy && <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar)] animate-pulse" />}
-      {count !== undefined && <span className="text-[9.5px] font-mono opacity-60">{count}</span>}
+      {count !== undefined && (
+        <span className={["text-[9.5px] font-mono px-1 rounded-full leading-[14px]", active ? "bg-[var(--cedar-dim)] text-[var(--cedar-glow)]" : "bg-[var(--s2)] text-[var(--muted)]"].join(" ")}>{count}</span>
+      )}
       {change && id.startsWith("diff:") && (
         <span className="text-[9.5px] font-mono" style={{ color: "var(--pine)" }}>+{change.added}</span>
       )}
@@ -902,7 +980,7 @@ function PanelTab({
         >
           <X size={10} />
         </button>
-      ) : (
+      ) : compact ? null : (
         <span className="w-0.5" />
       )}
     </div>
@@ -960,10 +1038,11 @@ function ActivityLogView({ entries }: { entries: { type: string; time: string; s
 
   if (entries.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-        <ScrollText size={24} />
-        <span className="text-[13px]">No events yet</span>
-      </div>
+      <PanelEmpty
+        icon={ScrollText}
+        title="No events yet"
+        hint="The raw event stream for this session — replies, tool calls, memory recalls and warnings — appears here as it happens."
+      />
     );
   }
   return (
@@ -1076,222 +1155,72 @@ function ActivityLogView({ entries }: { entries: { type: string; time: string; s
 function ActivityFilesView({
   files,
   onOpen,
+  onBrowse,
 }: {
   files: WorkspaceFile[];
   onOpen: (path: string) => void;
+  onBrowse: () => void;
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
   if (files.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center h-full text-[var(--muted)]/40 gap-2 py-8">
-        <FileText size={24} />
-        <span className="text-[13px]">No files yet</span>
-      </div>
+      <PanelEmpty
+        icon={FileText}
+        title="No files in this session yet"
+        hint="Files the agent reads, writes or that live in the session folder show up here. Open one to view or edit it in a tab."
+        action={{ label: "Browse workspace", icon: FolderTree, onClick: onBrowse }}
+      />
     );
   }
   const liveCount = files.filter((f) => f.live).length;
   const staticCount = files.length - liveCount;
   return (
     <div>
-      <div
-        style={{
-          display: "flex",
-          gap: 12,
-          padding: "10px 12px 8px",
-          flexWrap: "wrap",
-          borderBottom: "1px solid var(--hairline)",
-        }}
-      >
+      <div className="flex items-center gap-3 px-3 py-2 border-b border-[var(--hairline)] text-[10.5px] font-mono text-[var(--muted)]">
         {liveCount > 0 && (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 10.5,
-              fontFamily: "var(--fm)",
-              color: "var(--text3)",
-            }}
-          >
-            <span
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: "50%",
-                background: "var(--cedar-glow)",
-                boxShadow: "0 0 4px var(--cedar-glow)",
-              }}
-            />
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--cedar-glow)]" />
             {liveCount} touched
           </span>
         )}
         {staticCount > 0 && (
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 5,
-              fontSize: 10.5,
-              fontFamily: "var(--fm)",
-              color: "var(--text3)",
-            }}
-          >
-            <span
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: "50%",
-                background: "var(--text3)",
-              }}
-            />
-            {staticCount} other
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--text3)]" />
+            {staticCount} in folder
           </span>
         )}
       </div>
-      <div style={{ padding: 6 }}>
+      <div className="py-1">
         {files.map((f) => {
-          const isOpen = expanded === f.path;
           const Icon = fileIcon(f.path);
+          const name = f.name || f.path.split("/").pop() || f.path;
+          const dir = f.rel_path.slice(0, Math.max(0, f.rel_path.length - name.length)).replace(/\/$/, "");
           return (
             <div
               key={f.path}
-              style={{
-                marginBottom: 4,
-                border: `1px solid ${isOpen ? "var(--cedar-line)" : "var(--border)"}`,
-                borderRadius: 6,
-                background: "var(--bg)",
-                overflow: "hidden",
-                transition: "border-color .12s",
-              }}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpen(f.path)}
+              onKeyDown={(e) => { if (e.key === "Enter") onOpen(f.path); }}
+              title={f.path}
+              className="group mx-1.5 flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-[var(--s2)] transition-colors"
             >
-              <div
-                onClick={() => setExpanded((cur) => (cur === f.path ? null : f.path))}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  padding: "7px 9px",
-                  cursor: "pointer",
-                }}
-                title="Click for preview · double-click to open"
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  onOpen(f.path);
-                }}
-              >
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    background: f.live ? "var(--cedar-glow)" : "var(--text3)",
-                    boxShadow: f.live ? "0 0 4px var(--cedar-glow)" : undefined,
-                    flexShrink: 0,
-                  }}
-                />
-                <Icon size={11} className="text-[var(--muted)] shrink-0" />
-                <span
-                  style={{
-                    fontSize: 11.5,
-                    fontFamily: "var(--fm)",
-                    color: "var(--text)",
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {f.rel_path}
-                </span>
-                {f.size > 0 && (
-                  <span
-                    style={{
-                      fontSize: 9.5,
-                      fontFamily: "var(--fm)",
-                      color: "var(--muted)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {formatSize(f.size)}
-                  </span>
-                )}
-              </div>
-              {isOpen && (
-                <div
-                  style={{
-                    borderTop: "1px solid var(--hairline)",
-                    background: "var(--s2)",
-                    padding: "8px 10px",
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 10,
-                      fontFamily: "var(--fm)",
-                      color: "var(--muted)",
-                      marginBottom: 5,
-                      textTransform: "uppercase",
-                      letterSpacing: ".08em",
-                    }}
-                  >
-                    path
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "var(--fm)",
-                      fontSize: 11,
-                      color: "var(--text2)",
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      marginBottom: 9,
-                    }}
-                    title={f.path}
-                  >
-                    {f.path}
-                  </div>
-                  <div style={{ display: "flex", gap: 6 }}>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onOpen(f.path);
-                      }}
-                      style={{
-                        flex: 1,
-                        padding: "5px 10px",
-                        background: "var(--cedar-dim)",
-                        border: "1px solid var(--cedar-line)",
-                        borderRadius: 6,
-                        color: "var(--cedar-glow)",
-                        fontSize: 11.5,
-                        fontFamily: "var(--fn)",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Open file
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void navigator.clipboard?.writeText(f.path);
-                      }}
-                      style={{
-                        padding: "5px 10px",
-                        background: "transparent",
-                        border: "1px solid var(--border)",
-                        borderRadius: 6,
-                        color: "var(--muted)",
-                        fontSize: 11.5,
-                        fontFamily: "var(--fn)",
-                        cursor: "pointer",
-                      }}
-                      title="Copy path"
-                    >
-                      Copy path
-                    </button>
-                  </div>
-                </div>
+              <Icon size={13} className={f.live ? "shrink-0 text-[var(--cedar-glow)]" : "shrink-0 text-[var(--muted)]"} />
+              <span className="min-w-0 flex-1 flex items-baseline gap-2">
+                <span className="text-[12px] font-mono text-[var(--text)] truncate">{name}</span>
+                {dir && <span className="text-[10px] text-[var(--muted)] truncate">{dir}</span>}
+              </span>
+              {f.live && <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--cedar-glow)]" title="Touched this session" />}
+              {f.size > 0 && (
+                <span className="shrink-0 text-[9.5px] font-mono text-[var(--muted)] group-hover:hidden">{formatSize(f.size)}</span>
               )}
+              <button
+                onClick={(e) => { e.stopPropagation(); void navigator.clipboard?.writeText(f.path); }}
+                title="Copy path"
+                aria-label="Copy path"
+                className="hidden group-hover:flex w-5 h-5 shrink-0 items-center justify-center rounded text-[var(--muted)] hover:text-[var(--text)] hover:bg-[var(--border)]"
+              >
+                <Copy size={11} />
+              </button>
             </div>
           );
         })}

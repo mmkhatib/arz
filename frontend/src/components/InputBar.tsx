@@ -517,7 +517,7 @@ export default function InputBar({
                 height: 26,
                 padding: "0 9px",
                 background: "var(--bg)",
-                border: `1px solid ${providerAccent(provider)}`,
+                border: "1px solid var(--border)",
                 borderRadius: 6,
                 fontSize: 11.5,
                 fontFamily: "var(--fn)",
@@ -535,7 +535,11 @@ export default function InputBar({
               >
                 cli
               </span>
-              <span style={{ color: providerAccent(provider), fontWeight: 500 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--text)", fontWeight: 500 }}>
+                <span
+                  aria-hidden
+                  style={{ width: 6, height: 6, borderRadius: 999, background: providerAccent(provider), opacity: 0.85 }}
+                />
                 {PROVIDER_LABELS[provider ?? ""] ?? provider}
               </span>
             </span>

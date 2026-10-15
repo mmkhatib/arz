@@ -4,7 +4,8 @@
 //   * List           — card grid w/ cron expr + prompt + actions
 
 import { useEffect, useState } from "react";
-import { Plus, Pencil, Trash2, Play, Power } from "lucide-react";
+import { Plus, Pencil, Trash2, Play, Power, CalendarClock } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
 import {
   CedarPage,
   CedarPageHeader,
@@ -23,6 +24,12 @@ import { useDialog } from "@/components/Dialog";
 import { ScheduleBuilder, describe as describeCron } from "@/components/ScheduleBuilder";
 
 type Variant = "sun" | "tape" | "list";
+
+const VARIANT_BLURB: Record<Variant, string> = {
+  sun: "The dial is a 24-hour orbit; each job sits where it next fires.",
+  tape: "Each row is a job laid across the day; the line marks now.",
+  list: "Every job with its last run, status and controls.",
+};
 
 export default function SchedulePage() {
   const [variant, setVariant] = useState<Variant>(
@@ -49,7 +56,7 @@ export default function SchedulePage() {
               The day's <em style={{ fontStyle: "italic", color: "var(--cedar-glow)" }}>tides</em>.
             </>
           }
-          sub={`${crons.length} recurring jobs · ${enabled} enabled. The dial below shows a 24-hour orbit; jobs sit on the curve where they next fire.`}
+          sub={`${crons.length} recurring job${crons.length === 1 ? "" : "s"} · ${enabled} enabled. ${VARIANT_BLURB[variant]}`}
           right={
             <>
               <SegSeg<Variant>
@@ -231,7 +238,12 @@ function JobModal({
 
 // ── Sun — 24-hour clock dial ──────────────────────────────────
 function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry) => void }) {
-  const now = new Date();
+  // Re-render each minute so the hand and the clock face stay current.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
   const hr = now.getHours() + now.getMinutes() / 60;
   const angle = (h: number) => (h / 24) * Math.PI * 2 - Math.PI / 2;
 
@@ -290,21 +302,26 @@ function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry)
               </text>
             );
           })}
-          {/* Now indicator */}
+          {/* Now indicator — starts outside the centre readout so the
+              hand never strikes through the time. */}
           {(() => {
             const a = angle(hr);
             return (
-              <line
-                x1={cx}
-                y1={cy}
-                x2={cx + 155 * Math.cos(a)}
-                y2={cy + 155 * Math.sin(a)}
-                stroke="var(--cedar-glow)"
-                strokeWidth="1.5"
-              />
+              <g>
+                <line
+                  x1={cx + 78 * Math.cos(a)}
+                  y1={cy + 78 * Math.sin(a)}
+                  x2={cx + R_ORBIT * Math.cos(a)}
+                  y2={cy + R_ORBIT * Math.sin(a)}
+                  stroke="var(--cedar-glow)"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                />
+                <circle cx={cx + R_ORBIT * Math.cos(a)} cy={cy + R_ORBIT * Math.sin(a)} r="4" fill="var(--cedar-glow)" />
+              </g>
             );
           })()}
-          <circle cx={cx} cy={cy} r="4" fill="var(--cedar-glow)" />
+          <circle cx={cx} cy={cy} r="70" fill="var(--surface)" stroke="var(--border)" strokeWidth="1" />
           {/* Job pins */}
           {jobs.map((j) => {
             const a = angle(j.hour);
@@ -330,12 +347,12 @@ function SunView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry)
             );
           })}
           {/* Center time */}
-          <text x={cx} y={cy - 5} textAnchor="middle" fontFamily="var(--fd)" fontSize="34" fill="var(--text)">
+          <text x={cx} y={cy + 4} textAnchor="middle" fontFamily="var(--fd)" fontSize="30" fill="var(--text)">
             {now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </text>
           <text
             x={cx}
-            y={cy + 15}
+            y={cy + 24}
             textAnchor="middle"
             fontFamily="var(--fm)"
             fontSize="10"
@@ -438,21 +455,29 @@ function TapeView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry
         >
           Job
         </div>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(24, 1fr)",
-            fontSize: 9.5,
-            color: "var(--muted)",
-            fontFamily: "var(--fm)",
-            padding: "6px 14px 6px 0",
-          }}
-        >
-          {HOURS.map((h) => (
-            <div key={h} style={{ textAlign: "center" }}>
-              {h % 6 === 0 ? String(h).padStart(2, "0") : ""}
-            </div>
-          ))}
+        {/* Same inset as the rows below so labels sit on the bars' hours. */}
+        <div style={{ padding: "0 14px 0 0" }}>
+          <div style={{ position: "relative", height: 30, fontSize: 9.5, color: "var(--muted)", fontFamily: "var(--fm)" }}>
+            {[0, 6, 12, 18].map((h) => (
+              <span key={h} style={{ position: "absolute", top: 9, left: `${(h / 24) * 100}%` }}>
+                {String(h).padStart(2, "0")}
+              </span>
+            ))}
+            <span
+              style={{
+                position: "absolute",
+                top: 9,
+                left: `${nowFrac}%`,
+                transform: "translateX(-50%)",
+                color: "var(--ember)",
+                background: "var(--surface)",
+                padding: "0 4px",
+                letterSpacing: ".1em",
+              }}
+            >
+              NOW
+            </span>
+          </div>
         </div>
       </div>
       {crons.length === 0 && (
@@ -483,7 +508,14 @@ function TapeView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry
                 {describeCron(c.schedule)}
               </div>
             </div>
-            <div style={{ position: "relative", height: 32, padding: "0 14px 0 0" }}>
+            <div style={{ padding: "0 14px 0 0" }}>
+            <div style={{ position: "relative", height: 32 }}>
+              {[6, 12, 18].map((h) => (
+                <div
+                  key={`g${h}`}
+                  style={{ position: "absolute", top: 4, bottom: 4, left: `${(h / 24) * 100}%`, width: 1, background: "var(--hairline)" }}
+                />
+              ))}
               {isHourly &&
                 HOURS.map((h) => (
                   <div
@@ -525,6 +557,7 @@ function TapeView({ crons, onEdit }: { crons: CronEntry[]; onEdit: (c: CronEntry
                 title="now"
               />
             </div>
+            </div>
           </div>
         );
       })}
@@ -545,10 +578,12 @@ function ListView({
   const dialog = useDialog();
   if (crons.length === 0) {
     return (
-      <CedarCard padding={48}>
-        <div style={{ textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-          No scheduled jobs.
-        </div>
+      <CedarCard padding={0}>
+        <EmptyState
+          icon={<CalendarClock size={22} />}
+          title="Nothing scheduled."
+          hint="Recurring jobs run a prompt on a timer — a morning brief, a nightly cleanup, a weekly report. Use New job to add one."
+        />
       </CedarCard>
     );
   }

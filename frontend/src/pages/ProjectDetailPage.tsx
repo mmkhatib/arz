@@ -869,7 +869,7 @@ function FilesTab({
     return (
       <CedarCard padding={48}>
         <div style={{ textAlign: "center", color: "var(--muted)" }}>
-          <FileText size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <FileText size={28} style={{ margin: "0 auto 12px", color: "var(--text3)" }} />
           <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
             No files yet.
           </div>
@@ -1566,7 +1566,7 @@ function SubagentsTab({
     return (
       <CedarCard padding={48}>
         <div style={{ textAlign: "center", color: "var(--muted)" }}>
-          <Bot size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <Bot size={28} style={{ margin: "0 auto 12px", color: "var(--text3)" }} />
           <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
             No agents have joined yet.
           </div>
@@ -1818,7 +1818,7 @@ function LogTab({ project }: { project: ProjectSummary }) {
     return (
       <CedarCard padding={48}>
         <div style={{ textAlign: "center", color: "var(--muted)" }}>
-          <ScrollText size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+          <ScrollText size={28} style={{ margin: "0 auto 12px", color: "var(--text3)" }} />
           <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>
             No activity yet.
           </div>

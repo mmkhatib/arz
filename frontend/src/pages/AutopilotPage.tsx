@@ -16,6 +16,7 @@ import { api } from "@/api/client";
 import { CedarPage, CedarPageHeader, CedarCard, Tag, Toggle, TopoLines } from "@/components/CedarUI";
 import { type CronEntry } from "@/api/client";
 import { describe as describeCron } from "@/components/ScheduleBuilder";
+import { ageSecs, fmtAge } from "@/utils/format";
 
 type TaskRecord = Awaited<ReturnType<typeof api.getTask>>;
 
@@ -55,6 +56,16 @@ export default function AutopilotPage() {
 
   // Cron rules (treated as autopilot rules)
   const [rules, setRules] = useState<CronEntry[]>([]);
+  const toggleRule = async (r: CronEntry) => {
+    // Optimistic flip; revert if the server refuses.
+    setRules((rs) => rs.map((x) => (x.id === r.id ? { ...x, enabled: !r.enabled } : x)));
+    try {
+      await api.updateCron(r.id, { enabled: !r.enabled });
+    } catch (e) {
+      setRules((rs) => rs.map((x) => (x.id === r.id ? { ...x, enabled: r.enabled } : x)));
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
   const refreshRules = () => api.listCrons().then(setRules).catch(() => {});
 
   useEffect(() => {
@@ -204,9 +215,9 @@ export default function AutopilotPage() {
                     </span>
                   </div>
                   <span style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)" }}>
-                    {r.last_run_at ? "fired" : "never run"}
+                    {r.last_run_at ? `fired ${fmtAge(ageSecs(r.last_run_at))} ago` : "never run"}
                   </span>
-                  <Toggle on={r.enabled} title={r.enabled ? "Disable" : "Enable"} />
+                  <Toggle on={r.enabled} title={r.enabled ? "Disable rule" : "Enable rule"} onClick={() => void toggleRule(r)} />
                 </div>
               </CedarCard>
             ))}

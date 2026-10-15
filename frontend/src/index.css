@@ -406,6 +406,9 @@ input, textarea { font-family: inherit; }
 /* ── Display + mono helpers ─────────────────────────────────── */
 .font-display { font-family: var(--fd); }
 .font-mono    { font-family: var(--fm); }
+/* JetBrains Mono ligatures turn `<!--` / `-->` / `->` into arrows — wrong for
+   code people read or edit literally. */
+code, pre, kbd, samp, textarea, .font-mono { font-variant-ligatures: none; }
 
 /* ── Scrollbar ──────────────────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -418,8 +421,12 @@ input, textarea { font-family: inherit; }
 /* ── Code ───────────────────────────────────────────────────── */
 pre, code {
   font-family: var(--fm);
-  font-size: 13px;
 }
+pre { font-size: 13px; }
+/* Inline code scales with its sentence — a fixed 13px looked oversized in
+   11–12px hints and captions. */
+code { font-size: .92em; }
+pre code { font-size: inherit; }
 
 /* ── Animations ─────────────────────────────────────────────── */
 @keyframes arz-bounce { 0%,80%,100% { transform: translateY(0); opacity: .3 } 40% { transform: translateY(-3px); opacity: 1 } }

@@ -1,12 +1,13 @@
 // Models — three sections per Cedar design:
 //   * CLIs — Claude Code, Kiro, Codex, Gemini (CliCard)
-//   * Cloud models — frontier APIs (CloudCard)
+//   * Cloud models — live per-provider lists from GET /api/models (ProviderModelsCard)
 //   * Local models — Ollama (LocalCard)
 
 import { useEffect, useRef, useState } from "react";
-import { Download, Check, ExternalLink, Loader2, X, Power, PowerOff, Wrench } from "lucide-react";
+import { Download, Check, ExternalLink, Loader2, X, Power, PowerOff, Wrench, RefreshCw } from "lucide-react";
 import { api } from "@/api/client";
-import { setOllamaInstalledModels } from "@/utils/models";
+import { PROVIDER_LABELS, setOllamaInstalledModels } from "@/utils/models";
+import { refreshLiveModels } from "@/hooks/useLiveModels";
 import {
   CedarPage,
   CedarPageHeader,
@@ -92,6 +93,22 @@ export default function LLMInstallerPage() {
   const [installing, setInstalling] = useState<string | null>(null);
   const [busyMemory, setBusyMemory] = useState<string | null>(null);
   const [log, setLog] = useState<string>("");
+  const [live, setLive] = useState<LiveCatalog | null>(null);
+  const [liveBusy, setLiveBusy] = useState(false);
+
+  const loadLive = async (force = false) => {
+    setLiveBusy(true);
+    try {
+      const r = await api.getModels(force);
+      setLive(r.providers);
+      // Keep every picker in the app in sync with what we just fetched.
+      if (force) void refreshLiveModels(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLiveBusy(false);
+    }
+  };
   const abortRef = useRef<AbortController | null>(null);
 
   const refresh = async () => {
@@ -127,6 +144,7 @@ export default function LLMInstallerPage() {
 
   useEffect(() => {
     refresh();
+    void loadLive();
     const t = setInterval(refresh, 30_000);
     return () => clearInterval(t);
   }, []);
@@ -175,7 +193,15 @@ export default function LLMInstallerPage() {
             </>
           }
           sub="The CLIs that drive sessions, the cloud models they call, and the local seeds you've planted on this machine."
-          right={<Btn kind="ghost" onClick={refresh}>↻ refresh</Btn>}
+          right={
+            <Btn
+              kind="ghost"
+              icon={<RefreshCw size={12} className={liveBusy ? "animate-spin" : undefined} />}
+              onClick={() => { void refresh(); void loadLive(true); }}
+            >
+              Refresh
+            </Btn>
+          }
         />
       </div>
       {error && (
@@ -186,7 +212,7 @@ export default function LLMInstallerPage() {
       <div style={{ padding: "8px 32px 32px" }}>
         <SectionHeader eyebrow="agents" title="CLIs" sub="Coding agents installed on your machine — engines that drive sessions." count={clis.length} />
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
-          {clis.map((c) => (
+          {[...clis].sort((a, b) => Number(b.installed) - Number(a.installed)).map((c) => (
             <CliCard
               key={c.name}
               cli={c}
@@ -195,6 +221,35 @@ export default function LLMInstallerPage() {
             />
           ))}
         </div>
+
+        <SectionHeader
+          eyebrow="cones"
+          title="Cloud models"
+          sub="Asked live from each CLI or API — aliases like opus or pro always resolve to the newest model, so this list never goes stale."
+          count={0}
+        />
+        {!live ? (
+          <CedarCard padding={24}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5, color: "var(--muted)" }}>
+              <Loader2 size={13} className="animate-spin" /> Asking providers which models they serve…
+            </div>
+          </CedarCard>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+            {CLOUD_PROVIDERS.filter((p) => live[p]).map((p) => {
+              const binary = CLI_FOR_PROVIDER[p];
+              const cli = binary ? clis.find((c) => c.binary === binary || c.name === binary) : undefined;
+              return (
+                <ProviderModelsCard
+                  key={p}
+                  provider={p}
+                  entry={live[p]}
+                  cliInstalled={binary ? cli?.installed ?? null : null}
+                />
+              );
+            })}
+          </div>
+        )}
 
         <SectionHeader
           eyebrow="seeds"
@@ -253,6 +308,76 @@ export default function LLMInstallerPage() {
         )}
       </div>
     </CedarPage>
+  );
+}
+
+type LiveCatalog = Awaited<ReturnType<typeof api.getModels>>["providers"];
+
+const CLOUD_PROVIDERS = ["claude-code", "codex", "gemini", "kiro-cli", "anthropic"] as const;
+const CLI_FOR_PROVIDER: Record<string, string | undefined> = {
+  "claude-code": "claude",
+  codex: "codex",
+  gemini: "gemini",
+  "kiro-cli": "kiro-cli",
+};
+
+const SOURCE_INFO: Record<string, { label: string; color: "cedar" | "pine" | "dawn" | "muted"; hint: string }> = {
+  "cli-aliases": { label: "aliases · always latest", color: "cedar", hint: "CLI aliases that resolve to the newest model of each family." },
+  "cli-cache": { label: "live · CLI cache", color: "cedar", hint: "Read from the model cache the CLI refreshes itself." },
+  cli: { label: "live · CLI", color: "cedar", hint: "Listed by the CLI just now." },
+  api: { label: "live · API", color: "cedar", hint: "Listed by the provider API just now." },
+  fallback: { label: "fallback", color: "dawn", hint: "Couldn't ask the provider — showing a built-in list." },
+  unavailable: { label: "unavailable", color: "muted", hint: "Provider couldn't be queried." },
+};
+
+function ProviderModelsCard({
+  provider,
+  entry,
+  cliInstalled,
+}: {
+  provider: string;
+  entry: LiveCatalog[string];
+  cliInstalled: boolean | null;
+}) {
+  const src = SOURCE_INFO[entry.source] ?? { label: entry.source, color: "muted" as const, hint: "" };
+  const hint =
+    provider === "kiro-cli" && entry.source === "fallback"
+      ? "Run `kiro-cli login` to list Kiro's models."
+      : provider === "anthropic" && entry.source === "fallback"
+        ? "Set ANTHROPIC_API_KEY to list models live."
+        : src.hint;
+  return (
+    <CedarCard padding={18} style={{ display: "flex", flexDirection: "column", gap: 12, opacity: cliInstalled === false ? 0.6 : 1 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ fontFamily: "var(--fd)", fontSize: 18, color: "var(--text)", flex: 1, minWidth: 0 }}>
+          {PROVIDER_LABELS[provider] ?? provider}
+        </div>
+        <span title={hint}><Tag color={src.color}>{src.label}</Tag></span>
+      </div>
+      {entry.models.length === 0 ? (
+        <div style={{ fontSize: 12, color: "var(--muted)" }}>No models reported.</div>
+      ) : (
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+          {entry.models.map((m) => (
+            <li
+              key={m.id || "(default)"}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: "1px solid var(--hairline)", minWidth: 0 }}
+            >
+              <span style={{ fontSize: 12.5, color: "var(--text)", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {m.label}
+              </span>
+              {m.id && m.id !== m.label && (
+                <code style={{ fontSize: 10.5, fontFamily: "var(--fm)", color: "var(--muted)", whiteSpace: "nowrap" }}>{m.id}</code>
+              )}
+              {m.default && <Tag color="pine">default</Tag>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div style={{ fontSize: 11, color: "var(--text3)", lineHeight: 1.45, marginTop: "auto" }}>
+        {cliInstalled === false ? "CLI not installed." : hint}
+      </div>
+    </CedarCard>
   );
 }
 

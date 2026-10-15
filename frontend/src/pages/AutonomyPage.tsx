@@ -1,8 +1,11 @@
 import { useEffect, useState } from "react";
-import { Save, Plus, Trash2, RefreshCw } from "lucide-react";
+import type React from "react";
+import { Save, Plus, Trash2, RefreshCw, Bot, MessagesSquare, ListChecks } from "lucide-react";
 import { api, type AuditEntryPub } from "@/api/client";
-import { CedarPage, CedarPageHeader, CedarCard, Tag, SegSeg, TopoLines } from "@/components/CedarUI";
+import { CedarPage, CedarPageHeader, CedarCard, Tag, SegSeg, TopoLines, Btn, CedarInput, CedarTextArea } from "@/components/CedarUI";
 import { useDialog } from "@/components/Dialog";
+import EmptyState from "@/components/EmptyState";
+import { ageSecs, fmtAge, plainExcerpt } from "@/utils/format";
 
 type Tab = "decisions" | "subagents" | "channels" | "heartbeat" | "tasks";
 
@@ -88,25 +91,42 @@ function DecisionsTab({
             No actions logged yet.
           </div>
         )}
-        {audits.map((e) => (
+        {audits.map((e) => {
+          const sm = splitSummary(e.summary);
+          return (
           <div
             key={e.id}
             style={{
               display: "grid",
-              gridTemplateColumns: "100px 1fr auto",
+              gridTemplateColumns: "88px 1fr auto",
               alignItems: "center",
               gap: 14,
               padding: "12px 18px",
               borderBottom: "1px solid var(--hairline)",
             }}
           >
-            <Tag color="cedar">auto</Tag>
+            <span style={{ justifySelf: "start" }}><Tag color={kindColor(e.kind)}>{sm.role || e.kind}</Tag></span>
             <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, color: "var(--text)" }}>
-                <span style={{ fontFamily: "var(--fm)", color: "var(--cedar-2)" }}>{e.kind}</span>
-                {" "}· {e.summary}
+              {sm.where && (
+                <div style={{ fontSize: 11.5, color: "var(--text3)", marginBottom: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {sm.where}
+                </div>
+              )}
+              <div
+                title={sm.body}
+                style={{
+                  fontSize: 12.5,
+                  color: "var(--text)",
+                  lineHeight: 1.45,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
+                {sm.body}
               </div>
-              {e.session_id && (
+              {e.session_id && !sm.where && (
                 <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 2 }}>
                   session {e.session_id.slice(0, 8)}
                 </div>
@@ -116,7 +136,8 @@ function DecisionsTab({
               {relTime(e.ts)}
             </span>
           </div>
-        ))}
+          );
+        })}
       </CedarCard>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -162,14 +183,67 @@ function DecisionsTab({
   );
 }
 
-function relTime(ts: number): string {
-  if (!ts) return "—";
-  const dt = Date.now() / 1000 - ts;
-  if (dt < 60) return `${Math.floor(dt)}s ago`;
-  if (dt < 3600) return `${Math.floor(dt / 60)}m ago`;
-  if (dt < 86400) return `${Math.floor(dt / 3600)}h ago`;
-  return `${Math.floor(dt / 86400)}d ago`;
+function kindColor(kind: string): "cedar" | "pine" | "dawn" | "ember" | "stone" | "muted" {
+  if (/deny|block|error|fail/i.test(kind)) return "ember";
+  if (/approv|permission/i.test(kind)) return "dawn";
+  if (/tool|exec|bash|write|edit/i.test(kind)) return "pine";
+  if (/message|chat/i.test(kind)) return "stone";
+  return "cedar";
 }
+
+function relTime(ts: number | string | null | undefined): string {
+  if (!ts) return "—";
+  const secs = ageSecs(ts);
+  return secs < 10 ? "just now" : `${fmtAge(secs)} ago`;
+}
+
+/** Audit summaries from the message fallback look like
+ *  "[session title] assistant: <markdown…>". Split them so the row shows
+ *  the session, the role, and a plain excerpt — not raw widget HTML. */
+function splitSummary(summary: string): { where: string; role: string; body: string } {
+  const m = summary.match(/^\[([^\]]*)\]\s*(user|assistant|system|tool)\s*:\s*([\s\S]*)$/);
+  if (!m) return { where: "", role: "", body: plainExcerpt(summary, 220) };
+  return { where: m[1].trim(), role: m[2], body: plainExcerpt(m[3], 220) || "(no text)" };
+}
+
+// ── Shared bits ──────────────────────────────────────────────────────────────
+
+type StatusTone = "pine" | "dawn" | "ember" | "muted";
+
+function statusTone(status: string): StatusTone {
+  if (/done|completed|success/.test(status)) return "pine";
+  if (/running|decomposing|verifying|pending|queued/.test(status)) return "dawn";
+  if (/fail|timeout|error|cancel/.test(status)) return "ember";
+  return "muted";
+}
+
+function TabIntro({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 14 }}>
+      <div style={{ flex: 1, fontSize: 12.5, color: "var(--text3)", lineHeight: 1.5 }}>{children}</div>
+      {right}
+    </div>
+  );
+}
+
+function EmptyCard({ icon, title, body }: { icon: React.ReactNode; title: string; body?: string }) {
+  return (
+    <CedarCard padding={0}>
+      <EmptyState icon={icon} title={title} hint={body} />
+    </CedarCard>
+  );
+}
+
+function ErrorLine({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <div style={{ marginTop: 12, padding: "8px 12px", background: "var(--ember-dim)", color: "var(--ember)", border: "1px solid var(--ember)", borderRadius: 6, fontSize: 12 }}>
+      {error}
+    </div>
+  );
+}
+
+const mono: React.CSSProperties = { fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)" };
 
 // ── Subagents ────────────────────────────────────────────────────────────────
 
@@ -177,7 +251,7 @@ function SubagentsTab() {
   const [items, setItems] = useState<Awaited<ReturnType<typeof api.listSubagents>>>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = () => api.listSubagents().then(setItems).catch((e) => setError(String(e)));
+  const refresh = () => api.listSubagents().then((d) => { setItems(d); setError(null); }).catch((e) => setError(String(e)));
 
   useEffect(() => {
     refresh();
@@ -186,39 +260,35 @@ function SubagentsTab() {
   }, []);
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="text-[12px] text-[var(--muted)]">
-          Background subagent runs spawned via <code>spawn_run</code>. Result auto-injects into the parent session's next turn.
+    <div>
+      <TabIntro right={<Btn size="sm" kind="ghost" icon={<RefreshCw size={11} />} onClick={refresh}>Refresh</Btn>}>
+        Background subagent runs spawned via <code>spawn_run</code>. The result auto-injects into the parent session's next turn.
+      </TabIntro>
+      {items.length === 0 ? (
+        <EmptyCard icon={<Bot size={20} />} title="No subagent runs yet." body="They appear here when a session hands work to a background agent." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map((s) => (
+            <CedarCard key={s.id} padding={14}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <Tag color="cedar">{s.agent_name}</Tag>
+                <Tag color={statusTone(s.status)}>{s.status}</Tag>
+                <span style={mono}>{s.id.slice(0, 8)}</span>
+                <span style={{ ...mono, marginLeft: "auto" }}>{relTime(s.started_at || s.finished_at)}</span>
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--text)", lineHeight: 1.5, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                {s.prompt}
+              </div>
+              {s.result && (
+                <pre style={{ marginTop: 8, fontSize: 11, fontFamily: "var(--fm)", color: "var(--text2)", background: "var(--bg)", border: "1px solid var(--hairline)", borderRadius: 6, padding: "8px 10px", whiteSpace: "pre-wrap", maxHeight: 200, overflowY: "auto" }}>
+                  {s.result}
+                </pre>
+              )}
+            </CedarCard>
+          ))}
         </div>
-        <button onClick={refresh} className="text-[var(--muted)] hover:text-[var(--text)]">
-          <RefreshCw size={12} />
-        </button>
-      </div>
-      {items.length === 0 && (
-        <div className="text-center text-[var(--muted)]/60 text-[12px] py-12">No subagent runs yet.</div>
       )}
-      {items.map((s) => (
-        <div key={s.id} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[11px] font-mono text-[var(--cedar)] bg-[var(--cedar)]/10 px-1.5 py-0.5 rounded">{s.agent_name}</span>
-            <span className={[
-              "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded",
-              s.status === "completed" ? "text-emerald-400 bg-emerald-900/30" :
-              s.status === "running" ? "text-blue-400 bg-blue-900/30" :
-              s.status === "failed" || s.status === "timeout" ? "text-red-400 bg-red-900/30" :
-              "text-[var(--muted)] bg-[var(--bg)]",
-            ].join(" ")}>{s.status}</span>
-            <span className="text-[10px] font-mono text-[var(--muted)]/60">{s.id.slice(0, 8)}</span>
-            <span className="ml-auto text-[10px] text-[var(--muted)]/60">{relTime(s.started_at || s.finished_at)}</span>
-          </div>
-          <div className="text-[12px] text-[var(--text)] mb-1 line-clamp-2">{s.prompt}</div>
-          {s.result && (
-            <pre className="mt-1 text-[11px] font-mono text-[var(--muted)] bg-[var(--bg)] rounded p-2 whitespace-pre-wrap max-h-[200px] overflow-y-auto">{s.result}</pre>
-          )}
-        </div>
-      ))}
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+      <ErrorLine error={error} />
     </div>
   );
 }
@@ -276,78 +346,84 @@ function ChannelsTab() {
   const current = items.find((c) => c.id === active);
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div className="text-[12px] text-[var(--muted)]">
-          Multi-agent A2A spaces. Use <code>send_message(channel, text)</code> from inside a session to post; @mention agents to ping them.
-        </div>
-        {!creating && (
-          <button onClick={() => setCreating(true)} className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] hover:bg-[var(--cedar-lt)]">
-            <Plus size={11} /> New channel
-          </button>
-        )}
-      </div>
+    <div>
+      <TabIntro
+        right={!creating && <Btn size="sm" kind="solid" icon={<Plus size={11} />} onClick={() => setCreating(true)}>New channel</Btn>}
+      >
+        Multi-agent A2A spaces. Use <code>send_message(channel, text)</code> from inside a session to post; @mention agents to ping them.
+      </TabIntro>
 
       {creating && (
-        <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="channel name" className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[13px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]" />
-          <input value={members} onChange={(e) => setMembers(e.target.value)} placeholder="members, comma, separated (agent names)" className="bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]" />
-          <div className="flex gap-2">
-            <button onClick={create} disabled={!name.trim()} className="flex items-center gap-1 px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40">Create</button>
-            <button onClick={() => setCreating(false)} className="text-[12px] text-[var(--muted)] hover:text-[var(--text)]">Cancel</button>
+        <CedarCard padding={14} style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          <CedarInput value={name} onChange={(e) => setName(e.target.value)} placeholder="channel name" autoFocus />
+          <CedarInput value={members} onChange={(e) => setMembers(e.target.value)} placeholder="members, comma separated (agent names)" />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn size="sm" kind="ghost" onClick={() => setCreating(false)}>Cancel</Btn>
+            <Btn size="sm" kind="solid" onClick={create} disabled={!name.trim()}>Create</Btn>
           </div>
-        </div>
+        </CedarCard>
       )}
 
-      <div className="flex gap-3 min-h-[300px]">
-        <div className="w-48 shrink-0 flex flex-col gap-1">
-          {items.length === 0 && <div className="text-[12px] text-[var(--muted)]/60 text-center py-4">No channels.</div>}
+      {items.length === 0 && !creating ? (
+        <EmptyCard icon={<MessagesSquare size={20} />} title="No channels yet." body="A channel lets several agents talk to each other. Create one to start." />
+      ) : (
+      <div style={{ display: "grid", gridTemplateColumns: "200px 1fr", gap: 14, minHeight: 320 }}>
+        <CedarCard padding={6} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {items.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "16px 8px" }}>No channels.</div>}
           {items.map((c) => (
             <button
               key={c.id}
               onClick={() => setActive(c.id)}
-              className={[
-                "text-left px-2 py-1.5 rounded-md text-[12px] flex items-center gap-2",
-                active === c.id ? "bg-[var(--cedar)]/15 text-[var(--text)]" : "text-[var(--muted)] hover:bg-[var(--surface)] hover:text-[var(--text)]",
-              ].join(" ")}
+              style={{
+                display: "flex", alignItems: "center", gap: 8, textAlign: "left",
+                padding: "7px 10px", borderRadius: 6, border: "none", cursor: "pointer",
+                fontSize: 12.5, fontFamily: "var(--fn)",
+                background: active === c.id ? "var(--cedar-dim)" : "transparent",
+                color: active === c.id ? "var(--cedar-glow)" : "var(--text2)",
+              }}
             >
-              <span className="flex-1 truncate"># {c.id}</span>
-              <span className="text-[9px] text-[var(--muted)]/60">{c.members.length}m</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}># {c.id}</span>
+              <span style={mono}>{c.members.length}</span>
             </button>
           ))}
-        </div>
+        </CedarCard>
 
-        <div className="flex-1 min-w-0 border border-[var(--border)] rounded-lg bg-[var(--surface)] flex flex-col">
-          {!current && <div className="flex-1 flex items-center justify-center text-[12px] text-[var(--muted)]/60">Select a channel.</div>}
+        <CedarCard padding={0} style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+          {!current && (
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12.5, color: "var(--muted)" }}>
+              {items.length ? "Select a channel." : "Create a channel to start."}
+            </div>
+          )}
           {current && (
             <>
-              <div className="px-3 py-2 border-b border-[var(--border)] flex items-center gap-2">
-                <span className="text-[13px] font-semibold text-[var(--text)]"># {current.id}</span>
-                <span className="text-[10px] text-[var(--muted)]/60">members: {current.members.map((m) => m.agent).join(", ") || "(none)"}</span>
-                <button onClick={() => del(current.id)} className="ml-auto text-[var(--muted)] hover:text-red-400" title="Delete channel">
-                  <Trash2 size={12} />
-                </button>
+              <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13.5, fontWeight: 500, color: "var(--text)" }}># {current.id}</span>
+                <span style={mono}>{current.members.map((m) => m.agent).join(", ") || "no members"}</span>
+                <span style={{ marginLeft: "auto" }}>
+                  <Btn size="sm" kind="ghost" icon={<Trash2 size={11} />} onClick={() => del(current.id)} title="Delete channel" />
+                </span>
               </div>
-              <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5">
-                {current.messages.length === 0 && <div className="text-[12px] text-[var(--muted)]/60 text-center py-8">No messages.</div>}
+              <div style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 6 }}>
+                {current.messages.length === 0 && <div style={{ fontSize: 12, color: "var(--muted)", textAlign: "center", padding: "32px 0" }}>No messages.</div>}
                 {current.messages.map((m) => (
-                  <div key={m.id} className="text-[12px]">
-                    <span className="text-[var(--cedar)] font-mono mr-2">@{m.from}</span>
-                    <span className="text-[var(--text)]">{m.text}</span>
+                  <div key={m.id} style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+                    <span style={{ color: "var(--cedar-glow)", fontFamily: "var(--fm)", marginRight: 8 }}>@{m.from}</span>
+                    <span style={{ color: "var(--text)" }}>{m.text}</span>
                   </div>
                 ))}
               </div>
-              <div className="border-t border-[var(--border)] p-2 flex items-center gap-2">
-                <input value={postFrom} onChange={(e) => setPostFrom(e.target.value)} placeholder="from" className="w-20 bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[11px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]" />
-                <input value={postText} onChange={(e) => setPostText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") post(); }} placeholder="message…" className="flex-1 bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[12px] text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]" />
-                <button onClick={post} disabled={!postText.trim()} className="px-3 py-1 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40">Post</button>
+              <div style={{ borderTop: "1px solid var(--border)", padding: 10, display: "flex", gap: 8 }}>
+                <CedarInput value={postFrom} onChange={(e) => setPostFrom(e.target.value)} placeholder="from" style={{ width: 90, fontFamily: "var(--fm)", fontSize: 11.5 }} />
+                <CedarInput value={postText} onChange={(e) => setPostText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") post(); }} placeholder="message…" style={{ flex: 1 }} />
+                <Btn size="sm" kind="solid" onClick={post} disabled={!postText.trim()}>Post</Btn>
               </div>
             </>
           )}
-        </div>
+        </CedarCard>
       </div>
+      )}
 
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+      <ErrorLine error={error} />
     </div>
   );
 }
@@ -373,31 +449,31 @@ function HeartbeatTab() {
   };
 
   const justSaved = Date.now() - savedFlag < 1500;
+  const dirty = content !== orig;
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="border border-[var(--border)] rounded-lg p-4 bg-[var(--surface)] flex flex-col gap-3">
-        <div className="text-[12px] text-[var(--muted)]">
-          The heartbeat loop reads this checklist on a fixed interval (default 5 min). Each
-          unchecked <code>- [ ]</code> item runs as one subagent turn; the line then flips to
-          <code> - [x]</code>. Lines tagged <code>&lt;!-- KEEP --&gt;</code> reset back to
-          unchecked after the next tick so they keep firing.
+    <div>
+      <TabIntro>
+        The heartbeat loop reads this checklist on a fixed interval (default 5 min). Each unchecked <code>- [ ]</code> item
+        runs as one subagent turn; the line then flips to <code>- [x]</code>. Lines tagged <code>&lt;!-- KEEP --&gt;</code> reset
+        to unchecked after the next tick so they keep firing.
+      </TabIntro>
+      <CedarCard padding={0}>
+        <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ ...mono, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{path || "HEARTBEAT.md"}</span>
+          {justSaved && <Tag color="pine">saved</Tag>}
+          {dirty && !justSaved && <Tag color="dawn">unsaved</Tag>}
+          <Btn size="sm" kind="solid" icon={<Save size={11} />} onClick={save} disabled={saving || !dirty}>Save</Btn>
         </div>
-        <div className="text-[10px] font-mono text-[var(--muted)]/60">{path}</div>
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={20}
-          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+          spellCheck={false}
+          style={{ display: "block", width: "100%", border: "none", outline: "none", resize: "vertical", background: "transparent", padding: "12px 14px", fontFamily: "var(--fm)", fontSize: 12, lineHeight: 1.6, color: "var(--text)" }}
         />
-        <div className="flex items-center gap-3">
-          <button onClick={save} disabled={saving || content === orig} className="flex items-center gap-1 px-4 py-1.5 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
-            <Save size={11} /> Save
-          </button>
-          {justSaved && <span className="text-[10px] uppercase tracking-wider text-[var(--accent)] animate-pulse">saved</span>}
-        </div>
-      </div>
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+      </CedarCard>
+      <ErrorLine error={error} />
     </div>
   );
 }
@@ -429,71 +505,69 @@ function TasksTab() {
     finally { setSubmitting(false); }
   };
 
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="text-[12px] text-[var(--muted)]">
-        Submit a markdown spec; the runner decomposes it into ordered steps,
-        executes each, and verifies acceptance against the spec.
-      </div>
+  const stepColor = (st: string) =>
+    st === "done" ? "var(--pine)" : st === "running" ? "var(--dawn)" : st === "failed" ? "var(--ember)" : "var(--muted)";
 
-      <div className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)] flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <label className="text-[11px] uppercase tracking-wider text-[var(--muted)]">Agent</label>
-          <input value={agent} onChange={(e) => setAgent(e.target.value)} placeholder="general" className="w-32 bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)]" />
+  return (
+    <div>
+      <TabIntro>
+        Submit a markdown spec; the runner decomposes it into ordered steps, executes each, and verifies acceptance against the spec.
+      </TabIntro>
+
+      <CedarCard padding={14} style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ ...mono, textTransform: "uppercase", letterSpacing: ".1em" }}>Agent</span>
+          <CedarInput value={agent} onChange={(e) => setAgent(e.target.value)} placeholder="general" style={{ width: 160, fontFamily: "var(--fm)", fontSize: 12 }} />
         </div>
-        <textarea
+        <CedarTextArea
           value={spec}
           onChange={(e) => setSpec(e.target.value)}
           placeholder={"# Goal\n- step 1: …\n- step 2: …\n\n## Acceptance\n- …"}
-          rows={8}
-          className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-md px-2 py-1.5 text-[12px] font-mono text-[var(--text)] focus:outline-none focus:border-[var(--cedar)] resize-y"
+          rows={7}
+          style={{ fontFamily: "var(--fm)", fontSize: 12 }}
         />
-        <button onClick={submit} disabled={submitting || !spec.trim()} className="self-end flex items-center gap-1 px-4 py-1.5 rounded-md bg-[var(--cedar)] text-white text-[12px] disabled:opacity-40 hover:bg-[var(--cedar-lt)]">
-          <Plus size={11} /> Kick off
-        </button>
-      </div>
-
-      {items.length === 0 && (
-        <div className="text-center text-[var(--muted)]/60 text-[12px] py-8">No tasks yet.</div>
-      )}
-      {items.map((t) => (
-        <div key={t.id} className="border border-[var(--border)] rounded-lg p-3 bg-[var(--surface)]">
-          <div className="flex items-center gap-2 mb-1">
-            <span className={[
-              "text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded",
-              t.status === "done" ? "text-emerald-400 bg-emerald-900/30" :
-              t.status === "running" || t.status === "decomposing" || t.status === "verifying" ? "text-blue-400 bg-blue-900/30" :
-              t.status === "failed" ? "text-red-400 bg-red-900/30" :
-              "text-[var(--muted)] bg-[var(--bg)]",
-            ].join(" ")}>{t.status}</span>
-            <span className="text-[10px] font-mono text-[var(--muted)]/60">{t.id.slice(0, 8)}</span>
-            <span className="text-[11px] text-[var(--cedar)]">@{t.agent}</span>
-            <span className="ml-auto text-[10px] text-[var(--muted)]/60">{relTime(t.started_at)}</span>
-          </div>
-          <div className="text-[12px] text-[var(--muted)] mb-2 line-clamp-2">{t.spec}</div>
-          {t.steps && t.steps.length > 0 && (
-            <div className="flex flex-col gap-0.5 mb-2">
-              {t.steps.map((s) => (
-                <div key={s.n} className="text-[11px] flex items-start gap-2">
-                  <span className={[
-                    "shrink-0 w-4 text-center font-mono",
-                    s.status === "done" ? "text-emerald-400" :
-                    s.status === "running" ? "text-blue-400" :
-                    s.status === "failed" ? "text-red-400" : "text-[var(--muted)]",
-                  ].join(" ")}>
-                    {s.status === "done" ? "✓" : s.status === "failed" ? "✗" : s.status === "running" ? "…" : "·"}
-                  </span>
-                  <span className="text-[var(--text)]">{s.text}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          {t.verdict && (
-            <div className="text-[11px] text-[var(--muted)] italic border-l-2 border-[var(--cedar)] pl-2">{t.verdict}</div>
-          )}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Btn size="sm" kind="solid" icon={<Plus size={11} />} onClick={submit} disabled={submitting || !spec.trim()}>
+            {submitting ? "Starting…" : "Kick off"}
+          </Btn>
         </div>
-      ))}
-      {error && <div className="text-red-400 text-[11px] bg-red-900/20 rounded px-2 py-1">{error}</div>}
+      </CedarCard>
+
+      {items.length === 0 ? (
+        <EmptyCard icon={<ListChecks size={20} />} title="No tasks yet." body="Kicked-off specs show their steps and verdict here." />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {items.map((t) => (
+            <CedarCard key={t.id} padding={14}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <Tag color={statusTone(t.status)}>{t.status}</Tag>
+                <Tag color="cedar">@{t.agent}</Tag>
+                <span style={mono}>{t.id.slice(0, 8)}</span>
+                <span style={{ ...mono, marginLeft: "auto" }}>{relTime(t.started_at)}</span>
+              </div>
+              <div style={{ fontSize: 12.5, color: "var(--text2)", lineHeight: 1.5, marginBottom: 8, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                {t.spec}
+              </div>
+              {t.steps && t.steps.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 3, marginBottom: 8 }}>
+                  {t.steps.map((s) => (
+                    <div key={s.n} style={{ display: "flex", gap: 8, fontSize: 12, alignItems: "flex-start" }}>
+                      <span style={{ width: 14, textAlign: "center", fontFamily: "var(--fm)", color: stepColor(s.status), flexShrink: 0 }}>
+                        {s.status === "done" ? "✓" : s.status === "failed" ? "✗" : s.status === "running" ? "…" : "·"}
+                      </span>
+                      <span style={{ color: "var(--text)" }}>{s.text}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {t.verdict && (
+                <div style={{ fontSize: 12, color: "var(--text3)", fontStyle: "italic", borderLeft: "2px solid var(--cedar-line)", paddingLeft: 10 }}>{t.verdict}</div>
+              )}
+            </CedarCard>
+          ))}
+        </div>
+      )}
+      <ErrorLine error={error} />
     </div>
   );
 }

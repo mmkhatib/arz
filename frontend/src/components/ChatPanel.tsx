@@ -5,8 +5,10 @@ import MessageBubble from "./MessageBubble";
 import InputBar, { type ApprovalMode } from "./InputBar";
 import CollapsibleToolGroup from "./CollapsibleToolGroup";
 import WelcomeView from "./WelcomeView";
+import CedarMark from "./CedarMark";
 import CompareModal from "./CompareModal";
-import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon, Target, Check, X as XIcon } from "lucide-react";
+import { GitBranch, Zap, ChevronDown, Edit3, Sparkles, MoreHorizontal, Activity as ActivityIcon, Target, Check, X as XIcon, Package, PanelRightOpen, PanelRightClose } from "lucide-react";
+import { collectFileChanges } from "@/utils/panelData";
 import { formatTokens } from "@/utils/tokens";
 import { stripInlineTags } from "@/utils/stripInline";
 import { extractOptions, segmentMessage, stripPartialOptions } from "@/utils/segments";
@@ -479,148 +481,32 @@ function ExportMenu({ sessionId }: { sessionId: string }) {
   );
 }
 
-/* ── ArtifactsMenu ───────────────────────────────────────────────
+/* ── ArtifactsButton ─────────────────────────────────────────────
  *
- * Lists every file the agent touched in this session (Write / Edit /
- * MultiEdit / etc). Grouped by extension family for scan-ability. Click
- * a row → bubble onFileOpen up so the Activity pane swaps to the file.
+ * Header entry point for the side panel's Artifacts tab: counts the
+ * files the agent created or edited this session (from the persisted
+ * tool calls, so it's right even before the panel has streamed
+ * anything) and opens the panel on that tab.
  */
-type ArtifactGroup = "html" | "code" | "doc" | "data" | "image" | "other";
-
-function classifyArtifact(path: string): ArtifactGroup {
-  const ext = (path.split(".").pop() || "").toLowerCase();
-  if (["html", "htm"].includes(ext)) return "html";
-  if (["md", "markdown", "mdx", "rst", "txt", "pdf", "docx"].includes(ext)) return "doc";
-  if (["json", "yaml", "yml", "toml", "csv", "tsv", "ndjson", "log"].includes(ext)) return "data";
-  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(ext)) return "image";
-  if (
-    [
-      "ts", "tsx", "js", "jsx", "py", "rb", "go", "rs", "java", "kt", "cs", "cpp",
-      "c", "h", "hpp", "swift", "php", "sql", "sh", "bash", "zsh", "fish", "lua",
-      "pl", "scala", "clj", "cljs", "ex", "exs", "elm", "erl", "dart", "css", "scss",
-      "less", "vue", "svelte",
-    ].includes(ext)
-  ) return "code";
-  return "other";
-}
-
-const ARTIFACT_LABEL: Record<ArtifactGroup, string> = {
-  html: "HTML",
-  code: "Code",
-  doc: "Docs",
-  data: "Data",
-  image: "Images",
-  other: "Other",
-};
-
-function ArtifactsMenu({
-  messages,
-  onOpenFile,
-}: {
-  messages: { tool_calls?: { name: string; input: string }[] }[];
-  onOpenFile?: (path: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [paths, setPaths] = useState<string[]>([]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onClick = (e: MouseEvent) => {
-      const t = e.target as HTMLElement;
-      if (!t.closest("[data-artifacts-menu]")) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, [open]);
-
-  // Re-derive every time the message list grows — keep cheap by lazy-
-  // importing the extractor on first use.
-  useEffect(() => {
-    let cancelled = false;
-    void import("@/hooks/useTouchedFiles").then(({ extractPathFromToolInput }) => {
-      if (cancelled) return;
-      const seen = new Set<string>();
-      const out: string[] = [];
-      for (const msg of messages) {
-        for (const tc of msg.tool_calls ?? []) {
-          const p = extractPathFromToolInput(tc.name, tc.input);
-          if (p && !seen.has(p)) {
-            seen.add(p);
-            out.push(p);
-          }
-        }
-      }
-      setPaths(out);
-    });
-    return () => { cancelled = true; };
+function ArtifactsButton({ messages }: { messages: { tool_calls?: { name: string; input: string }[] }[] }) {
+  const count = useMemo(() => {
+    const entries = messages.flatMap((m) =>
+      (m.tool_calls ?? []).map((tc, i) => ({ callId: String(i), name: tc.name, input: tc.input, done: true, time: "" })),
+    );
+    return collectFileChanges(entries).length;
   }, [messages]);
-
-  const grouped = useMemo(() => {
-    const g: Record<ArtifactGroup, string[]> = { html: [], code: [], doc: [], data: [], image: [], other: [] };
-    for (const p of paths) g[classifyArtifact(p)].push(p);
-    return g;
-  }, [paths]);
-
-  const count = paths.length;
-
   return (
-    <div className="relative" data-artifacts-menu>
-      <button
-        onClick={() => setOpen((v) => !v)}
-        title={count === 0 ? "No artifacts yet" : `${count} artifact${count === 1 ? "" : "s"}`}
-        className={[
-          "flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] transition-colors",
-          open
-            ? "border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)]"
-            : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
-        ].join(" ")}
-      >
-        📦 Artifacts
-        {count > 0 && (
-          <span className="text-[10px] font-mono opacity-70">{count}</span>
-        )}
-      </button>
-      {open && (
-        <div className="absolute right-0 top-full mt-1 z-30 min-w-[280px] max-w-[420px] max-h-[60vh] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-xl py-1">
-          {count === 0 ? (
-            <div className="px-3 py-3 text-[11.5px] text-[var(--muted)]">
-              The agent hasn't created any files in this session yet.
-            </div>
-          ) : (
-            (Object.keys(grouped) as ArtifactGroup[])
-              .filter((g) => grouped[g].length > 0)
-              .map((g) => (
-                <div key={g}>
-                  <div className="px-3 pt-2 pb-1 text-[9.5px] font-mono uppercase tracking-[.12em] text-[var(--muted)]">
-                    {ARTIFACT_LABEL[g]} <span className="opacity-60">· {grouped[g].length}</span>
-                  </div>
-                  {grouped[g].map((p) => {
-                    const name = p.split(/[\\/]/).pop() || p;
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => {
-                          onOpenFile?.(p);
-                          setOpen(false);
-                        }}
-                        title={p}
-                        className="block w-full text-left px-3 py-1.5 text-[12px] text-[var(--text)] hover:bg-[var(--bg)] truncate"
-                      >
-                        <span className="text-[var(--cedar-glow)]">{name}</span>
-                        {p.length > name.length && (
-                          <span className="ml-2 text-[10px] font-mono text-[var(--muted)] opacity-60">
-                            {p.slice(0, p.length - name.length).replace(/[\\/]$/, "")}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              ))
-          )}
-        </div>
+    <button
+      onClick={() => window.dispatchEvent(new CustomEvent("arz:open-panel", { detail: { tab: "artifacts" } }))}
+      title={count === 0 ? "Artifacts — files the agent creates show here" : `${count} artifact${count === 1 ? "" : "s"} — open in side panel`}
+      className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] transition-colors border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]"
+    >
+      <Package size={12} />
+      Artifacts
+      {count > 0 && (
+        <span className="text-[10px] font-mono px-1 rounded-full bg-[var(--cedar-dim)] text-[var(--cedar-glow)] leading-[14px]">{count}</span>
       )}
-    </div>
+    </button>
   );
 }
 
@@ -1555,11 +1441,11 @@ export default function ChatPanel({
           {/* Theme dropdown lives in the global TopBar now — keeping a
               second one here is just clutter. */}
           <ExportMenu sessionId={sessionId} />
-          <ArtifactsMenu messages={messages} onOpenFile={onFileOpen} />
+          <ArtifactsButton messages={messages} />
           {onToggleActivity && (
             <button
               onClick={onToggleActivity}
-              title="Toggle activity pane"
+              title={activityOpen ? "Hide side panel" : "Show side panel — files, changes, tools"}
               className={[
                 "flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[12px] transition-colors",
                 activityOpen
@@ -1567,7 +1453,7 @@ export default function ChatPanel({
                   : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] hover:bg-[var(--s2)]",
               ].join(" ")}
             >
-              <ActivityIcon size={12} />
+              {activityOpen ? <PanelRightClose size={12} /> : <PanelRightOpen size={12} />}
               Activity
             </button>
           )}
@@ -1658,8 +1544,9 @@ export default function ChatPanel({
         </div>
       )}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-6">
+      {/* Messages — each row capped to the composer's reading width and
+          centred, so prose, code and the input box share one column. */}
+      <div className="flex-1 overflow-y-auto px-6 py-6 [&>*]:max-w-[900px] [&>*]:mx-auto">
         {messages.length === 0 && !streaming && (
           <WelcomeView
             model={sessionModel ?? settings?.model}
@@ -1774,8 +1661,8 @@ export default function ChatPanel({
             only thing visible during the evaluator phase. */}
         {streaming && !writerDone && (
           <div className="flex justify-start mb-4">
-            <div className="w-7 h-7 rounded-full bg-[var(--cedar)] flex items-center justify-center text-[12px] mr-2 mt-0.5 shrink-0 relative">
-              🌲
+            <div className="w-7 h-7 rounded-full bg-[var(--cedar-dim)] border border-[var(--cedar-line)] flex items-center justify-center mr-2.5 mt-0.5 shrink-0 relative">
+              <CedarMark size={16} />
               {/* Heartbeat pulse — fades 7s after the last heartbeat event. */}
               {heartbeatAt > 0 && Date.now() - heartbeatAt < 7000 && (
                 <span

@@ -6,9 +6,10 @@
 //   notifications button, avatar.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, Palette, Search, Check } from "lucide-react";
+import type React from "react";
+import { Bell, Palette, Search, Check, CircleAlert, MessageSquareDot, Loader2 } from "lucide-react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { api } from "@/api/client";
+import { api, type SessionSummary } from "@/api/client";
 import { useTheme } from "@/hooks/useTheme";
 import { describe as describeCron } from "@/components/ScheduleBuilder";
 
@@ -253,23 +254,7 @@ export default function TopBar() {
       </div>
 
       {/* Notifications */}
-      <button
-        title="Notifications"
-        style={{
-          width: 30,
-          height: 30,
-          borderRadius: 7,
-          border: "1px solid var(--border)",
-          background: "var(--s2)",
-          color: "var(--text2)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          cursor: "pointer",
-        }}
-      >
-        <Bell size={13} />
-      </button>
+      <NotificationsButton onOpenSession={(id) => navigate(`/?sid=${encodeURIComponent(id)}`)} />
 
       {/* Avatar */}
       <UserMark size={26} />
@@ -552,14 +537,33 @@ function CommandPalette({
       ...prompts,
     ];
     if (!ql) return [...pages, ...sessions.slice(0, 8)].slice(0, 16);
+    // Rank: label prefix > word-start > label substring > sub match. Cap
+    // each corpus so a big one (memory, history) can't bury the rest.
+    const score = (i: Item): number => {
+      const l = i.label.toLowerCase();
+      if (l.startsWith(ql)) return 0;
+      if (new RegExp(`\\b${ql.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`).test(l)) return 1;
+      if (l.includes(ql)) return 2;
+      if (i.sub.toLowerCase().includes(ql)) return 3;
+      return -1;
+    };
+    const perKind: Record<string, number> = {};
     return all
-      .filter(
-        (i) => i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql),
-      )
+      .map((i, order) => ({ i, s: score(i), order }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => a.s - b.s || a.order - b.order)
+      .filter(({ i }) => (perKind[i.kind] = (perKind[i.kind] ?? 0) + 1) <= (KIND_CAP[i.kind] ?? 6))
+      .map((x) => x.i)
       .slice(0, 24);
   }, [q, sessions, history, memory, crons, agents, channels, prompts, projects]);
 
   useEffect(() => setIdx(0), [q]);
+
+  // Keep the keyboard selection in view while arrowing through a long list.
+  const listRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-idx="${idx}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [idx]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -637,15 +641,16 @@ function CommandPalette({
           />
           <span style={{ fontFamily: "var(--fm)", fontSize: 10.5, color: "var(--muted)" }}>esc</span>
         </div>
-        <div style={{ maxHeight: 360, overflowY: "auto", padding: 6 }}>
+        <div ref={listRef} style={{ maxHeight: 380, overflowY: "auto", padding: 6 }}>
           {items.length === 0 && (
             <div style={{ padding: 24, textAlign: "center", color: "var(--muted)", fontSize: 13 }}>
-              No results
+              No results for “{q}”
             </div>
           )}
           {items.map((it, i) => (
             <button
               key={`${it.kind}:${it.id}`}
+              data-idx={i}
               onClick={() => onNavigate(it.path)}
               onMouseEnter={() => setIdx(i)}
               style={{
@@ -687,7 +692,7 @@ function CommandPalette({
                     whiteSpace: "nowrap",
                   }}
                 >
-                  {it.label}
+                  <Highlight text={it.label} q={q} />
                 </div>
                 <div style={{ fontSize: 10.5, color: "var(--muted)", fontFamily: "var(--fm)", marginTop: 1 }}>
                   {it.sub}
@@ -699,7 +704,224 @@ function CommandPalette({
             </button>
           ))}
         </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 14,
+            padding: "8px 14px",
+            borderTop: "1px solid var(--border)",
+            fontFamily: "var(--fm)",
+            fontSize: 10,
+            color: "var(--muted)",
+          }}
+        >
+          <span>↑↓ navigate</span>
+          <span>↵ open</span>
+          <span>esc close</span>
+          <span style={{ marginLeft: "auto" }}>{items.length} result{items.length === 1 ? "" : "s"}</span>
+        </div>
       </div>
+    </div>
+  );
+}
+
+const KIND_CAP: Record<string, number> = { page: 8, session: 6, history: 5, memory: 4, project: 4 };
+
+function Highlight({ text, q }: { text: string; q: string }) {
+  const ql = q.trim().toLowerCase();
+  const at = ql ? text.toLowerCase().indexOf(ql) : -1;
+  if (at < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, at)}
+      <mark style={{ background: "var(--cedar-dim)", color: "var(--cedar-glow)", borderRadius: 2, padding: 0 }}>
+        {text.slice(at, at + ql.length)}
+      </mark>
+      {text.slice(at + ql.length)}
+    </>
+  );
+}
+
+// ── Notifications ───────────────────────────────────────────
+// Sessions that want you: waiting on an approval, an unread reply, or
+// still running. Polled lightly so the bell's dot stays honest.
+
+function NotificationsButton({ onOpenSession }: { onOpenSession: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
+  const location = useLocation();
+  const activeSid = new URLSearchParams(location.search).get("sid");
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => api.fetchSessions().then((s) => { if (alive) setSessions(s); }).catch(() => {});
+    load();
+    const t = setInterval(load, open ? 5_000 : 20_000);
+    return () => { alive = false; clearInterval(t); };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const needs = (sessions ?? []).filter((s) => s.needs_input);
+  const unread = (sessions ?? []).filter((s) => s.unread && !s.needs_input && s.id !== activeSid);
+  const running = (sessions ?? []).filter((s) => s.streaming && !s.needs_input);
+  const alert = needs.length + unread.length;
+
+  const groups: { key: string; title: string; icon: React.ReactNode; tone: string; rows: SessionSummary[] }[] = [
+    { key: "needs", title: "Needs you", icon: <CircleAlert size={12} />, tone: "var(--dawn)", rows: needs },
+    { key: "unread", title: "New replies", icon: <MessageSquareDot size={12} />, tone: "var(--cedar-glow)", rows: unread },
+    { key: "running", title: "Running", icon: <Loader2 size={12} className="animate-spin" />, tone: "var(--text3)", rows: running },
+  ];
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        title={alert ? `Notifications (${alert})` : "Notifications"}
+        aria-label="Notifications"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          position: "relative",
+          width: 30,
+          height: 30,
+          borderRadius: 7,
+          border: `1px solid ${open ? "var(--cedar-line)" : "var(--border)"}`,
+          background: "var(--s2)",
+          color: open ? "var(--cedar-glow)" : "var(--text2)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+        }}
+      >
+        <Bell size={13} />
+        {alert > 0 && (
+          <span
+            style={{
+              position: "absolute",
+              top: -4,
+              right: -4,
+              minWidth: 15,
+              height: 15,
+              padding: "0 4px",
+              borderRadius: 99,
+              background: needs.length ? "var(--dawn)" : "var(--cedar-glow)",
+              color: "var(--surface)",
+              fontSize: 9,
+              fontWeight: 600,
+              fontFamily: "var(--fm)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              border: "1.5px solid var(--surface)",
+            }}
+          >
+            {alert > 9 ? "9+" : alert}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 80 }} />
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              right: 0,
+              width: 320,
+              maxHeight: 440,
+              overflowY: "auto",
+              background: "var(--surface)",
+              border: "1px solid var(--border2)",
+              borderRadius: 10,
+              boxShadow: "var(--shadow-2)",
+              zIndex: 90,
+              fontFamily: "var(--fn)",
+            }}
+          >
+            <div
+              style={{
+                padding: "10px 14px",
+                borderBottom: "1px solid var(--border)",
+                fontSize: 10,
+                fontFamily: "var(--fm)",
+                color: "var(--muted)",
+                textTransform: "uppercase",
+                letterSpacing: ".14em",
+              }}
+            >
+              Notifications
+            </div>
+            {sessions === null ? (
+              <div style={{ padding: 20, fontSize: 12, color: "var(--muted)", textAlign: "center" }}>Loading…</div>
+            ) : groups.every((g) => g.rows.length === 0) ? (
+              <div style={{ padding: "28px 20px", textAlign: "center" }}>
+                <div style={{ fontFamily: "var(--fd)", fontSize: 17, color: "var(--text)" }}>All caught up.</div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                  Approvals and new replies show up here.
+                </div>
+              </div>
+            ) : (
+              groups
+                .filter((g) => g.rows.length > 0)
+                .map((g) => (
+                  <div key={g.key} style={{ padding: "6px 6px 8px" }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        padding: "4px 8px",
+                        fontSize: 10,
+                        fontFamily: "var(--fm)",
+                        textTransform: "uppercase",
+                        letterSpacing: ".1em",
+                        color: g.tone,
+                      }}
+                    >
+                      {g.icon} {g.title} · {g.rows.length}
+                    </div>
+                    {g.rows.slice(0, 8).map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => { setOpen(false); onOpenSession(s.id); }}
+                        style={{
+                          width: "100%",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8,
+                          padding: "7px 8px",
+                          border: "none",
+                          borderRadius: 6,
+                          background: "transparent",
+                          cursor: "pointer",
+                          textAlign: "left",
+                          color: "var(--text)",
+                          fontSize: 12.5,
+                          fontFamily: "var(--fn)",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = "var(--s2)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                      >
+                        <span style={{ width: 6, height: 6, borderRadius: 99, background: g.tone, flexShrink: 0 }} />
+                        <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {s.title || "(untitled)"}
+                        </span>
+                        <span style={{ fontSize: 10, fontFamily: "var(--fm)", color: "var(--muted)" }}>
+                          {s.message_count} msgs
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ))
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

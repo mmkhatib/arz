@@ -45,11 +45,13 @@ export default function SettingsPage() {
   const [savingMsg, setSavingMsg] = useState<string | null>(null);
   const [installer, setInstaller] = useState<Awaited<ReturnType<typeof api.getInstallerStatus>> | null>(null);
   const [memStats, setMemStats] = useState<{ markdown: number; lessons: number; vectors: number } | null>(null);
+  const [embedder, setEmbedder] = useState<Awaited<ReturnType<typeof api.getEmbedderStatus>> | null>(null);
 
   useEffect(() => {
     api.getSettings().then((s) => { setSaved(s); setDraft(s); }).catch(() => {});
     api.getInstallerStatus().then(setInstaller).catch(() => {});
     api.memoryStats().then(setMemStats).catch(() => {});
+    api.getEmbedderStatus().then(setEmbedder).catch(() => {});
   }, []);
 
   const dirty = useMemo(() => {
@@ -103,10 +105,6 @@ export default function SettingsPage() {
     return out;
   }, [installer]);
 
-  const ollamaInstalled = !!installer?.clis.find(
-    (c: { name: string; installed: boolean }) => c.name === "ollama" && c.installed,
-  );
-
   return (
     <CedarPage>
       <div style={{ position: "relative", overflow: "hidden" }}>
@@ -114,7 +112,7 @@ export default function SettingsPage() {
         <CedarPageHeader
           eyebrow="bones"
           title={<>Settings.</>}
-          sub="Edits buffer locally. Hit Save to write ~/.arz/config.yaml."
+          sub="Edits buffer locally. Hit Save to write ~/.arz/config.toml."
           right={
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               {savingMsg && (
@@ -268,15 +266,15 @@ export default function SettingsPage() {
                     )}
                   </li>
                   <li style={{ marginTop: 4 }}>
-                    <strong>Vector recall</strong> — needs Ollama installed locally for embeddings.{" "}
-                    {ollamaInstalled ? (
-                      <span style={{ color: "var(--cedar-2)" }}>
-                        ✓ Ollama detected ({memStats?.vectors ?? 0} vectors).
+                    <strong>Vector recall</strong> — semantic matches via an embedding model
+                    (local fastembed first, then Ollama).{" "}
+                    {!embedder ? null : embedder.degraded ? (
+                      <span style={{ color: "var(--ember)" }}>
+                        Lexical-only right now: {embedder.reason || "no embedding backend"}.
                       </span>
                     ) : (
-                      <span style={{ color: "var(--ember)" }}>
-                        Not installed — install from{" "}
-                        <a href="/models" style={{ color: "var(--cedar-glow)" }}>/models</a>.
+                      <span style={{ color: "var(--cedar-2)" }}>
+                        ✓ {embedder.backend} · <code>{embedder.id}</code> ({memStats?.vectors ?? 0} vectors).
                       </span>
                     )}
                   </li>
@@ -341,7 +339,7 @@ export default function SettingsPage() {
                   padding: "8px 12px",
                 }}
               >
-                Host + port changes are written to <code>config.yaml</code> on Save but take effect only after a gateway restart (<code>uv run arz gateway</code>). Token auth applies live.
+                Host + port changes are written to <code>config.toml</code> on Save but take effect only after a gateway restart (<code>uv run arz gateway</code>). Token auth applies live.
               </div>
             </CedarCard>
           )}
@@ -407,28 +405,41 @@ function ProviderModelPicker({
 }) {
   const options = modelsForProvider(provider);
   const inCatalog = options.find((o) => o.id === model);
+  // Custom mode shows the free-text box. Entered automatically when the
+  // saved id isn't in the provider's live list (e.g. a retired model).
+  const [custom, setCustom] = useState(false);
+  const showInput = custom || (!inCatalog && model !== "");
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
       <select
-        value={inCatalog ? model : "__custom__"}
+        value={inCatalog && !custom ? model : "__custom__"}
         onChange={(e) => {
           const v = e.target.value;
-          if (v === "__custom__") return;
+          if (v === "__custom__") { setCustom(true); return; }
+          setCustom(false);
           onChange(v);
         }}
         style={{ ...inp, width: 240 }}
       >
         {options.map((o) => (
-          <option key={o.id} value={o.id}>{o.label}</option>
+          <option key={o.id || "__default__"} value={o.id}>{o.label}</option>
         ))}
         <option value="__custom__">Custom…</option>
       </select>
-      <input
-        value={model}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="model id"
-        style={{ ...inp, fontFamily: "var(--fm)", fontSize: 12, width: 240 }}
-      />
+      {showInput && (
+        <input
+          value={model}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="model id"
+          autoFocus={custom}
+          style={{ ...inp, fontFamily: "var(--fm)", fontSize: 12, width: 240 }}
+        />
+      )}
+      {!inCatalog && model !== "" && !custom && (
+        <div style={{ fontSize: 11, color: "var(--dawn)", maxWidth: 240, textAlign: "right", lineHeight: 1.4 }}>
+          <code>{model}</code> isn't offered by {PROVIDER_LABELS[provider] ?? provider} right now — it may be retired. Pick one above.
+        </div>
+      )}
     </div>
   );
 }
@@ -483,7 +494,7 @@ function PathsRows() {
   }, []);
   const base = homeHint ? `${homeHint}/.arz` : ".arz";
   const rows: { label: string; desc: string; path: string }[] = [
-    { label: "Config file", desc: "Read/written when you Save above.", path: `${base}/config.yaml` },
+    { label: "Config file", desc: "Read/written when you Save above.", path: `${base}/config.toml` },
     { label: "Memory store", desc: "Lessons + notes + vectors.", path: `${base}/memory.db` },
     { label: "Sessions", desc: "Chat history snapshots.", path: `${base}/sessions/` },
     { label: "Agents", desc: "Saved persona configs.", path: `${base}/agents/` },

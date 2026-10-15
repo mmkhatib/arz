@@ -11,7 +11,18 @@ export type ToolInputObject = Record<string, unknown>;
 export function stripPyRepr(raw: string): string {
   const m = raw.match(/^\s*\{\s*['"]raw['"]\s*:\s*['"]([\s\S]*)['"]\s*\}\s*$/);
   if (!m) return raw;
-  return m[1].replace(/\\\\/g, "\\").replace(/\\"/g, '"').replace(/\\'/g, "'");
+  return unescapePyString(m[1]);
+}
+
+const PY_ESCAPES: Record<string, string> = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"' };
+
+/** Single-pass Python string-literal unescape. Sequential replaces get
+ *  `\\"` wrong (it's an escaped backslash followed by a quote). */
+function unescapePyString(s: string): string {
+  return s.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)/g, (_, e: string) => {
+    if (e.length > 1) return String.fromCharCode(parseInt(e.slice(1), 16));
+    return PY_ESCAPES[e] ?? "\\" + e;
+  });
 }
 
 export function parseToolInput(input: string): ToolInputObject | null {

@@ -13,6 +13,9 @@ import {
 } from "@/components/CedarUI";
 import { api, type AgentConfig, type AgentStats } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
+import { modelsForProvider, PROVIDER_LABELS } from "@/utils/models";
+import { useLiveModels } from "@/hooks/useLiveModels";
+import { shortModelLabel } from "@/utils/format";
 
 const ALL_PROVIDERS = ["claude-code", "kiro-cli", "codex", "gemini", "ollama", "anthropic"];
 
@@ -204,7 +207,7 @@ export default function AgentsPage() {
                 </div>
               }
             />
-            <Field label="Model" value={<span style={{ fontFamily: "var(--fm)", fontSize: 12 }}>{active.model || "default"}</span>} />
+            <Field label="Model" value={<span style={{ fontFamily: "var(--fm)", fontSize: 12 }}>{active.model ? `${shortModelLabel(active.model)}${shortModelLabel(active.model) !== active.model ? ` · ${active.model}` : ""}` : `${PROVIDER_LABELS[active.provider || ""] ?? "Provider"} default`}</span>} />
             <Field label="Approval" value={<Tag color={active.approval_mode === "yolo" ? "ember" : active.approval_mode === "trust" ? "dawn" : "cedar"}>{active.approval_mode}</Tag>} />
             <Field
               label="Usage"
@@ -259,7 +262,7 @@ export default function AgentsPage() {
         ) : (
           <CedarCard padding={48}>
             <div style={{ textAlign: "center", color: "var(--muted)" }}>
-              <Bot size={28} style={{ marginBottom: 12, color: "var(--text3)" }} />
+              <Bot size={28} style={{ margin: "0 auto 12px", color: "var(--text3)" }} />
               <div style={{ fontFamily: "var(--fd)", fontSize: 22, color: "var(--text)" }}>No agent selected</div>
               <div style={{ fontSize: 13, marginTop: 8 }}>Pick one on the left, or raise a new one.</div>
             </div>
@@ -332,6 +335,7 @@ function AgentEditor({
       ? initial.providers
       : (initial.provider ? [initial.provider] : []),
   });
+  useLiveModels();
   const picks = a.providers ?? [];
   const togglePick = (p: string) => {
     const next = picks.includes(p) ? picks.filter((x) => x !== p) : [...picks, p];
@@ -342,10 +346,16 @@ function AgentEditor({
     setA({ ...a, providers: next, provider: preferred });
   };
 
-  const inp = (k: keyof AgentConfig, type: "text" | "textarea" = "text") => {
+  const inp = (
+    k: keyof AgentConfig,
+    type: "text" | "textarea" = "text",
+    extra: { placeholder?: string; list?: string } = {},
+  ) => {
     const Component = type === "text" ? "input" : "textarea";
     return (
       <Component
+        {...extra}
+        className="placeholder:text-[var(--muted)] placeholder:opacity-70 focus:outline-none focus:border-[var(--cedar-line)]"
         value={(a[k] as string) ?? ""}
         onChange={(e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
           setA({ ...a, [k]: e.target.value })
@@ -441,7 +451,21 @@ function AgentEditor({
       </Wrap>
       <div style={{ height: 12 }} />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-        <Wrap label="Model">{inp("model")}</Wrap>
+        <Wrap label="Model">
+          {inp("model", "text", {
+            placeholder: `${PROVIDER_LABELS[a.provider || ""] ?? "Provider"} default`,
+            list: "agent-model-options",
+          })}
+          {/* Suggestions come from the live per-provider catalog; any
+              other model id the CLI accepts can still be typed. */}
+          <datalist id="agent-model-options">
+            {modelsForProvider(a.provider || undefined)
+              .filter((m) => m.id)
+              .map((m) => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+          </datalist>
+        </Wrap>
         <Wrap label="Approval">
           <select
             value={a.approval_mode}
@@ -466,7 +490,7 @@ function AgentEditor({
 
       <Wrap label="Description">{inp("description")}</Wrap>
       <div style={{ height: 12 }} />
-      <Wrap label="Work directory">{inp("work_dir")}</Wrap>
+      <Wrap label="Work directory">{inp("work_dir", "text", { placeholder: "~/.arz/workspace/<session> when blank" })}</Wrap>
       <div style={{ height: 12 }} />
       <Wrap label="System prompt">{inp("system_prompt", "textarea")}</Wrap>
       <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>

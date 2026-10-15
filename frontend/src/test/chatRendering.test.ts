@@ -69,6 +69,9 @@ describe("tool input helpers", () => {
     expect(parseToolInput('{"command":"ls"}')).toEqual({ command: "ls" });
     expect(parseToolInput(`{'raw': '{"command":"ls"}'}`)).toEqual({ command: "ls" });
     expect(parseToolInput("not json")).toBeNull();
+    // Real Claude Code payload: escaped backslash before a quote.
+    const real = String.raw`{'raw': '{"command": "find . \\\\( -name \\"*test*\\" \\\\) | head", "description": "d"}'}`;
+    expect(parseToolInput(real)).toEqual({ command: 'find . \\( -name "*test*" \\) | head', description: "d" });
   });
 
   it("summarises by the most telling field", () => {

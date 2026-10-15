@@ -47,7 +47,8 @@ export default function Layout() {
   const matchedKey = Object.keys(PATH_TO_SECTION)
     .sort((a, b) => b.length - a.length)
     .find((p) => p === path || (p !== "/" && path.startsWith(p + "/")));
-  const active = (matchedKey ? PATH_TO_SECTION[matchedKey] : "chat") as NavSection;
+  // Unknown paths (404) highlight nothing rather than pretending to be Chat.
+  const active = (matchedKey ? PATH_TO_SECTION[matchedKey] : "") as NavSection;
 
   // Cron badge: same poll cadence and visibility logic as ChatPage had,
   // hoisted up so the badge is visible on every page (not just /).

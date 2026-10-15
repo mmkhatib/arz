@@ -37,6 +37,7 @@ import {
   FolderOpen,
   Pencil,
 } from "lucide-react";
+import EmptyState from "@/components/EmptyState";
 import { api, type ProjectSummary, type ProjectTask } from "@/api/client";
 import { useDialog } from "@/components/Dialog";
 import { TaskDetailModal } from "@/components/TaskDetailModal";
@@ -420,11 +421,27 @@ export default function ChannelsPage() {
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "var(--muted)",
-                fontSize: 13,
               }}
             >
-              {channels.length === 0 ? "Create a channel to get started." : "Pick a channel."}
+              {channels.length === 0 ? (
+                <EmptyState
+                  icon={<Layers size={22} />}
+                  title="No channels yet."
+                  hint="A channel is a shared room for several agents. Post a question and the orchestrator splits it across specialists, then reports back here."
+                  action={
+                    <Btn kind="solid" icon={<Plus size={13} />} onClick={() => setShowCreate(true)}>
+                      New channel
+                    </Btn>
+                  }
+                />
+              ) : (
+                <EmptyState
+                  compact
+                  icon={<Layers size={18} />}
+                  title="Pick a channel"
+                  hint="Choose one from the list to see its thread and delegations."
+                />
+              )}
             </div>
           ) : (
             <>
@@ -841,8 +858,8 @@ function ChannelNav({
       {/* Active channels — scrollable */}
       <div style={{ flex: 1, overflowY: "auto", padding: "6px 0" }}>
         {channels.length === 0 && (
-          <div style={{ padding: "16px 14px", fontSize: 12, color: "var(--muted)" }}>
-            No active channels.
+          <div style={{ padding: "16px 14px", fontSize: 12, color: "var(--muted)", lineHeight: 1.5 }}>
+            No active channels. Use <strong style={{ color: "var(--text2)", fontWeight: 500 }}>+</strong> to start one.
           </div>
         )}
         {channels.map((c) => (
@@ -1743,11 +1760,16 @@ function CreateChannelDialog({
         </div>
         <div>
           <CedarLabel>Name</CedarLabel>
-          <CedarInput value={name} onChange={(e) => setName(e.target.value)} />
+          <CedarInput value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. checkout-redesign" autoFocus />
         </div>
         <div>
           <CedarLabel>Topic / objective</CedarLabel>
-          <CedarTextArea value={topic} onChange={(e) => setTopic(e.target.value)} rows={3} />
+          <CedarTextArea
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            rows={3}
+            placeholder="What should this team work toward? The orchestrator reads this before delegating."
+          />
         </div>
         {presetId === "custom" && (
           <div>

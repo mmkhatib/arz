@@ -51,8 +51,8 @@ export default function ThinkingBlock({ text, streaming = false }: { text: strin
             const el = e.currentTarget;
             stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
           }}
-          className="px-3 pb-2 max-h-72 overflow-y-auto text-[var(--text2)]"
-          style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--fm)", margin: 0 }}
+          className="px-3 pb-2.5 max-h-72 overflow-y-auto text-[12.5px] leading-relaxed italic text-[var(--text2)]"
+          style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", fontFamily: "var(--fn)", margin: 0 }}
         >
           {text}
         </pre>

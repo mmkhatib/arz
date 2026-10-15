@@ -150,6 +150,9 @@ function CodeView({
         <pre
           ref={scrollRef}
           className="flex-1 p-3 overflow-auto whitespace-pre hljs"
+          // Match chat code blocks: theme surface, not the hljs theme's own
+          // dark background (which clashed with the light palette).
+          style={{ background: 'var(--bg)', color: 'var(--text)' }}
           onScroll={syncScroll}
           dangerouslySetInnerHTML={{ __html: html + '\n' }}
         />

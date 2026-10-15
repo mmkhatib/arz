@@ -1,7 +1,7 @@
 /** Tab state for the chat side panel, kept per session in localStorage.
  *
- *  Three views are pinned (always present, not closable): Files, Changes,
- *  Tools. Everything else is opened on demand and closable:
+ *  Four views are pinned (always present, not closable): Files, Artifacts,
+ *  Changes, Tools. Everything else is opened on demand and closable:
  *    - single-instance views from the "+" menu: tasks, context, subagents, logs
  *    - document tabs: `file:<abs path>` (viewer) and `diff:<abs path>`
  *
@@ -10,10 +10,10 @@
  */
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
-export type PanelView = "files" | "changes" | "tools" | "tasks" | "context" | "subagents" | "logs";
+export type PanelView = "files" | "artifacts" | "changes" | "tools" | "tasks" | "context" | "subagents" | "logs";
 export type PanelTabId = PanelView | `file:${string}` | `diff:${string}`;
 
-export const PINNED_VIEWS: PanelView[] = ["files", "changes", "tools"];
+export const PINNED_VIEWS: PanelView[] = ["files", "artifacts", "changes", "tools"];
 export const MENU_VIEWS: PanelView[] = ["tasks", "context", "subagents", "logs"];
 const ALL_VIEWS = new Set<string>([...PINNED_VIEWS, ...MENU_VIEWS]);
 const MAX_OPEN_TABS = 12;

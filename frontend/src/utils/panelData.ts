@@ -122,3 +122,45 @@ export function latestTodos(entries: ToolEntry[]): TodoItem[] | null {
 export function todoProgress(items: TodoItem[]): { done: number; total: number } {
   return { done: items.filter((t) => t.status === "completed").length, total: items.length };
 }
+
+/* ── Artifacts ──────────────────────────────────────────────────── */
+
+export type ArtifactKind = "html" | "code" | "doc" | "data" | "image" | "other";
+
+export const ARTIFACT_KIND_ORDER: ArtifactKind[] = ["html", "doc", "code", "data", "image", "other"];
+
+export const ARTIFACT_KIND_LABEL: Record<ArtifactKind, string> = {
+  html: "Pages",
+  code: "Code",
+  doc: "Docs",
+  data: "Data",
+  image: "Images",
+  other: "Other",
+};
+
+const CODE_EXTS = new Set([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "rb", "go", "rs", "java", "kt", "cs", "cpp",
+  "c", "h", "hpp", "swift", "php", "sql", "sh", "bash", "zsh", "fish", "lua", "pl", "scala",
+  "clj", "cljs", "ex", "exs", "elm", "erl", "dart", "css", "scss", "less", "vue", "svelte",
+]);
+
+export function classifyArtifact(path: string): ArtifactKind {
+  const ext = (path.split(".").pop() || "").toLowerCase();
+  if (ext === "html" || ext === "htm") return "html";
+  if (["md", "markdown", "mdx", "rst", "txt", "pdf", "docx"].includes(ext)) return "doc";
+  if (["json", "yaml", "yml", "toml", "csv", "tsv", "ndjson", "log", "xml"].includes(ext)) return "data";
+  if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(ext)) return "image";
+  if (CODE_EXTS.has(ext)) return "code";
+  return "other";
+}
+
+/** Files the agent produced this session (created or edited), grouped by
+ *  kind in display order. Empty groups are dropped. */
+export function groupArtifacts(changes: FileChange[]): { kind: ArtifactKind; items: FileChange[] }[] {
+  const by = new Map<ArtifactKind, FileChange[]>();
+  for (const c of changes) {
+    const k = classifyArtifact(c.path);
+    by.set(k, [...(by.get(k) ?? []), c]);
+  }
+  return ARTIFACT_KIND_ORDER.filter((k) => by.has(k)).map((kind) => ({ kind, items: by.get(kind)! }));
+}

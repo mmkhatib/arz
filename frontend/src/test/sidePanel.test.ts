@@ -7,7 +7,7 @@ import {
   tabPath,
   type PanelTabsState,
 } from "@/hooks/usePanelTabs";
-import { collectFileChanges, editsAsDiffPair, latestTodos, todoProgress } from "@/utils/panelData";
+import { classifyArtifact, collectFileChanges, editsAsDiffPair, groupArtifacts, latestTodos, todoProgress } from "@/utils/panelData";
 import type { ToolEntry } from "@/components/ActivityPane";
 
 const entry = (name: string, input: unknown, time = "12:00:00"): ToolEntry => ({
@@ -165,5 +165,31 @@ describe("latestTodos", () => {
       { content: "Alt shape", status: "completed", activeForm: undefined },
     ]);
     expect(todoProgress(todos!)).toEqual({ done: 2, total: 4 });
+  });
+});
+
+describe("artifacts", () => {
+  it("classifies by extension", () => {
+    expect(classifyArtifact("/a/index.html")).toBe("html");
+    expect(classifyArtifact("/a/README.md")).toBe("doc");
+    expect(classifyArtifact("/a/x.tsx")).toBe("code");
+    expect(classifyArtifact("/a/data.csv")).toBe("data");
+    expect(classifyArtifact("/a/logo.svg")).toBe("image");
+    expect(classifyArtifact("/a/Makefile")).toBe("other");
+  });
+  it("groups changes in display order, dropping empty kinds", () => {
+    const changes = collectFileChanges([
+      entry("Write", { file_path: "/w/app.py", content: "x = 1\n" }),
+      entry("Write", { file_path: "/w/page.html", content: "<p/>" }),
+      entry("Edit", { file_path: "/w/app2.py", old_string: "a", new_string: "b" }),
+    ]);
+    const groups = groupArtifacts(changes);
+    expect(groups.map((g) => g.kind)).toEqual(["html", "code"]);
+    expect(groups[1].items.map((c) => c.path).sort()).toEqual(["/w/app.py", "/w/app2.py"]);
+    expect(groups[0].items[0].created).toBe(true);
+  });
+  it("artifacts is a pinned view", () => {
+    expect(isValidTabId("artifacts")).toBe(true);
+    expect(panelTabsReducer(DEFAULT_PANEL_TABS, { type: "open", id: "artifacts" })).toEqual({ open: [], active: "artifacts" });
   });
 });

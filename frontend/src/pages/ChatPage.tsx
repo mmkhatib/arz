@@ -5,7 +5,7 @@ import type { SessionSummary } from "@/api/client";
 import SessionList from "@/components/SessionList";
 import ChatPanel from "@/components/ChatPanel";
 import NewSessionModal from "@/components/NewSessionModal";
-import ActivityPane, { PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, type ToolEntry } from "@/components/ActivityPane";
+import ActivityPane, { PANEL_DEFAULT_WIDTH, PANEL_MAX_WIDTH, PANEL_MIN_WIDTH, type ToolEntry } from "@/components/ActivityPane";
 import type { PanelTabId } from "@/hooks/usePanelTabs";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { chatPath, readSessionIdFromUrl } from "@/utils/sessionUrl";
@@ -37,7 +37,7 @@ export default function ChatPage() {
   const [activityWidth, setActivityWidth] = useState<number>(() => {
     const saved = localStorage.getItem("arz:activity-width");
     const n = saved ? parseInt(saved, 10) : NaN;
-    return !isNaN(n) && n >= PANEL_MIN_WIDTH && n <= PANEL_MAX_WIDTH ? n : 300;
+    return !isNaN(n) && n >= PANEL_MIN_WIDTH && n <= PANEL_MAX_WIDTH ? n : PANEL_DEFAULT_WIDTH;
   });
   const [requestedTab, setRequestedTab] = useState<PanelTabId | null>(null);
   const [seedPaths, setSeedPaths] = useState<string[]>([]);

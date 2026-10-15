@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, Bot, Sparkles, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Check, Bot, ChevronDown, Sparkles, RefreshCw } from "lucide-react";
+import CedarMark from "./CedarMark";
 import { api } from "@/api/client";
 import Popover from "./Popover";
 import { modelsForProvider, defaultModelForProvider, isModelValid, PROVIDER_LABELS } from "@/utils/models";
@@ -66,12 +67,14 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
     <div className="flex flex-col items-center justify-center h-full gap-6 px-6 pb-16">
       {/* Branding */}
       <div className="flex flex-col items-center gap-3">
-        <div className="w-14 h-14 rounded-2xl bg-[var(--cedar)] flex items-center justify-center text-2xl">
-          🌲
+        <div className="w-14 h-14 rounded-2xl bg-[var(--cedar-dim)] border border-[var(--cedar-line)] flex items-center justify-center">
+          <CedarMark size={30} />
         </div>
         <div className="text-center">
-          <h2 className="text-[16px] font-semibold text-[var(--text)] mb-1">New Session</h2>
-          <p className="text-[12px] text-[var(--muted)]">Pick a model. Optionally pick an agent role.</p>
+          <h2 className="text-[30px] leading-tight text-[var(--text)] mb-1" style={{ fontFamily: "var(--fd)" }}>
+            What are we <em className="text-[var(--cedar-glow)]">growing</em> today?
+          </h2>
+          <p className="text-[12.5px] text-[var(--muted)]">Pick a model, optionally an agent role, then type below.</p>
         </div>
       </div>
 
@@ -79,7 +82,7 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
       <div className="flex flex-col gap-3 w-full max-w-[360px]">
         {/* 1. Model — primary, focused first */}
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium px-1">
+          <label className="text-[9.5px] text-[var(--muted)] uppercase tracking-[0.12em] font-mono px-1">
             Model {provider ? `· ${PROVIDER_LABELS[provider] ?? provider}` : ""}
           </label>
           {onModelChange ? (
@@ -87,12 +90,12 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
               <button
                 ref={modelBtnRef}
                 onClick={() => { setModelOpen((v) => !v); setAgentOpen(false); }}
-                className="w-full flex items-center gap-2 bg-[var(--surface)] border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] font-mono hover:border-[var(--cedar)]/50 transition-colors focus:outline-none focus:border-[var(--cedar)]/50"
+                className="w-full flex items-center gap-2 bg-[var(--surface)] border border-[var(--border)] rounded-lg px-3 py-2 text-[13px] hover:border-[var(--cedar)]/50 transition-colors focus:outline-none focus:border-[var(--cedar)]/50"
               >
                 <span className="flex-1 text-left text-[var(--text)] font-medium truncate">
                   {activeModel?.label ?? effectiveModel ?? "Select model…"}
                 </span>
-                <span className="text-[var(--muted)] text-[11px] shrink-0">▾</span>
+                <ChevronDown size={13} className="text-[var(--muted)] shrink-0" />
               </button>
               <Popover open={modelOpen} onClose={() => setModelOpen(false)}>
                 <div className="min-w-[260px] max-w-[300px] flex flex-col">
@@ -144,7 +147,7 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
         {/* 2. Agent — optional, secondary */}
         {onAgentChange && agents.length > 0 && (
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium px-1">
+            <label className="text-[9.5px] text-[var(--muted)] uppercase tracking-[0.12em] font-mono px-1">
               Agent <span className="opacity-60 normal-case tracking-normal">(optional · role only, doesn't change the LLM)</span>
             </label>
             <div className="relative">
@@ -156,7 +159,7 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
                 <span className={["flex-1 text-left truncate", agent ? "text-[var(--text)] font-medium" : "text-[var(--muted)] italic"].join(" ")}>
                   {activeAgent?.name ?? agent ?? "no agent"}
                 </span>
-                <span className="text-[var(--muted)] text-[11px] shrink-0">▾</span>
+                <ChevronDown size={13} className="text-[var(--muted)] shrink-0" />
               </button>
               <Popover open={agentOpen} onClose={() => setAgentOpen(false)}>
                 <div className="min-w-[260px] max-w-[300px] flex flex-col">
@@ -193,7 +196,7 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
 
         {/* 3. Working directory */}
         <div className="flex flex-col gap-1">
-          <label className="text-[10px] text-[var(--muted)] uppercase tracking-wider font-medium px-1">
+          <label className="text-[9.5px] text-[var(--muted)] uppercase tracking-[0.12em] font-mono px-1">
             Working Directory
           </label>
           <input
@@ -227,14 +230,15 @@ export default function WelcomeView({ model, onModelChange, provider, workDir, o
               <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} />
             </button>
           </div>
-          <div className="flex flex-wrap gap-2 justify-center">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 w-full">
             {suggestions.map((s, i) => (
               <button
                 key={i}
                 onClick={() => onPickSuggestion(s)}
-                className="px-3 py-1.5 rounded-full border border-[var(--cedar-line)] bg-[var(--cedar-dim)] text-[var(--cedar-glow)] text-[12px] hover:bg-[var(--cedar)] hover:text-white transition-colors"
+                className="group flex items-center gap-2 text-left px-3 py-2.5 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text2)] text-[12.5px] hover:border-[var(--cedar-line)] hover:text-[var(--text)] hover:-translate-y-px transition-all"
               >
-                {s}
+                <span className="flex-1 truncate">{s}</span>
+                <ArrowUpRight size={12} className="shrink-0 text-[var(--muted)] group-hover:text-[var(--cedar-glow)] transition-colors" />
               </button>
             ))}
           </div>

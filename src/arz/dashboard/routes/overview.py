@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from datetime import UTC
 from pathlib import Path
 from typing import Annotated
 
@@ -233,7 +234,12 @@ async def overview(
         events: list[tuple[float, str, str, str]] = []  # ts, kind, summary, session_id
         for s in mgr._sessions.values():  # noqa: SLF001
             for m in s.messages[-20:]:
-                ts = m.created_at.timestamp()
+                # Message timestamps are naive UTC; .timestamp() on a naive
+                # datetime assumes local time and yields "-14000s ago" west of UTC.
+                created = m.created_at
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=UTC)
+                ts = created.timestamp()
                 kind = "message" if m.role in ("user", "assistant") else m.role
                 summary = (m.text or "").replace("\n", " ")[:120]
                 events.append((ts, kind, f"[{s.title[:40]}] {m.role}: {summary}", s.id))

@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { GitBranch, GitCompare, RefreshCw } from "lucide-react";
 import { api, type GitFileStatus, type GitStatus } from "@/api/client";
 import type { FileChange } from "@/utils/panelData";
+import PanelEmpty from "./PanelEmpty";
 
 const STATUS_META: Record<GitFileStatus, { label: string; color: string; title: string }> = {
   M: { label: "M", color: "var(--dawn)", title: "Modified" },
@@ -28,7 +29,7 @@ export function GitBadge({ status }: { status: GitFileStatus | null | undefined 
   );
 }
 
-function DiffStat({ added, removed }: { added: number; removed: number }) {
+export function DiffStat({ added, removed }: { added: number; removed: number }) {
   return (
     <span className="shrink-0 font-mono text-[10px] flex gap-1.5">
       {added > 0 && <span style={{ color: "var(--pine)" }}>+{added}</span>}
@@ -91,10 +92,13 @@ export default function ChangesView({ sessionId, changes, onOpenDiff }: Props) {
       </div>
 
       {changes.length === 0 && otherDirty.length === 0 && (
-        <div className="flex flex-col items-center justify-center text-[var(--muted)]/40 gap-2 py-10">
-          <GitCompare size={24} />
-          <span className="text-[13px]">No changes yet</span>
-        </div>
+        <PanelEmpty
+          icon={GitCompare}
+          title="No changes yet"
+          hint={git?.is_repo
+            ? "Edits the agent makes appear here, alongside anything else uncommitted in this repo. Click a file for its diff."
+            : "Edits the agent makes this session appear here. Click a file to see its diff."}
+        />
       )}
 
       {changes.length > 0 && (
@@ -161,7 +165,7 @@ function Row({
     <button
       onClick={onClick}
       title={path}
-      className="w-full text-left flex items-center gap-2 px-3 py-1.5 hover:bg-[var(--s2)] transition-colors"
+      className="group w-[calc(100%-12px)] mx-1.5 text-left flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-[var(--s2)] transition-colors"
     >
       <GitBadge status={status} />
       <span className="min-w-0 flex-1">
@@ -173,6 +177,7 @@ function Row({
         )}
       </span>
       {meta}
+      <GitCompare size={12} className="shrink-0 text-[var(--muted)] opacity-0 group-hover:opacity-100 transition-opacity" />
     </button>
   );
 }

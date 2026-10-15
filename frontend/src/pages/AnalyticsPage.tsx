@@ -151,12 +151,19 @@ function MountainView({
     );
   }
   const max = Math.max(1, ...tokens.map((d) => d.count));
+  // Plot inside an inset box so the end dots and day labels aren't clipped.
+  // The SVG stretches (preserveAspectRatio="none"), so dots and labels are
+  // HTML overlays positioned in % — they'd distort as SVG shapes/text.
+  const PADX = 28;
+  const BASE = H - 28; // baseline; day labels sit below it
   const pts = tokens.map((d, i) => ({
-    x: (i / Math.max(1, tokens.length - 1)) * W,
-    y: H - (d.count / max) * (H - 30),
+    x: PADX + (i / Math.max(1, tokens.length - 1)) * (W - PADX * 2),
+    y: BASE - (d.count / max) * (BASE - 30),
     d,
   }));
-  const path = pts.map((p, i) => (i === 0 ? `M${p.x},${H} L${p.x},${p.y}` : `L${p.x},${p.y}`)).join(" ") + ` L${W},${H}Z`;
+  const path =
+    pts.map((p, i) => (i === 0 ? `M${p.x},${BASE} L${p.x},${p.y}` : `L${p.x},${p.y}`)).join(" ") +
+    ` L${pts[pts.length - 1].x},${BASE}Z`;
   const line = pts.map((p, i) => (i === 0 ? "M" : "L") + `${p.x},${p.y}`).join(" ");
   const last7Total = tokens.reduce((s, d) => s + d.count, 0);
   const avgPerDay = Math.round(totalTokens / 84);
@@ -204,45 +211,57 @@ function MountainView({
                 <stop offset="100%" stopColor="var(--cedar-glow)" stopOpacity="0" />
               </linearGradient>
             </defs>
-            {[0.25, 0.5, 0.75].map((p, i) => (
-              <line key={i} x1="0" x2={W} y1={H * p + 15} y2={H * p + 15} stroke="var(--border)" strokeDasharray="2 4" />
-            ))}
+            {[0.25, 0.5, 0.75].map((p, i) => {
+              const y = 30 + (BASE - 30) * p;
+              return <line key={i} x1="0" x2={W} y1={y} y2={y} stroke="var(--border)" strokeDasharray="2 4" vectorEffect="non-scaling-stroke" />;
+            })}
+            <line x1="0" x2={W} y1={BASE} y2={BASE} stroke="var(--border)" vectorEffect="non-scaling-stroke" />
             <path d={path} fill="url(#mtn)" />
-            <path d={line} fill="none" stroke="var(--cedar-glow)" strokeWidth="2" />
-            {pts.map((p, i) => (
-              <g key={i}>
-                <circle
-                  cx={p.x}
-                  cy={p.y}
-                  r={hoverIdx === i ? 6 : 4}
-                  fill="var(--surface)"
-                  stroke="var(--cedar-glow)"
-                  strokeWidth="2"
-                />
-                <text
-                  x={p.x}
-                  y={H - 6}
-                  textAnchor="middle"
-                  fontFamily="var(--fm)"
-                  fontSize="10"
-                  fill="var(--muted)"
-                >
-                  {dow(p.d.date)}
-                </text>
-              </g>
-            ))}
+            <path d={line} fill="none" stroke="var(--cedar-glow)" strokeWidth="2" vectorEffect="non-scaling-stroke" />
             {hoverIdx !== null && (
               <line
                 x1={pts[hoverIdx].x}
                 x2={pts[hoverIdx].x}
                 y1={0}
-                y2={H}
+                y2={BASE}
                 stroke="var(--cedar-line)"
                 strokeWidth="1"
                 strokeDasharray="2 3"
+                vectorEffect="non-scaling-stroke"
               />
             )}
           </svg>
+          {pts.map((p, i) => (
+            <div key={i} style={{ pointerEvents: "none" }}>
+              <span
+                style={{
+                  position: "absolute",
+                  left: `${(p.x / W) * 100}%`,
+                  top: p.y,
+                  width: hoverIdx === i ? 12 : 8,
+                  height: hoverIdx === i ? 12 : 8,
+                  transform: "translate(-50%, -50%)",
+                  borderRadius: 99,
+                  background: "var(--surface)",
+                  border: "2px solid var(--cedar-glow)",
+                  transition: "width .12s, height .12s",
+                }}
+              />
+              <span
+                style={{
+                  position: "absolute",
+                  left: `${(p.x / W) * 100}%`,
+                  top: BASE + 8,
+                  transform: "translateX(-50%)",
+                  fontFamily: "var(--fm)",
+                  fontSize: 10,
+                  color: hoverIdx === i ? "var(--text)" : "var(--muted)",
+                }}
+              >
+                {dow(p.d.date)}
+              </span>
+            </div>
+          ))}
           {hoverIdx !== null && (
             <div
               style={{

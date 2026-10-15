@@ -4,7 +4,9 @@ import { FileBody } from "./FileViewer";
 import type { MessageRecord, ToolCallRecord } from "@/api/client";
 import { formatTokens } from "@/utils/tokens";
 import Widget from "./Widget";
-import { Crosshair, GitBranch, Quote } from "lucide-react";
+import CedarMark from "./CedarMark";
+import { ArrowLeftRight, Check, Copy, Crosshair, GitBranch, Pencil, Quote, RotateCcw, Wrench } from "lucide-react";
+import { parseServerTime } from "@/utils/serverTime";
 import { GoalAutoCard, GoalMarkerChip } from "./GoalChips";
 import SuggestedActions from "./SuggestedActions";
 import ChatMarkdown from "./ChatMarkdown";
@@ -46,11 +48,12 @@ interface Props {
 }
 
 function formatTime(iso: string): string {
-  const d = new Date(iso);
+  const d = parseServerTime(iso);
+  if (Number.isNaN(d.getTime())) return "";
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
   if (sameDay) {
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   }
   return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " +
     d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -331,19 +334,21 @@ export default function MessageBubble({
     flashCopied("rich");
   };
   const actionCls =
-    "text-[var(--muted)] hover:text-[var(--cedar)] transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100 flex items-center gap-0.5";
+    "text-[var(--muted)] hover:text-[var(--cedar-glow)] transition-colors flex items-center gap-1";
 
   return (
     <div className={`group flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>
       {!isUser && (
-        <div className="w-7 h-7 rounded-full bg-[var(--cedar)] flex items-center justify-center text-[12px] mr-2 mt-0.5 shrink-0">
-          🌲
+        <div className="w-7 h-7 rounded-full bg-[var(--cedar-dim)] border border-[var(--cedar-line)] text-[var(--cedar-glow)] flex items-center justify-center mr-2.5 mt-0.5 shrink-0">
+          <CedarMark size={16} />
         </div>
       )}
 
+      {/* Assistant column fills the row so tables / code / diffs get the
+          full width instead of shrinking to their intrinsic size. */}
       <div
-        className="flex flex-col gap-0.5"
-        style={{ maxWidth: isUser ? "72%" : "calc(100% - 36px)" }}
+        className={`flex flex-col gap-0.5 ${isUser ? "items-end" : "flex-1 min-w-0"}`}
+        style={{ maxWidth: isUser ? "75%" : "calc(100% - 38px)" }}
       >
         {/* A steered turn never started a turn of its own — say so, or it
             reads as an ordinary message the agent silently ignored. */}
@@ -466,21 +471,31 @@ export default function MessageBubble({
           <SuggestedActions choices={choices} onPick={onSendText} />
         )}
 
-        {/* Footer: timestamp + model + usage. Always visible — usage is
-            information users want to see at a glance, not on hover. */}
-        <div className={`flex items-center gap-2 px-1 text-[10px] text-[var(--muted)]/70 ${isUser ? "justify-end" : "justify-start"}`}>
-          <span className="font-mono">{formatTime(message.created_at)}</span>
+        {/* Footer. Assistant: time · duration · tools · model · tokens stay
+            visible (users scan usage at a glance); actions appear on hover.
+            User: everything on hover — the bubble speaks for itself. */}
+        <div
+          className={`flex items-center gap-2.5 px-1 min-h-[16px] text-[10.5px] text-[var(--muted)] ${
+            isUser ? "justify-end opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity" : "justify-start"
+          }`}
+        >
+          <span className="font-mono" title={parseServerTime(message.created_at).toLocaleString()}>
+            {formatTime(message.created_at)}
+          </span>
           {!isUser && message.elapsed_ms !== undefined && (
             <span className="font-mono">{fmtElapsed(message.elapsed_ms)}</span>
           )}
           {!isUser && message.tool_calls && message.tool_calls.length > 0 && (
-            <span className="flex items-center gap-0.5">
-              <span>🔧</span>
-              <span>{message.tool_calls.length}</span>
+            <span
+              className="flex items-center gap-0.5 font-mono"
+              title={`${message.tool_calls.length} tool call${message.tool_calls.length === 1 ? "" : "s"}`}
+            >
+              <Wrench size={9.5} />
+              {message.tool_calls.length}
             </span>
           )}
           {!isUser && message.model && (
-            <span className="font-mono text-[var(--muted)]" title={message.model}>
+            <span className="font-mono" title={message.model}>
               {shortModel(message.model)}
             </span>
           )}
@@ -489,9 +504,7 @@ export default function MessageBubble({
               className="font-mono"
               title={`in ${message.usage.input_tokens} • out ${message.usage.output_tokens} • cache+ ${message.usage.cache_creation_input_tokens} • cache↻ ${message.usage.cache_read_input_tokens}`}
             >
-              {formatTokens(message.usage.input_tokens)}↑
-              {" "}
-              {formatTokens(message.usage.output_tokens)}↓
+              {formatTokens(message.usage.input_tokens)}↑ {formatTokens(message.usage.output_tokens)}↓
             </span>
           )}
           {!isUser && message.usage && (message.usage.credits ?? 0) > 0 && (
@@ -502,76 +515,67 @@ export default function MessageBubble({
               {message.usage.credits!.toFixed(3)} ¢
             </span>
           )}
-          {!isUser && onCompare && (
-            <button
-              onClick={onCompare}
-              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
-              title="Compare with another model"
-            >
-              ↔ compare
-            </button>
-          )}
-          {!editing && (
-            <button onClick={copyMarkdown} className={actionCls} title={isUser ? "Copy" : "Copy as Markdown"}>
-              {copiedKind === "md" ? "✓ copied" : "⧉ copy"}
-            </button>
-          )}
-          {!isUser && (
-            <button onClick={copyRich} className={actionCls} title="Copy as rich text (keeps formatting when pasted)">
-              {copiedKind === "rich" ? "✓ copied" : "rich"}
-            </button>
-          )}
-          {onQuote && !editing && (
-            <button onClick={() => onQuote(copySource)} className={actionCls} title="Quote into composer">
-              <Quote size={10} /> quote
-            </button>
-          )}
-          {onForkHere && !editing && (
-            <button onClick={onForkHere} className={actionCls} title="Fork a new session from this point">
-              <GitBranch size={10} /> fork
-            </button>
-          )}
-          {isUser && isLastUser && onEditResend && !editing && (
-            <button
-              onClick={() => { setEditDraft(message.text); setEditing(true); }}
-              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
-              title="Edit & resend"
-            >
-              ✎ edit
-            </button>
-          )}
-          {!isUser && isLastAssistant && onRegenerate && (
-            <button
-              onClick={onRegenerate}
-              className="text-[var(--muted)] hover:text-[var(--cedar)] transition-colors"
-              title="Regenerate this reply"
-            >
-              ↻ regenerate
-            </button>
-          )}
           {!isUser && totalVersions > 1 && onCycleVersion && (
-            <span className="flex items-center gap-1 text-[var(--muted)]">
+            <span className="flex items-center gap-1">
               <button
                 onClick={() => onCycleVersion((versionIndex - 1 + totalVersions) % totalVersions)}
                 className="hover:text-[var(--text)]"
                 title="Previous version"
-              >◀</button>
+              >‹</button>
               <span className="font-mono">{versionIndex + 1}/{totalVersions}</span>
               <button
                 onClick={() => onCycleVersion((versionIndex + 1) % totalVersions)}
                 className="hover:text-[var(--text)]"
                 title="Next version"
-              >▶</button>
+              >›</button>
+            </span>
+          )}
+          {!editing && (
+            <span className="flex items-center gap-2.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+              {!isUser && <span className="w-px h-2.5 bg-[var(--border)]" />}
+              <button onClick={copyMarkdown} className={actionCls} title={isUser ? "Copy" : "Copy as Markdown"}>
+                {copiedKind === "md" ? <Check size={10} /> : <Copy size={10} />}
+                {copiedKind === "md" ? "copied" : "copy"}
+              </button>
+              {!isUser && (
+                <button onClick={copyRich} className={actionCls} title="Copy as rich text (keeps formatting when pasted)">
+                  {copiedKind === "rich" ? <Check size={10} /> : <Copy size={10} />}
+                  {copiedKind === "rich" ? "copied" : "rich"}
+                </button>
+              )}
+              {onQuote && (
+                <button onClick={() => onQuote(copySource)} className={actionCls} title="Quote into composer">
+                  <Quote size={10} /> quote
+                </button>
+              )}
+              {onForkHere && (
+                <button onClick={onForkHere} className={actionCls} title="Fork a new session from this point">
+                  <GitBranch size={10} /> fork
+                </button>
+              )}
+              {!isUser && onCompare && (
+                <button onClick={onCompare} className={actionCls} title="Compare with another model">
+                  <ArrowLeftRight size={10} /> compare
+                </button>
+              )}
+              {isUser && isLastUser && onEditResend && (
+                <button
+                  onClick={() => { setEditDraft(message.text); setEditing(true); }}
+                  className={actionCls}
+                  title="Edit & resend"
+                >
+                  <Pencil size={10} /> edit
+                </button>
+              )}
+              {!isUser && isLastAssistant && onRegenerate && (
+                <button onClick={onRegenerate} className={actionCls} title="Regenerate this reply">
+                  <RotateCcw size={10} /> regenerate
+                </button>
+              )}
             </span>
           )}
         </div>
       </div>
-
-      {isUser && (
-        <div className="w-7 h-7 rounded-full bg-[var(--border)] flex items-center justify-center text-[12px] ml-2 mt-0.5 shrink-0">
-          👤
-        </div>
-      )}
     </div>
   );
 }

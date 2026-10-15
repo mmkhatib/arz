@@ -3,15 +3,16 @@
 
 import { CheckCircle2, Circle, ListTodo, LoaderCircle } from "lucide-react";
 import { todoProgress, type TodoItem } from "@/utils/panelData";
+import PanelEmpty from "./PanelEmpty";
 
 export default function TasksView({ todos }: { todos: TodoItem[] | null }) {
   if (!todos || todos.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center text-[var(--muted)]/40 gap-2 py-10 px-6 text-center">
-        <ListTodo size={24} />
-        <span className="text-[13px]">No plan yet</span>
-        <span className="text-[11px]">Tasks appear here when the agent writes a todo list.</span>
-      </div>
+      <PanelEmpty
+        icon={ListTodo}
+        title="No plan yet"
+        hint="When the agent breaks work into steps with a todo list, the plan and its progress show here."
+      />
     );
   }
   const { done, total } = todoProgress(todos);

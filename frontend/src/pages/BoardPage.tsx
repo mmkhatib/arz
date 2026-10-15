@@ -5,7 +5,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Check, X as XIcon, Trash2, Pause, Play, AlertTriangle } from "lucide-react";
+import { ageSecs, fmtAge, plainExcerpt, shortModelLabel } from "@/utils/format";
+import { Plus, Check, X as XIcon, Trash2, Pause, Play, AlertTriangle, RefreshCw, ChevronDown } from "lucide-react";
 import {
   CedarPage,
   CedarPageHeader,
@@ -50,7 +51,7 @@ function AgentOpCard({
 }) {
   const who = `${session.title?.slice(0, 50) || "untitled"}`;
   const fullModel = session.model || providerLabel(session.provider);
-  const model = fullModel.length > 18 ? fullModel.slice(0, 18) + "…" : fullModel;
+  const model = shortModelLabel(session.model) || providerLabel(session.provider);
   const agentLabel = session.agent
     ? `@${session.agent}`
     : `@${providerLabel(session.provider).toLowerCase()}`;
@@ -168,12 +169,14 @@ function AgentOpCard({
                     color: "var(--text2)",
                     marginTop: 6,
                     lineHeight: 1.4,
-                    maxHeight: 36,
                     overflow: "hidden",
-                    fontStyle: "italic",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
                   }}
+                  title={stage.lastAssistantText}
                 >
-                  "{stage.lastAssistantText}…"
+                  {stage.lastAssistantText}
                 </div>
               )}
               <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
@@ -245,11 +248,14 @@ function AgentOpCard({
                 color: "var(--text3)",
                 marginTop: 6,
                 lineHeight: 1.4,
-                maxHeight: 36,
                 overflow: "hidden",
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
               }}
+              title={stage.lastAssistantText}
             >
-              {stage.lastAssistantText}…
+              {stage.lastAssistantText}
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
@@ -273,7 +279,6 @@ function AgentOpCard({
               borderRadius: 3,
               fontSize: 11,
               color: "var(--text2)",
-              fontFamily: "var(--fm)",
               display: "flex",
               alignItems: "flex-start",
               gap: 6,
@@ -281,8 +286,11 @@ function AgentOpCard({
             }}
           >
             <AlertTriangle size={11} style={{ color: "var(--ember)", flexShrink: 0, marginTop: 2 }} />
-            <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
-              {stage?.lastAssistantText?.slice(0, 80) || "session errored"}
+            <span
+              title={stage?.lastAssistantText ?? ""}
+              style={{ overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", minWidth: 0 }}
+            >
+              {stage?.lastAssistantText || "Session errored"}
             </span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
@@ -297,20 +305,17 @@ function AgentOpCard({
   );
 }
 
+// Replies older than this drop from "Waiting on you" to "Idle".
+const WAITING_STALE_SECS = 3 * 86400;
+// Cards shown per lane before the "Show N more" fold.
+const LANE_PREVIEW = 6;
+
 const LANE_DEFS: { id: Lane; label: string; dot: string; sub: string }[] = [
   { id: "waiting", label: "Waiting on you", dot: "var(--cedar-glow)", sub: "blocked on your decision" },
   { id: "running", label: "Running",        dot: "var(--pine)",       sub: "in flight" },
   { id: "idle",    label: "Idle",           dot: "var(--text3)",      sub: "parked, ready" },
   { id: "failed",  label: "Failed",         dot: "var(--ember)",      sub: "needs attention" },
 ];
-
-function fmtAge(secs: number): string {
-  if (!secs) return "—";
-  if (secs < 60) return `${secs}s`;
-  if (secs < 3600) return `${Math.round(secs / 60)}m`;
-  if (secs < 86400) return `${Math.round(secs / 3600)}h`;
-  return `${Math.round(secs / 86400)}d`;
-}
 
 type Stage = {
   lastRole: string | null;
@@ -339,6 +344,7 @@ export default function BoardPage() {
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
   const [filter, setFilter] = useState<"all" | "open" | "done">("open");
   const [draft, setDraft] = useState("");
+  const [expandedLanes, setExpandedLanes] = useState<Set<Lane>>(new Set());
 
   const refresh = async () => {
     try {
@@ -354,18 +360,17 @@ export default function BoardPage() {
             const tc = (last?.tool_calls?.[last.tool_calls.length - 1] || lastAssistant?.tool_calls?.[lastAssistant.tool_calls.length - 1]) as
               | { name?: string; input?: unknown }
               | undefined;
-            const ageSecs =
-              last?.created_at != null
-                ? Math.round((Date.now() - new Date(last.created_at).getTime()) / 1000)
-                : 0;
+            const age = ageSecs(last?.created_at);
             const stage: Stage = {
               lastRole: last?.role ?? null,
               lastTool: tc?.name ?? null,
               lastToolInput: typeof tc?.input === "string" ? tc.input : tc?.input != null ? JSON.stringify(tc.input).slice(0, 80) : null,
-              lastAssistantText: lastAssistant?.text?.slice(0, 120) ?? null,
-              errored: /error|failed|exception|traceback/i.test(lastAssistant?.text ?? ""),
+              lastAssistantText: plainExcerpt(lastAssistant?.text, 220) || null,
+              // Judge the readable text only — raw widget HTML/code is full of
+              // "error" (onerror=, catch blocks) and misfiled healthy turns.
+              errored: /\b(error|exception|traceback|failed)\b/i.test(plainExcerpt(lastAssistant?.text, 300)),
               elapsedMs: lastAssistant?.elapsed_ms ?? null,
-              ageSecs,
+              ageSecs: age,
             };
             return [s.id, stage] as const;
           } catch {
@@ -410,7 +415,9 @@ export default function BoardPage() {
     if (approvalsBySession[s.id]) lane = "waiting";
     else if (s.streaming) lane = "running";
     else if (st?.errored) lane = "failed";
-    else if (st?.lastRole === "assistant") lane = "waiting";
+    // A reply nobody answered in days isn't "waiting on you" any more —
+    // it's parked. Keeps the lane to what actually wants a decision.
+    else if (st?.lastRole === "assistant" && st.ageSecs < WAITING_STALE_SECS) lane = "waiting";
     else lane = "idle";
     lanes[lane].push(s);
   }
@@ -483,7 +490,7 @@ export default function BoardPage() {
             </>
           }
           sub={`${items.length} active sessions · ${openCount} open todos · ${doneCount} done`}
-          right={<Btn kind="ghost" onClick={refresh}>↻ refresh</Btn>}
+          right={<Btn kind="ghost" icon={<RefreshCw size={12} />} onClick={refresh}>Refresh</Btn>}
         />
       </div>
 
@@ -558,10 +565,10 @@ export default function BoardPage() {
                         fontFamily: "var(--fm)",
                       }}
                     >
-                      empty
+                      Nothing here
                     </div>
                   )}
-                  {lanes[lane.id].map((s) => (
+                  {(expandedLanes.has(lane.id) ? lanes[lane.id] : lanes[lane.id].slice(0, LANE_PREVIEW)).map((s) => (
                     <AgentOpCard
                       key={s.id}
                       session={s}
@@ -575,6 +582,26 @@ export default function BoardPage() {
                       onOpen={() => navigate(`/?sid=${encodeURIComponent(s.id)}`)}
                     />
                   ))}
+                  {lanes[lane.id].length > LANE_PREVIEW && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedLanes((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(lane.id)) next.delete(lane.id);
+                          else next.add(lane.id);
+                          return next;
+                        })
+                      }
+                      className="flex items-center justify-center gap-1.5 rounded-lg border border-dashed border-[var(--hairline)] py-2 text-[11px] font-mono text-[var(--muted)] hover:text-[var(--text)] hover:border-[var(--cedar-line)] transition-colors"
+                    >
+                      <ChevronDown
+                        size={12}
+                        style={{ transform: expandedLanes.has(lane.id) ? "rotate(180deg)" : undefined, transition: "transform .15s" }}
+                      />
+                      {expandedLanes.has(lane.id) ? "Show less" : `Show ${lanes[lane.id].length - LANE_PREVIEW} more`}
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

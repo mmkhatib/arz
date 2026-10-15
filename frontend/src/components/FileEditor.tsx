@@ -6,6 +6,7 @@
 // wrapper just renders, fires keystroke change callbacks, and shells
 // out a Cmd+S → onSave hook so the parent can hit /api/files/write.
 
+import { useTheme } from "@/hooks/useTheme";
 import { lazy, Suspense, useEffect } from "react";
 
 const Editor = lazy(() =>
@@ -20,6 +21,7 @@ interface Props {
 }
 
 export function FileEditor({ value, language, onChange, onSave }: Props) {
+  const { resolved } = useTheme();
   // Cmd/Ctrl+S handler bound at the window level — Monaco's own
   // keybinding fires too late (after IME composition / focus traps)
   // and we want the parent to be in charge regardless of where focus
@@ -48,7 +50,7 @@ export function FileEditor({ value, language, onChange, onSave }: Props) {
         defaultLanguage={language}
         language={language}
         value={value}
-        theme="vs-dark"
+        theme={resolved === "light" ? "vs" : "vs-dark"}
         onChange={(v) => onChange(v ?? "")}
         options={{
           fontFamily: "var(--fm)",

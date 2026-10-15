@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { serverTimeMs } from "@/utils/serverTime";
+import CedarMark from "./CedarMark";
 import {
   Archive,
   ArchiveRestore,
@@ -56,17 +58,39 @@ interface ProviderBadge {
 // Single source of truth for per-provider badges. To add a new provider,
 // add one row here — every consumer (SessionList, etc.) inherits it.
 const PROVIDER_BADGES: Record<string, ProviderBadge> = {
-  "claude-code": { label: "Claude", className: "bg-orange-900/40 text-orange-300" },
-  "kiro-cli":    { label: "Kiro",   className: "bg-blue-900/30 text-blue-400" },
-  "codex":       { label: "Codex",  className: "bg-green-900/30 text-green-400" },
-  "gemini":      { label: "Gemini", className: "bg-cyan-900/30 text-cyan-300" },
-  "ollama":      { label: "Ollama", className: "bg-fuchsia-900/30 text-fuchsia-300" },
-  "anthropic":   { label: "API",    className: "bg-purple-900/30 text-purple-400" },
+  // Quiet by design: a row's provider is reference info, not a call to
+  // action. A tinted dot carries identity; the label stays muted.
+  "claude-code": { label: "claude", className: "bg-[#d08a5c]" },
+  "kiro-cli":    { label: "kiro",   className: "bg-[#6f8fd8]" },
+  "codex":       { label: "codex",  className: "bg-[#5fa080]" },
+  "gemini":      { label: "gemini", className: "bg-[#5ab4c8]" },
+  "ollama":      { label: "ollama", className: "bg-[#b07cc6]" },
+  "anthropic":   { label: "api",    className: "bg-[#9a7ad0]" },
 };
 
 function providerBadge(provider: string | null | undefined, globalProvider: string): ProviderBadge {
   const p = provider || globalProvider || "";
-  return PROVIDER_BADGES[p] ?? { label: p || "—", className: "bg-[var(--border)] text-[var(--muted)]" };
+  return PROVIDER_BADGES[p] ?? { label: p || "—", className: "bg-[var(--muted)]" };
+}
+
+/** "3m", "4h", "2d" — compact age for a sidebar row. */
+function shortAge(iso: string): string {
+  const mins = Math.floor((Date.now() - serverTimeMs(iso)) / 60000);
+  if (mins < 1) return "now";
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return days < 60 ? `${days}d` : `${Math.floor(days / 30)}mo`;
+}
+
+function ProviderTag({ badge }: { badge: ProviderBadge }) {
+  return (
+    <span className="shrink-0 inline-flex items-center gap-1 font-mono text-[9.5px] text-[var(--muted)]" title={badge.label}>
+      <span className={`inline-block w-1.5 h-1.5 rounded-full opacity-80 ${badge.className}`} />
+      {badge.label}
+    </span>
+  );
 }
 
 /** Render an FTS snippet as React nodes, with <mark> tokens highlighted.
@@ -87,7 +111,7 @@ function renderSnippet(snippet: string): React.ReactNode[] {
 }
 
 function relativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
+  const diff = Date.now() - serverTimeMs(iso);
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return "just now";
   if (mins < 60) return `${mins}m ago`;
@@ -408,7 +432,7 @@ export default function SessionList({
   const live = sessions.filter((s) => !isArchived(s)).map(titled);
   const archivedSessions = sessions.filter(isArchived).map(titled);
   const byRecency = (a: SessionSummary, b: SessionSummary) =>
-    new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+    serverTimeMs(b.updated_at) - serverTimeMs(a.updated_at);
 
   const filterCounts: Record<SessionFilter, number> = {
     all: live.length,
@@ -432,7 +456,7 @@ export default function SessionList({
     unpinned.filter((s) => !sessionFolderMap[s.id]),
     grouped ? staleMs : 0,
     Date.now(),
-    (s) => new Date(s.updated_at).getTime() || 0,
+    (s) => serverTimeMs(s.updated_at),
     (s) => s.id === activeId || !!s.streaming || !!s.needs_input || isUnread(s, activeId),
   );
 
@@ -538,8 +562,8 @@ export default function SessionList({
       >
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
-        <span className="text-[var(--accent)] font-semibold tracking-wide text-[13px]">
-          🌲 Arzeh
+        <span className="flex items-center gap-1.5 text-[var(--text)] font-semibold tracking-wide text-[13px]">
+          <CedarMark size={15} /> Arzeh
         </span>
         <div className="relative flex items-center gap-1">
           <button
@@ -600,7 +624,7 @@ export default function SessionList({
           placeholder="Search… (⌘F)"
           className="w-full bg-[var(--bg)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 text-[12px] text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--cedar)]"
         />
-        {!query && (
+        {!query && (filter !== "all" || SESSION_FILTERS.some((f) => f.id !== "all" && filterCounts[f.id] > 0)) && (
           <div className="flex flex-wrap gap-1 mt-1.5" role="tablist" aria-label="Filter sessions">
             {SESSION_FILTERS.filter((f) => f.id === "all" || f.id === filter || filterCounts[f.id] > 0).map((f) => (
               <button
@@ -613,7 +637,7 @@ export default function SessionList({
                   filter === f.id
                     ? "border-[var(--cedar)] bg-[var(--cedar-dim)] text-[var(--text)]"
                     : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--text)]",
-                  f.id === "attention" && filterCounts.attention > 0 && filter !== f.id ? "text-amber-400 border-amber-400/40" : "",
+                  f.id === "attention" && filterCounts.attention > 0 && filter !== f.id ? "!text-[var(--dawn)] !border-[var(--dawn)]/50" : "",
                 ].join(" ")}
               >
                 {f.label}
@@ -824,12 +848,7 @@ export default function SessionList({
                     <div className="flex-1 px-4 py-2 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-[12px] text-[var(--muted)] flex-1">{s.title}</span>
-                        <span className={[
-                          "shrink-0 text-[9px] px-1.5 py-0.5 rounded font-medium",
-                          badge.className,
-                        ].join(" ")}>
-                          {badge.label}
-                        </span>
+                        <ProviderTag badge={badge} />
                       </div>
                       <div className="text-[10px] text-[var(--muted)]/60 mt-0.5">
                         {s.message_count} msgs · {relativeTime(s.updated_at)}
@@ -1081,6 +1100,7 @@ function SessionRow({
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
     >
+      {isActive && <span aria-hidden className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-r bg-[var(--cedar)]" />}
       <div className="flex items-center">
         {isRenaming ? (
           <input
@@ -1107,10 +1127,10 @@ function SessionRow({
           ].join(" ")}
         >
           {isPinned && !isUnread && !s.streaming && !s.needs_input && (
-            <span className="text-[10px] text-[var(--cedar-glow)]">●</span>
+            <Pin size={10} className="shrink-0 text-[var(--cedar-glow)] -rotate-45" aria-label="Pinned" />
           )}
           {s.needs_input ? (
-            <span className="shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-amber-400" aria-label="Needs you" />
+            <span className="shrink-0 inline-block w-1.5 h-1.5 rounded-full bg-[var(--dawn)]" aria-label="Needs you" />
           ) : s.streaming ? (
             <span
               title="Generating reply…"
@@ -1123,14 +1143,12 @@ function SessionRow({
           {hits && hits.length > 1 && (
             <span className="shrink-0 text-[9px] text-[var(--cedar-glow)] font-mono">{hits.length}</span>
           )}
-          <span
-            className={[
-              "shrink-0 text-[9px] px-1.5 py-0.5 rounded font-medium",
-              badge.className,
-            ].join(" ")}
-          >
-            {badge.label}
-          </span>
+          {!isHovered && (
+            <span className="shrink-0 flex items-center gap-1.5">
+              <ProviderTag badge={badge} />
+              <span className="font-mono text-[9.5px] text-[var(--muted)]/80 w-6 text-right">{shortAge(s.updated_at)}</span>
+            </span>
+          )}
         </button>
         )}
 
@@ -1141,7 +1159,7 @@ function SessionRow({
               title={isPinned ? "Unpin" : "Pin to top"}
               className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-[var(--cedar-glow)] hover:bg-[var(--s2)] transition-colors"
             >
-              {isPinned ? "★" : "☆"}
+              {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
             </button>
             <button
               onClick={(e) => {
@@ -1157,9 +1175,9 @@ function SessionRow({
             <button
               onClick={(e) => { e.stopPropagation(); onDelete(); }}
               title="Close session"
-              className="w-6 h-6 flex items-center justify-center rounded text-[11px] text-[var(--muted)] hover:text-red-400 hover:bg-[var(--s2)] transition-colors"
+              className="w-6 h-6 flex items-center justify-center rounded text-[var(--muted)] hover:text-[var(--ember)] hover:bg-[var(--s2)] transition-colors"
             >
-              ×
+              <X size={12} />
             </button>
           </div>
         )}
