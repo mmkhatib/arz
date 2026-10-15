@@ -16,10 +16,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Hashable, Sequence
-from typing import TypeVar
-
-T = TypeVar("T")
-K = TypeVar("K", bound=Hashable)
 
 RRF_K = 60
 MMR_LAMBDA = 0.6
@@ -27,7 +23,9 @@ MMR_LAMBDA = 0.6
 _WORD = re.compile(r"[a-z0-9]+")
 
 
-def rrf(ranked_lists: Sequence[Sequence[K]], *, k: int = RRF_K) -> list[tuple[K, float]]:
+def rrf[K: Hashable](
+    ranked_lists: Sequence[Sequence[K]], *, k: int = RRF_K
+) -> list[tuple[K, float]]:
     """Fuse ranked key lists. Returns ``(key, score)`` best first."""
     scores: dict[K, float] = {}
     first_seen: dict[K, int] = {}
@@ -48,7 +46,7 @@ def token_jaccard(a: str, b: str) -> float:
     return len(ta & tb) / len(ta | tb)
 
 
-def mmr(
+def mmr[T](
     items: Sequence[T],
     *,
     relevance: Callable[[T], float],
